@@ -53,6 +53,8 @@ Open `FB`, choose the closest category and include:
 
 Press `SAVE REPORT`, then attach the TXT file from `%APPDATA%\JA2\Feedback` to a
 GitHub issue. Screenshots are welcome, but the TXT report is more important.
+The report already contains the complete asset-catalog snapshot. The crash collector
+also copies the raw `os0-assets.tsv`, which is useful for reviewing larger batches.
 
 ## Crash reports
 

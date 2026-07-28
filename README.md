@@ -54,6 +54,8 @@ This is a systems prototype, not yet a balanced campaign.
 
 Asset classifications are written to `%APPDATA%\JA2\AssetCatalog\os0-assets.tsv`.
 This file can be shared between testers without distributing original JA2 graphics.
+Every saved feedback report embeds a catalog snapshot. Reviewed records are promoted
+into the bundled curated database in later builds; a tester's local records override it.
 
 In the feedback window, choose a category, describe the problem and press
 `SAVE REPORT`. Reports are saved to `%APPDATA%\JA2\Feedback` and include relevant

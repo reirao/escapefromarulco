@@ -341,6 +341,7 @@ namespace
 	void SetBagRegionsEnabled(BOOLEAN enabled);
 	void PositionBagRegions();
 	BOOLEAN AssetCatalogKeyboardHook(InputAtom* event);
+	ST::string SerializeAssetCatalog();
 	void RecordFeedbackEvent(const ST::string& event);
 	BOOLEAN TutorialKeyboardHook(InputAtom* event);
 
@@ -430,6 +431,7 @@ namespace
 			"RESOURCE NODE", "BARRIER"
 		}};
 	constexpr const char* ASSET_CATALOG_PATH = "AssetCatalog/os0-assets.tsv";
+	constexpr const char* BUILTIN_ASSET_CATALOG_PATH = "os0-assets.tsv";
 
 	constexpr UINT8 RESOURCE_BITS = 5;
 	constexpr UINT32 RESOURCE_VALUE_MASK = (1u << RESOURCE_BITS) - 1u;
@@ -709,6 +711,8 @@ namespace
 					gFeedbackEventCount + i) % gFeedbackEvents.size();
 				report += gFeedbackEvents[index] + "\n";
 			}
+			report += "\nASSET CATALOG SNAPSHOT\n----------------------\n";
+			report += SerializeAssetCatalog();
 			report += "\nENGINE LOG (LAST 32 KB)\n-----------------------\n";
 			report += ReadEngineLogTail();
 			report += "\n";
@@ -744,23 +748,29 @@ namespace
 		return nullptr;
 	}
 
+	ST::string SerializeAssetCatalog()
+	{
+		ST::string output =
+			"# Escape from Arulco asset catalog v1\n"
+			"# tileset tile category material role width height buildable label\n";
+		for (AssetCatalogRecord const& record : gAssetCatalog)
+		{
+			output += ST::format("{} {} {} {} {} {} {} {}\t{}\n",
+				record.tileset, record.tileIndex,
+				static_cast<UINT8>(record.category),
+				static_cast<UINT8>(record.material),
+				static_cast<UINT8>(record.role), record.width, record.height,
+				record.buildable ? 1 : 0, record.label);
+		}
+		return output;
+	}
+
 	BOOLEAN WriteAssetCatalog()
 	{
 		try
 		{
 			GCM->userPrivateFiles()->createDir("AssetCatalog");
-			ST::string output =
-				"# Escape from Arulco asset catalog v1\n"
-				"# tileset tile category material role width height buildable label\n";
-			for (AssetCatalogRecord const& record : gAssetCatalog)
-			{
-				output += ST::format("{} {} {} {} {} {} {} {}\t{}\n",
-					record.tileset, record.tileIndex,
-					static_cast<UINT8>(record.category),
-					static_cast<UINT8>(record.material),
-					static_cast<UINT8>(record.role), record.width, record.height,
-					record.buildable ? 1 : 0, record.label);
-			}
+			ST::string const output = SerializeAssetCatalog();
 			AutoSGPFile file{
 				GCM->userPrivateFiles()->openForWriting(ASSET_CATALOG_PATH, true) };
 			file->write(output.c_str(), output.size());
@@ -775,11 +785,9 @@ namespace
 	void LoadAssetCatalog()
 	{
 		gAssetCatalog.clear();
-		try
+		auto merge = [](const ST::string& contents)
 		{
-			AutoSGPFile file{
-				GCM->userPrivateFiles()->openForReading(ASSET_CATALOG_PATH) };
-			std::istringstream stream(file->readStringToEnd().c_str());
+			std::istringstream stream(contents.c_str());
 			std::string line;
 			while (std::getline(stream, line))
 			{
@@ -797,17 +805,39 @@ namespace
 					category < 0 || category >= static_cast<int>(AssetCategory::COUNT) ||
 					material < 0 || material >= static_cast<int>(AssetMaterial::COUNT) ||
 					role < 0 || role >= static_cast<int>(AssetRole::COUNT)) continue;
-				gAssetCatalog.push_back({ static_cast<INT16>(tileset),
+				AssetCatalogRecord parsed{ static_cast<INT16>(tileset),
 					static_cast<UINT16>(tile), static_cast<AssetCategory>(category),
 					static_cast<AssetMaterial>(material), static_cast<AssetRole>(role),
 					static_cast<UINT8>(std::clamp(width, 1, 12)),
 					static_cast<UINT8>(std::clamp(height, 1, 12)),
-					buildable != 0, ST::string(label) });
+					buildable != 0, ST::string(label) };
+				if (AssetCatalogRecord* existing = FindAssetCatalogRecord(
+					parsed.tileset, parsed.tileIndex)) *existing = parsed;
+				else gAssetCatalog.push_back(parsed);
+			}
+		};
+		try
+		{
+			if (GCM->doesGameResExists(BUILTIN_ASSET_CATALOG_PATH))
+			{
+				AutoSGPFile builtIn{
+					GCM->openGameResForReading(BUILTIN_ASSET_CATALOG_PATH) };
+				merge(builtIn->readStringToEnd());
 			}
 		}
 		catch (...)
 		{
-			// The catalog is created by the first SAVE; absence is normal.
+			RecordFeedbackEvent("BUILT-IN ASSET CATALOG LOAD FAILED");
+		}
+		try
+		{
+			AutoSGPFile user{
+				GCM->userPrivateFiles()->openForReading(ASSET_CATALOG_PATH) };
+			merge(user->readStringToEnd());
+		}
+		catch (...)
+		{
+			// The user catalog is created by the first SAVE; absence is normal.
 		}
 	}
 

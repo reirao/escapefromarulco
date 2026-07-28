@@ -69,3 +69,6 @@ The code is experimental and does not represent an official JA2 Stracciatella re
 - Catalog entries immediately override generic inspector names and feed material,
   resource type and footprint into salvage classification and blueprint labels.
 - The shareable database is stored at `%APPDATA%\JA2\AssetCatalog\os0-assets.tsv`.
+- Feedback reports embed the complete catalog snapshot, and the report collector copies
+  the raw TSV. Reviewed community records can be promoted into the version-controlled
+  `assets/externalized/os0-assets.tsv`; local records load afterward as overrides.
