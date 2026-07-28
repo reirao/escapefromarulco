@@ -118,3 +118,17 @@ The code is experimental and does not represent an official JA2 Stracciatella re
 - OS0 now starts as a compact launcher and expands into the live eight-module bar.
   The bar, panel headers, squad commands and context actions use original JA2 pixel
   glyphs from `newicons3.sti` and `door_op2.sti`.
+
+### Live-object and strategy follow-up
+
+- World assets now generate their UI symbol from the selected JA2 tile itself. The
+  stable OS0-owned pixel copy appears in inspection, action and container windows.
+- Selecting an asset plays a short diagrammatic exploded-view animation at its world
+  position and then settles into a compact object marker.
+- `STRATEGIC MAP` no longer leaves tactical mode. It opens the movable live-strategy
+  window with base construction, a clickable 16x16 control map and a team roster that
+  can select and center operators in the loaded sector.
+- Replaced the freezing vanilla `DETAILS / ATTACHMENTS` modal with a native OS0 item
+  view showing condition, stack count, ammunition and installed attachments.
+- Zoom cropping now follows the map edge reached by JA2's camera, allowing the actual
+  left, right, top and bottom boundaries to become visible at 2x zoom.

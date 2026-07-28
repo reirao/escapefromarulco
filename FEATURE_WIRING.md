@@ -7,7 +7,8 @@ the source. It was last verified for `v0.5.1-alpha`.
 | --- | --- | --- |
 | Direct tactical start | Verified | `JAScreens` starts the OS0 sandbox; the bootstrap creates the operator, clears enemies, marks the sector controlled and enters `GAME_SCREEN`. |
 | Character creation | Verified | Name, ten attributes and two freely selected traits are written to both the live soldier and merc profile. |
-| Artwork workspace and movable/minimizable windows | Verified | A compact OS0 launcher expands into an eight-module command bar controlling character, context, tools, actions, object inventory, sector and feedback windows. Positions persist in the user profile and scale across resolutions; panels keep independent drag/close regions and the event log uses real recorded OS0 actions. |
+| Artwork workspace and movable/minimizable windows | Verified | A compact OS0 launcher expands into an eight-module command bar controlling character, context, tools, actions, object inventory, live strategy and feedback windows. Positions persist in the user profile and scale across resolutions; panels keep independent drag/close regions and the event log uses real recorded OS0 actions. |
+| Object-derived UI symbols | Verified | The selected world tile is rendered once into an OS0-owned pixel surface and reused by context, interaction and container windows. Selection plays a short in-world exploded-view animation without retaining volatile map-node pointers. |
 | Character inventory drag/drop | Verified | Uses JA2's item-pointer and placement functions, so slot rules and item stacks remain engine-owned. |
 | Container inventory drag/drop | Verified | Double-click, right-click `OPEN CONTENTS` and the actions panel now share one open path. |
 | Deterministic container loot | Verified | First open seeds material and useful/damaged equipment; an invisible world-item marker prevents refilling and is saved with sector world items. |
@@ -22,7 +23,8 @@ the source. It was last verified for `v0.5.1-alpha`.
 | Weapon impact chips and asset durability | Verified after audit fix | OS0 owns damage for salvageable/resource assets before vanilla can invalidate the structure pointer; critical geometry remains JA2-owned. Destroyed map objects and material drops persist. |
 | Salvage and surface digging | Verified | Nearby tool-gated actions remove map objects/surface layers through map-temp recording and create physical timber, stone, scrap or soil stacks. Digging is surface editing, not deep voxel terrain. |
 | Sector stockpiles/upgrades | Verified | Four resource counters and three upgrade flags use reserved bits in saved `SECTORINFO`. Workshop and depot alter yields; the built shelter can be clicked to recover the current team. |
-| Tactical zoom | Verified | World rendering and display/world input coordinates share the same zoom transform. |
+| Tactical zoom | Verified | World rendering and display/world input coordinates share the same zoom transform; edge-aware crop bias exposes the actual map boundary when JA2's camera reaches it. |
+| Live tactical strategy window | Verified as an initial replacement | `STRATEGIC MAP` now opens a movable live window with base upgrades, the 16x16 control map and a clickable team roster. Travel plotting, assignments, militia and finance still remain future ports from the legacy Map Screen. |
 | Feedback reports | Verified | Writes tester text, game state, recent OS0 events, engine-log tail and asset-catalog snapshot under `%APPDATA%\JA2\Feedback`. |
 
 ## Not implemented yet
@@ -33,5 +35,6 @@ the source. It was last verified for `v0.5.1-alpha`.
 - JA2 1.13 data/code integration.
 - Network multiplayer or synchronized co-op simulation.
 - A balanced campaign, enemy progression or production economy.
+- Live travel plotting, assignments, militia management and finance inside OS0 windows.
 
 These are roadmap items, not current playtest promises.

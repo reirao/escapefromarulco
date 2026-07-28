@@ -18,6 +18,7 @@
 #include "Font.h"
 #include "Font_Control.h"
 #include "GameInstance.h"
+#include "Game_Clock.h"
 #include "GameScreen.h"
 #include "GameVersion.h"
 #include "HImage.h"
@@ -88,8 +89,9 @@ namespace
 	constexpr INT16 ACTIONS_PANEL_H = 174;
 	constexpr INT16 FEEDBACK_PANEL_W = 390;
 	constexpr INT16 FEEDBACK_PANEL_H = 220;
-	constexpr INT16 SECTOR_PANEL_W = 260;
-	constexpr INT16 SECTOR_PANEL_H = 154;
+	constexpr INT16 SECTOR_PANEL_W = 300;
+	constexpr INT16 SECTOR_PANEL_H = 226;
+	constexpr INT16 STRATEGIC_CELL = 9;
 	constexpr INT16 GOD_LIBRARY_W = 234;
 	constexpr INT16 GOD_LIBRARY_H = 112;
 	constexpr INT16 ASSET_CATALOG_W = 318;
@@ -125,6 +127,13 @@ namespace
 	{
 		SOLDIER,
 		WORLD
+	};
+
+	enum class SectorPanelMode : UINT8
+	{
+		BASE,
+		MAP,
+		TEAM
 	};
 
 	enum class ContextAction : UINT8
@@ -318,6 +327,14 @@ namespace
 	GridNo gInspectedGridNo = NOWHERE;
 	UINT8 gInspectedLevel = 0;
 	UINT16 gInspectedTileIndex = NO_TILE;
+	BOOLEAN gItemDetailsVisible = FALSE;
+	OBJECTTYPE gItemDetailsObject{};
+	ST::string gItemDetailsName;
+	SectorPanelMode gSectorPanelMode = SectorPanelMode::BASE;
+	SGPSector gStrategicSelectedSector{ 9, 1, 0 };
+	UINT32 gExplodedViewStarted = 0;
+	GridNo gExplodedViewGridNo = NOWHERE;
+	UINT16 gExplodedViewTileIndex = NO_TILE;
 	BOOLEAN gTutorialActive = TRUE;
 	UINT8 gTutorialStep = 0;
 	ST::string gTutorialName = "Operator";
@@ -384,6 +401,8 @@ namespace
 
 	SGPVObject* gPortrait = nullptr;
 	SGPVSurface* gInspectorPreview = nullptr;
+	SGPVSurface* gObjectSymbolSurface = nullptr;
+	UINT16 gObjectSymbolTileIndex = NO_TILE;
 	SGPVObject* gGodNewIcons = nullptr;
 	SGPVObject* gGodDoorIcons = nullptr;
 	SGPVObject* gGodButtonFrame = nullptr;
@@ -404,6 +423,9 @@ namespace
 	std::array<MOUSE_REGION, 8> gActionPanelRegions;
 	std::array<MOUSE_REGION, 4> gFeedbackRegions;
 	std::array<MOUSE_REGION, 3> gSectorUpgradeRegions;
+	std::array<MOUSE_REGION, 3> gSectorTabRegions;
+	MOUSE_REGION gStrategicMapRegion;
+	MOUSE_REGION gSectorTeamRegion;
 	std::array<MOUSE_REGION, NUM_INV_SLOTS> gSlotRegions;
 	std::array<MOUSE_REGION, NUM_INV_SLOTS> gObjectSlotRegions;
 	MOUSE_REGION gOrbRegion;
@@ -1452,6 +1474,52 @@ namespace
 		BltVideoSurface(gInspectorPreview, FRAME_BUFFER, 0, 0, &source);
 	}
 
+	void RefreshObjectSymbol(UINT16 tileIndex)
+	{
+		gObjectSymbolTileIndex = NO_TILE;
+		if (!gObjectSymbolSurface)
+			gObjectSymbolSurface = AddVideoSurface(64, 64, PIXEL_DEPTH);
+		gObjectSymbolSurface->Fill(Get16BPPColor(FROMRGB(3, 5, 5)));
+		if (tileIndex >= NUMBEROFTILES) return;
+		TILE_ELEMENT const& tile = gTileDatabase[tileIndex];
+		if (!tile.hTileSurface) return;
+		ETRLEObject const& frame =
+			tile.hTileSurface->SubregionProperties(tile.usRegionIndex);
+		const INT16 drawX = static_cast<INT16>(32 - frame.usWidth / 2 -
+			frame.sOffsetX);
+		const INT16 drawY = static_cast<INT16>(57 - frame.usHeight -
+			frame.sOffsetY);
+		BltVideoObject(gObjectSymbolSurface, tile.hTileSurface,
+			tile.usRegionIndex, drawX, drawY);
+		gObjectSymbolTileIndex = tileIndex;
+	}
+
+	void DrawObjectSymbol(INT16 x, INT16 y, INT16 size)
+	{
+		if (!gObjectSymbolSurface || gObjectSymbolTileIndex >= NUMBEROFTILES) return;
+		const SGPBox source{ 0, 0, 64, 64 };
+		const SGPBox destination{
+			static_cast<UINT16>(std::max<INT16>(0, x)),
+			static_cast<UINT16>(std::max<INT16>(0, y)),
+			static_cast<UINT16>(size), static_cast<UINT16>(size)
+		};
+		BltStretchVideoSurface(FRAME_BUFFER, gObjectSymbolSurface,
+			&source, &destination);
+		OutlineBox(x, y, size, size, Get16BPPColor(FROMRGB(118, 0, 0)));
+	}
+
+	void StartExplodedView(GridNo gridNo, UINT16 tileIndex, BOOLEAN force)
+	{
+		if (gridNo < 0 || tileIndex >= NUMBEROFTILES) return;
+		if (force || gridNo != gExplodedViewGridNo ||
+			tileIndex != gExplodedViewTileIndex)
+		{
+			gExplodedViewGridNo = gridNo;
+			gExplodedViewTileIndex = tileIndex;
+			gExplodedViewStarted = GetJA2Clock();
+		}
+	}
+
 	UINT16 ResolveWorldTileIndex(GridNo gridNo, UINT8 level, UINT16 supplied)
 	{
 		if (supplied < NUMBEROFTILES) return supplied;
@@ -2070,6 +2138,15 @@ namespace
 		source.y = std::clamp<INT16>(
 			g_ui.m_tacticalMapCenterY - source.h / 2,
 			destination.y, destination.y + destination.h - source.h);
+		// JA2 stops its render camera when the unzoomed viewport reaches a map
+		// edge. At 2x zoom the old centre crop consequently hid half of that edge.
+		// Bias the crop to the boundary that the engine has actually reached.
+		if (gfScrolledToLeft) source.x = destination.x;
+		else if (gfScrolledToRight)
+			source.x = destination.x + destination.w - source.w;
+		if (gfScrolledToTop) source.y = destination.y;
+		else if (gfScrolledToBottom)
+			source.y = destination.y + destination.h - source.h;
 	}
 
 	void SetBagRegionsEnabled(BOOLEAN enabled)
@@ -2125,7 +2202,14 @@ namespace
 		const FloatingPanel& sectorPanel =
 			gFloatingPanels[static_cast<size_t>(FloatingPanelId::SECTOR)];
 		for (MOUSE_REGION& r : gSectorUpgradeRegions)
+			setVisible(r, sectorPanel.visible && !gContextVisible && !gTutorialActive &&
+				gSectorPanelMode == SectorPanelMode::BASE);
+		for (MOUSE_REGION& r : gSectorTabRegions)
 			setVisible(r, sectorPanel.visible && !gContextVisible && !gTutorialActive);
+		setVisible(gStrategicMapRegion, sectorPanel.visible && !gContextVisible &&
+			!gTutorialActive && gSectorPanelMode == SectorPanelMode::MAP);
+		setVisible(gSectorTeamRegion, sectorPanel.visible && !gContextVisible &&
+			!gTutorialActive && gSectorPanelMode == SectorPanelMode::TEAM);
 		for (size_t i = 0; i < gContextRegions.size(); ++i)
 		{
 			if (enabled && gContextVisible && i < gContextEntryCount)
@@ -2307,9 +2391,14 @@ namespace
 			feedback.y + feedback.h - 28);
 		const FloatingPanel& sector =
 			gFloatingPanels[static_cast<size_t>(FloatingPanelId::SECTOR)];
+		for (size_t i = 0; i < gSectorTabRegions.size(); ++i)
+			MoveRegion(gSectorTabRegions[i], sector.x + 8 + static_cast<INT16>(i) * 72,
+				sector.y + 23);
 		for (size_t i = 0; i < gSectorUpgradeRegions.size(); ++i)
 			MoveRegion(gSectorUpgradeRegions[i], sector.x + 8,
-				sector.y + 56 + static_cast<INT16>(i) * 29);
+				sector.y + 72 + static_cast<INT16>(i) * 39);
+		MoveRegion(gStrategicMapRegion, sector.x + 12, sector.y + 55);
+		MoveRegion(gSectorTeamRegion, sector.x + 8, sector.y + 55);
 		if (gContextVisible) PositionContextRegions();
 	}
 
@@ -2412,7 +2501,10 @@ namespace
 		if (index >= gFloatingPanels.size()) return;
 		gFloatingPanels[index].visible = FALSE;
 		if (index == static_cast<size_t>(FloatingPanelId::OBJECT_INVENTORY))
+		{
 			gLootVisible = FALSE;
+			gItemDetailsVisible = FALSE;
+		}
 		if (index == static_cast<size_t>(FloatingPanelId::FEEDBACK))
 			StopFeedbackEditing();
 		SetBagRegionsEnabled(TRUE);
@@ -2495,6 +2587,56 @@ namespace
 			fInterfacePanelDirty = DIRTYLEVEL2;
 			SetRenderFlags(RENDER_FLAG_FULL);
 		}
+	}
+
+	void SectorTabCallback(MOUSE_REGION* region, UINT32 reason)
+	{
+		if (!(reason & MSYS_CALLBACK_REASON_POINTER_UP)) return;
+		const size_t index = static_cast<size_t>(region->GetUserData<0>());
+		if (index >= 3) return;
+		gSectorPanelMode = static_cast<SectorPanelMode>(index);
+		SetBagRegionsEnabled(TRUE);
+		SetRenderFlags(RENDER_FLAG_FULL);
+	}
+
+	void StrategicMapCallback(MOUSE_REGION*, UINT32 reason)
+	{
+		if (!(reason & MSYS_CALLBACK_REASON_POINTER_UP)) return;
+		FloatingPanel const& panel =
+			gFloatingPanels[static_cast<size_t>(FloatingPanelId::SECTOR)];
+		const INT16 column = (gusMouseXPos - (panel.x + 12)) / STRATEGIC_CELL;
+		const INT16 row = (gusMouseYPos - (panel.y + 55)) / STRATEGIC_CELL;
+		if (column < 0 || column >= 16 || row < 0 || row >= 16) return;
+		gStrategicSelectedSector = SGPSector(column + 1, row + 1, 0);
+		RecordFeedbackEvent(ST::format("STRATEGIC SELECT {}",
+			gStrategicSelectedSector.AsShortString()));
+		SetRenderFlags(RENDER_FLAG_FULL);
+	}
+
+	void SectorTeamCallback(MOUSE_REGION*, UINT32 reason)
+	{
+		if (!(reason & MSYS_CALLBACK_REASON_POINTER_UP)) return;
+		FloatingPanel const& panel =
+			gFloatingPanels[static_cast<size_t>(FloatingPanelId::SECTOR)];
+		const INT16 requestedRow = (gusMouseYPos - (panel.y + 55)) / 18;
+		if (requestedRow < 0) return;
+		INT16 visibleRow = 0;
+		for (INT32 id = gTacticalStatus.Team[OUR_TEAM].bFirstID;
+			id <= gTacticalStatus.Team[OUR_TEAM].bLastID; ++id)
+		{
+			SOLDIERTYPE& soldier = GetMan(id);
+			if (!soldier.bActive || soldier.bLife <= 0) continue;
+			if (visibleRow++ != requestedRow) continue;
+			if (soldier.sSector == gWorldSector && !soldier.fBetweenSectors)
+			{
+				SelectSoldier(&soldier, SELSOLDIER_FORCE_RESELECT);
+				LocateSoldier(&soldier, DONTSETLOCATOR);
+				gInspectedSoldier = &soldier;
+				gInventorySoldier = &soldier;
+			}
+			break;
+		}
+		SetRenderFlags(RENDER_FLAG_FULL);
 	}
 
 	void ApplyCursorTool(UINT8 action)
@@ -2850,23 +2992,26 @@ namespace
 			}
 			case ContextAction::DETAILS:
 			{
-				const INT16 detailX = std::clamp<INT16>(
-					gContextX, 0, std::max<INT16>(0, SCREEN_WIDTH - 320));
-				const INT16 detailY = std::clamp<INT16>(
-					gContextY, 0, std::max<INT16>(0, SCREEN_HEIGHT - 200));
+				OBJECTTYPE const* detailObject = nullptr;
 				if (gContextWorldItemIndex >= 0 &&
 					static_cast<size_t>(gContextWorldItemIndex) < gWorldItems.size())
 				{
 					WORLDITEM& worldItem = GetWorldItem(gContextWorldItemIndex);
-					if (worldItem.fExists)
-						InternalInitItemDescriptionBox(&worldItem.o,
-							detailX, detailY, 0, selected);
+					if (worldItem.fExists) detailObject = &worldItem.o;
 				}
 				else if (subject && gContextInventorySlot != NO_SLOT)
 				{
-					InitItemDescriptionBox(subject,
-						static_cast<UINT8>(gContextInventorySlot),
-						detailX, detailY, 0);
+					detailObject = &subject->inv[gContextInventorySlot];
+				}
+				if (detailObject && detailObject->usItem != NOTHING)
+				{
+					gItemDetailsObject = *detailObject;
+					gItemDetailsName = GCM->getItem(detailObject->usItem)->getName();
+					gItemDetailsVisible = TRUE;
+					gContentsMode = ContentsMode::WORLD;
+					gLootVisible = TRUE;
+					gFloatingPanels[static_cast<size_t>(
+						FloatingPanelId::OBJECT_INVENTORY)].visible = TRUE;
 				}
 				break;
 			}
@@ -3374,8 +3519,10 @@ namespace
 		switch (region->GetUserData<0>())
 		{
 			case 0:
-				GoToMapScreenFromTactical();
-				return;
+				gSectorPanelMode = SectorPanelMode::MAP;
+				gStrategicSelectedSector = gWorldSector;
+				gFloatingPanels[static_cast<size_t>(FloatingPanelId::SECTOR)].visible = TRUE;
+				break;
 			case 1:
 				gfBeginEndTurn = TRUE;
 				break;
@@ -3615,7 +3762,11 @@ namespace
 		const std::array<size_t, static_cast<size_t>(FloatingPanelId::COUNT)> icons{{
 			2, 3, 4, 5, 6, 7
 		}};
-		DrawCommandIcon(icons[static_cast<size_t>(id)], panel.x + 5, panel.y + 1);
+		if ((id == FloatingPanelId::CONTEXT || id == FloatingPanelId::ACTIONS) &&
+			!gInspectedSoldier && gObjectSymbolTileIndex < NUMBEROFTILES)
+			DrawObjectSymbol(panel.x + 4, panel.y + 2, 15);
+		else
+			DrawCommandIcon(icons[static_cast<size_t>(id)], panel.x + 5, panel.y + 1);
 		MPrint(panel.x + 28, panel.y + 5, title);
 		MPrint(panel.x + panel.w - 13, panel.y + 5, "X");
 	}
@@ -3647,7 +3798,9 @@ namespace
 		}
 		else if (gInspectedGridNo >= 0 && gInspectedGridNo < WORLD_MAX)
 		{
-			if (gInspectorPreview)
+			if (gObjectSymbolTileIndex < NUMBEROFTILES)
+				DrawObjectSymbol(panel.x + 8, panel.y + 24, 64);
+			else if (gInspectorPreview)
 				BltVideoSurface(FRAME_BUFFER, gInspectorPreview,
 					panel.x + 8, panel.y + 24, nullptr);
 			SetFontForeground(FONT_WHITE);
@@ -3782,41 +3935,133 @@ namespace
 			gFloatingPanels[static_cast<size_t>(FloatingPanelId::SECTOR)];
 		if (!panel.visible) return;
 		DrawFloatingPanelShell(panel, FloatingPanelId::SECTOR,
-			ST::format("SECTOR / {}", gWorldSector.AsShortString()));
+			ST::format("LIVE STRATEGY / DAY {} / {}:00", GetWorldDay(),
+				GetWorldHour()));
 		const UINT16 red = Get16BPPColor(FROMRGB(118, 0, 0));
+		const UINT16 bright = Get16BPPColor(FROMRGB(205, 12, 12));
+		const UINT16 dark = Get16BPPColor(FROMRGB(12, 17, 17));
+		const UINT16 friendly = Get16BPPColor(FROMRGB(75, 94, 70));
 		SetFont(TINYFONT1);
 		SetFontBackground(FONT_MCOLOR_BLACK);
-		SetFontForeground(FONT_MCOLOR_RED);
-		MPrint(panel.x + 8, panel.y + 24, "STOCKPILE");
-		SetFontForeground(FONT_WHITE);
-		MPrint(panel.x + 70, panel.y + 24,
-			ST::format("W{} S{} R{} E{}",
-				SectorResource(ResourceKind::TIMBER),
-				SectorResource(ResourceKind::STONE),
-				SectorResource(ResourceKind::SCRAP),
-				SectorResource(ResourceKind::SOIL)));
-		SetFontForeground(FONT_MCOLOR_LTGRAY);
-		MPrint(panel.x + 8, panel.y + 39,
-			"DOUBLE-CLICK MATERIAL TO DEPOSIT");
-
-		for (size_t i = 0; i < gSectorUpgrades.size(); ++i)
+		constexpr std::array<const char*, 3> tabs{{ "BASE", "ARULCO MAP", "TEAM" }};
+		for (size_t i = 0; i < tabs.size(); ++i)
 		{
-			SectorUpgrade const& upgrade = gSectorUpgrades[i];
-			const INT16 y = panel.y + 55 + static_cast<INT16>(i) * 29;
-			const BOOLEAN built = HasUpgrade(upgrade);
-			const BOOLEAN ready = CanBuildUpgrade(upgrade);
-			OutlineBox(panel.x + 8, y, panel.w - 16, 26,
-				ready ? Get16BPPColor(FROMRGB(205, 12, 12)) : red);
-			SetFontForeground(built ? FONT_MCOLOR_RED :
-				ready ? FONT_WHITE : FONT_MCOLOR_DKGRAY);
-			MPrint(panel.x + 13, y + 4,
-				ST::format("{} {}", built && i == 0 ? "[REST]" :
-					built ? "[BUILT]" : "[BUILD]", upgrade.name));
+			const INT16 x = panel.x + 8 + static_cast<INT16>(i) * 72;
+			OutlineBox(x, panel.y + 23, 68, 19,
+				static_cast<size_t>(gSectorPanelMode) == i ? bright : red);
+			SetFontForeground(static_cast<size_t>(gSectorPanelMode) == i ?
+				FONT_WHITE : FONT_MCOLOR_DKGRAY);
+			MPrint(x + 6, panel.y + 29, tabs[i]);
+		}
+
+		if (gSectorPanelMode == SectorPanelMode::BASE)
+		{
+			SetFontForeground(FONT_MCOLOR_RED);
+			MPrint(panel.x + 8, panel.y + 48,
+				ST::format("{} / STOCK  W{} S{} R{} E{}", gWorldSector.AsShortString(),
+					SectorResource(ResourceKind::TIMBER),
+					SectorResource(ResourceKind::STONE),
+					SectorResource(ResourceKind::SCRAP),
+					SectorResource(ResourceKind::SOIL)));
+			for (size_t i = 0; i < gSectorUpgrades.size(); ++i)
+			{
+				SectorUpgrade const& upgrade = gSectorUpgrades[i];
+				const INT16 y = panel.y + 71 + static_cast<INT16>(i) * 39;
+				const BOOLEAN built = HasUpgrade(upgrade);
+				const BOOLEAN ready = CanBuildUpgrade(upgrade);
+				OutlineBox(panel.x + 8, y, panel.w - 16, 34, ready ? bright : red);
+				SetFontForeground(built ? FONT_MCOLOR_RED :
+					ready ? FONT_WHITE : FONT_MCOLOR_DKGRAY);
+				MPrint(panel.x + 13, y + 5,
+					ST::format("{} {}", built && i == 0 ? "[REST]" :
+						built ? "[BUILT]" : "[BUILD]", upgrade.name));
+				SetFontForeground(FONT_MCOLOR_LTGRAY);
+				MPrint(panel.x + 13, y + 19,
+					built ? upgrade.benefit : ST::format("W{} S{} R{} E{} / {}",
+						upgrade.timber, upgrade.stone, upgrade.scrap, upgrade.soil,
+						upgrade.benefit));
+			}
+			SetFontForeground(FONT_MCOLOR_DKGRAY);
+			MPrint(panel.x + 8, panel.y + panel.h - 17,
+				"MATERIAL: DOUBLE-CLICK TO DEPOSIT");
+		}
+		else if (gSectorPanelMode == SectorPanelMode::MAP)
+		{
+			const INT16 mapX = panel.x + 12;
+			const INT16 mapY = panel.y + 55;
+			for (INT16 row = 0; row < 16; ++row)
+			{
+				for (INT16 column = 0; column < 16; ++column)
+				{
+					SGPSector const sector(column + 1, row + 1, 0);
+					StrategicMapElement const& strategic =
+						StrategicMap[sector.AsStrategicIndex()];
+					UINT16 colour = strategic.fEnemyControlled ? red : friendly;
+					ColorFillVideoSurfaceArea(FRAME_BUFFER,
+						mapX + column * STRATEGIC_CELL + 1,
+						mapY + row * STRATEGIC_CELL + 1,
+						mapX + column * STRATEGIC_CELL + STRATEGIC_CELL - 2,
+						mapY + row * STRATEGIC_CELL + STRATEGIC_CELL - 2, colour);
+					if (sector == gWorldSector || sector == gStrategicSelectedSector)
+						OutlineBox(mapX + column * STRATEGIC_CELL,
+							mapY + row * STRATEGIC_CELL, STRATEGIC_CELL,
+							STRATEGIC_CELL, sector == gWorldSector ? bright :
+							Get16BPPColor(FROMRGB(210, 190, 145)));
+				}
+			}
+			const INT16 infoX = mapX + 16 * STRATEGIC_CELL + 12;
+			StrategicMapElement const& selected =
+				StrategicMap[gStrategicSelectedSector.AsStrategicIndex()];
+			SetFontForeground(FONT_MCOLOR_RED);
+			MPrint(infoX, mapY, "SECTOR");
+			SetFontForeground(FONT_WHITE);
+			MPrint(infoX, mapY + 15, gStrategicSelectedSector.AsShortString());
+			SetFontForeground(selected.fEnemyControlled ?
+				FONT_MCOLOR_RED : FONT_MCOLOR_LTGRAY);
+			MPrint(infoX, mapY + 34, selected.fEnemyControlled ?
+				"HOSTILE" : "CONTROLLED");
+			INT16 teamCount = 0;
+			for (INT32 id = gTacticalStatus.Team[OUR_TEAM].bFirstID;
+				id <= gTacticalStatus.Team[OUR_TEAM].bLastID; ++id)
+			{
+				SOLDIERTYPE const& soldier = GetMan(id);
+				if (soldier.bActive && soldier.bLife > 0 &&
+					soldier.sSector == gStrategicSelectedSector) ++teamCount;
+			}
 			SetFontForeground(FONT_MCOLOR_LTGRAY);
-			MPrint(panel.x + 13, y + 14,
-				built ? upgrade.benefit : ST::format("W{} S{} R{} E{} / {}",
-					upgrade.timber, upgrade.stone, upgrade.scrap, upgrade.soil,
-					upgrade.benefit));
+			MPrint(infoX, mapY + 53, ST::format("TEAM {}", teamCount));
+			MPrint(infoX, mapY + 73, "CLICK CELL");
+			MPrint(infoX, mapY + 86, "TO INSPECT");
+			OutlineBox(infoX, mapY + 108, 104, 25, dark);
+			SetFontForeground(FONT_MCOLOR_DKGRAY);
+			MPrint(infoX + 6, mapY + 116, "LIVE / NO PAUSE");
+		}
+		else
+		{
+			SetFontForeground(FONT_MCOLOR_RED);
+			MPrint(panel.x + 8, panel.y + 48, "OPERATORS / CLICK TO SELECT & CENTER");
+			INT16 row = 0;
+			for (INT32 id = gTacticalStatus.Team[OUR_TEAM].bFirstID;
+				id <= gTacticalStatus.Team[OUR_TEAM].bLastID && row < 8; ++id)
+			{
+				SOLDIERTYPE const& soldier = GetMan(id);
+				if (!soldier.bActive || soldier.bLife <= 0) continue;
+				const INT16 y = panel.y + 55 + row * 18;
+				OutlineBox(panel.x + 8, y, panel.w - 16, 17,
+					&soldier == GetSelectedMan() ? bright : red);
+				SetFontForeground(&soldier == GetSelectedMan() ?
+					FONT_WHITE : FONT_MCOLOR_LTGRAY);
+				MPrint(panel.x + 13, y + 5,
+					ST::format("{}  HP {}/{}  {}{}", soldier.name.left(13),
+						soldier.bLife, soldier.bLifeMax, soldier.sSector.AsShortString(),
+						soldier.fBetweenSectors ? " / MOVING" : ""));
+				++row;
+			}
+			if (row == 0)
+			{
+				SetFontForeground(FONT_MCOLOR_DKGRAY);
+				MPrint(panel.x + 12, panel.y + 66, "NO ACTIVE OPERATORS");
+			}
 		}
 		InvalidateRegion(panel.x, panel.y, panel.x + panel.w, panel.y + panel.h);
 	}
@@ -4164,6 +4409,53 @@ namespace
 			Get16BPPColor(FROMRGB(4, 7, 7)));
 		OutlineBox(gLootX, gLootY, PANE_W, BAG_H, red);
 		OutlineBox(gLootX + 7, gLootY + 17, PANE_W - 14, TAB_Y - 20, mutedRed);
+		if (gItemDetailsVisible && gItemDetailsObject.usItem != NOTHING)
+		{
+			ItemModel const* const item = GCM->getItem(gItemDetailsObject.usItem);
+			SetFont(TINYFONT1);
+			SetFontBackground(FONT_MCOLOR_BLACK);
+			SetFontForeground(FONT_MCOLOR_RED);
+			MPrint(gLootX + 12, gLootY + 5,
+				ST::format("ITEM / {}", gItemDetailsName).left(56));
+			MPrint(gLootX + PANE_W - 13, gLootY + 5, "X");
+			OutlineBox(gLootX + 14, gLootY + 27, 92, 72, red);
+			INVRenderItem(FRAME_BUFFER, GetSelectedMan(), gItemDetailsObject,
+				gLootX + 18, gLootY + 31, 84, 64, DIRTYLEVEL2, 0,
+				SGP_TRANSPARENT);
+			SetFontForeground(FONT_WHITE);
+			MPrint(gLootX + 121, gLootY + 29, item->getName().left(30));
+			SetFontForeground(FONT_MCOLOR_LTGRAY);
+			MPrint(gLootX + 121, gLootY + 47,
+				ST::format("CONDITION {} / COUNT {}",
+					gItemDetailsObject.bStatus[0],
+					gItemDetailsObject.ubNumberOfObjects));
+			if (item->getItemClass() == IC_GUN)
+				MPrint(gLootX + 121, gLootY + 62,
+					ST::format("AMMO {}", gItemDetailsObject.ubGunShotsLeft));
+			SetFontForeground(FONT_MCOLOR_RED);
+			MPrint(gLootX + 121, gLootY + 83, "ATTACHMENTS");
+			INT16 attachmentLine = 0;
+			for (UINT8 i = 0; i < MAX_ATTACHMENTS; ++i)
+			{
+				if (gItemDetailsObject.usAttachItem[i] == NOTHING) continue;
+				SetFontForeground(FONT_MCOLOR_LTGRAY);
+				MPrint(gLootX + 121, gLootY + 98 + attachmentLine * 14,
+					ST::format("{} / {}", GCM->getItem(
+						gItemDetailsObject.usAttachItem[i])->getName(),
+						gItemDetailsObject.bAttachStatus[i]).left(43));
+				++attachmentLine;
+			}
+			if (attachmentLine == 0)
+			{
+				SetFontForeground(FONT_MCOLOR_DKGRAY);
+				MPrint(gLootX + 121, gLootY + 98, "NONE");
+			}
+			SetFontForeground(FONT_MCOLOR_DKGRAY);
+			MPrint(gLootX + 14, gLootY + BAG_H - 23,
+				"OS0 NATIVE DETAIL VIEW / NO VANILLA MODAL");
+			InvalidateRegion(gLootX, gLootY, gLootX + PANE_W, gLootY + BAG_H);
+			return;
+		}
 		if (gLootGridNo < 0 || gLootGridNo >= WORLD_MAX)
 		{
 			SetFont(TINYFONT1);
@@ -4187,13 +4479,11 @@ namespace
 			return;
 		}
 		OutlineBox(gLootX + PANE_W - 57, gLootY + 23, 45, 43, red);
-		// Do not blit an arbitrary world tile into the UI. Interactive nodes may
-		// reference cached/animated subimages whose lifetime belongs to the world
-		// renderer; using them here caused the container-open crash. A stable
-		// pixel glyph identifies the source while its actual items use JA2 icons.
-		OutlineBox(gLootX + PANE_W - 47, gLootY + 34, 24, 18, red);
-		ColorFillVideoSurfaceArea(FRAME_BUFFER, gLootX + PANE_W - 43, gLootY + 30,
-			gLootX + PANE_W - 28, gLootY + 34, red);
+		// The selected asset is rendered once into an owned off-screen surface.
+		// Windows can safely reuse that pixel icon without retaining a volatile
+		// world-level node or animated tile pointer.
+		if (gObjectSymbolTileIndex < NUMBEROFTILES)
+			DrawObjectSymbol(gLootX + PANE_W - 54, gLootY + 26, 37);
 
 		size_t slot = 0;
 		for (ITEM_POOL* item = GetItemPool(gLootGridNo, gLootLevel);
@@ -4352,6 +4642,48 @@ namespace
 		InvalidateRegion(x - 17, y - 12, x + 18, y + 15);
 	}
 
+	void DrawWorldAssetExplodedView()
+	{
+		if (gInspectedSoldier || gInspectedGridNo < 0 ||
+			gInspectedTileIndex >= NUMBEROFTILES ||
+			gObjectSymbolTileIndex >= NUMBEROFTILES) return;
+		INT16 x;
+		INT16 y;
+		GetGridNoScreenPos(gInspectedGridNo, gInspectedLevel, &x, &y);
+		OS0MapWorldToDisplayScreen(&x, &y);
+		if (x < gsVIEWPORT_START_X + 54 || x > gsVIEWPORT_END_X - 54 ||
+			y < gsVIEWPORT_WINDOW_START_Y + 48 ||
+			y > gsVIEWPORT_WINDOW_END_Y - 24) return;
+		const UINT32 age = GetJA2Clock() - gExplodedViewStarted;
+		const INT16 settledX = x + 19;
+		const INT16 settledY = y - 39;
+		if (age >= 900)
+		{
+			DrawObjectSymbol(settledX, settledY, 18);
+			InvalidateRegion(settledX - 2, settledY - 2,
+				settledX + 20, settledY + 20);
+			return;
+		}
+		const INT16 spread = static_cast<INT16>(8 + age * 24 / 900);
+		const INT16 topX = x - 9;
+		const INT16 topY = y - 32 - spread / 2;
+		const INT16 leftX = x - 10 - spread;
+		const INT16 leftY = y - 15;
+		const INT16 rightX = x + spread - 8;
+		const INT16 rightY = y - 15;
+		const UINT16 connector = Get16BPPColor(FROMRGB(205, 12, 12));
+		ColorFillVideoSurfaceArea(FRAME_BUFFER, x - spread, y - 7,
+			x + spread, y - 7, connector);
+		ColorFillVideoSurfaceArea(FRAME_BUFFER, x, topY + 18,
+			x, y - 7, connector);
+		DrawObjectSymbol(topX, topY, 18);
+		DrawObjectSymbol(leftX, leftY, 18);
+		DrawObjectSymbol(rightX, rightY, 18);
+		InvalidateRegion(x - spread - 14, topY - 3,
+			x + spread + 14, y + 8);
+		SetRenderFlags(RENDER_FLAG_FULL);
+	}
+
 	BOOLEAN FinalizeWorldMove()
 	{
 		if (gWorldMoveSource < 0 || gWorldMoveSource >= WORLD_MAX ||
@@ -4390,6 +4722,8 @@ namespace
 				gInspectedGridNo = gWorldMoveDestination;
 				gLootGridNo = gWorldMoveDestination;
 				CaptureInspectorPreview(gWorldMoveDestination, gInspectedLevel);
+				RefreshObjectSymbol(gInspectedTileIndex);
+				StartExplodedView(gWorldMoveDestination, gInspectedTileIndex, TRUE);
 			}
 			return TRUE;
 		}
@@ -4954,11 +5288,28 @@ void InitializeOS0IngameUI()
 	for (size_t i = 0; i < gSectorUpgradeRegions.size(); ++i)
 	{
 		MSYS_DefineRegion(&gSectorUpgradeRegions[i], 0, 0,
-			SECTOR_PANEL_W - 16, 26, MSYS_PRIORITY_HIGHEST, CURSOR_NORMAL,
+			SECTOR_PANEL_W - 16, 34, MSYS_PRIORITY_HIGHEST, CURSOR_NORMAL,
 			MSYS_NO_CALLBACK, SectorUpgradeCallback);
 		gSectorUpgradeRegions[i].SetUserData<0>(i);
 		gSectorUpgradeRegions[i].Disable();
 	}
+	for (size_t i = 0; i < gSectorTabRegions.size(); ++i)
+	{
+		MSYS_DefineRegion(&gSectorTabRegions[i], 0, 0, 68, 19,
+			MSYS_PRIORITY_HIGHEST, CURSOR_NORMAL, MSYS_NO_CALLBACK,
+			SectorTabCallback);
+		gSectorTabRegions[i].SetUserData<0>(i);
+		gSectorTabRegions[i].Disable();
+	}
+	MSYS_DefineRegion(&gStrategicMapRegion, 0, 0,
+		16 * STRATEGIC_CELL, 16 * STRATEGIC_CELL,
+		MSYS_PRIORITY_HIGHEST, CURSOR_NORMAL, MSYS_NO_CALLBACK,
+		StrategicMapCallback);
+	gStrategicMapRegion.Disable();
+	MSYS_DefineRegion(&gSectorTeamRegion, 0, 0, SECTOR_PANEL_W - 16, 150,
+		MSYS_PRIORITY_HIGHEST, CURSOR_NORMAL, MSYS_NO_CALLBACK,
+		SectorTeamCallback);
+	gSectorTeamRegion.Disable();
 	for (size_t i = 0; i < gSlots.size(); ++i)
 	{
 		const SlotLayout& slot = gSlots[i];
@@ -5045,6 +5396,9 @@ void ShutdownOS0IngameUI()
 	for (MOUSE_REGION& r : gActionPanelRegions) MSYS_RemoveRegion(&r);
 	for (MOUSE_REGION& r : gFeedbackRegions) MSYS_RemoveRegion(&r);
 	for (MOUSE_REGION& r : gSectorUpgradeRegions) MSYS_RemoveRegion(&r);
+	for (MOUSE_REGION& r : gSectorTabRegions) MSYS_RemoveRegion(&r);
+	MSYS_RemoveRegion(&gStrategicMapRegion);
+	MSYS_RemoveRegion(&gSectorTeamRegion);
 	for (MOUSE_REGION& r : gSlotRegions) MSYS_RemoveRegion(&r);
 	for (MOUSE_REGION& r : gObjectSlotRegions) MSYS_RemoveRegion(&r);
 	MSYS_RemoveRegion(&gOrbRegion);
@@ -5083,6 +5437,12 @@ void ShutdownOS0IngameUI()
 	{
 		DeleteVideoSurface(gInspectorPreview);
 		gInspectorPreview = nullptr;
+	}
+	if (gObjectSymbolSurface)
+	{
+		DeleteVideoSurface(gObjectSymbolSurface);
+		gObjectSymbolSurface = nullptr;
+		gObjectSymbolTileIndex = NO_TILE;
 	}
 	SetUIKeyboardHook(nullptr);
 	gFeedbackEditing = FALSE;
@@ -5213,6 +5573,7 @@ void RenderOS0IngameUI()
 		}
 	}
 	DrawWorldSelection();
+	DrawWorldAssetExplodedView();
 	DrawImpactParticles();
 	DrawOrb();
 	DrawActionMenu();
@@ -5324,6 +5685,8 @@ BOOLEAN OS0SelectWorldObject(SOLDIERTYPE* target, GridNo gridNo,
 	CloseContextMenu();
 	if (target)
 	{
+		gItemDetailsVisible = FALSE;
+		gObjectSymbolTileIndex = NO_TILE;
 		gInspectedSoldier = target;
 		gInspectedGridNo = NOWHERE;
 		gContentsMode = ContentsMode::SOLDIER;
@@ -5360,6 +5723,8 @@ BOOLEAN OS0SelectWorldObject(SOLDIERTYPE* target, GridNo gridNo,
 	gInspectedGridNo = gridNo;
 	gInspectedLevel = level;
 	gInspectedTileIndex = tileIndex;
+	RefreshObjectSymbol(tileIndex);
+	StartExplodedView(gridNo, tileIndex, TRUE);
 	gLootGridNo = gridNo;
 	gLootLevel = level;
 	gLootTileIndex = tileIndex;
@@ -5373,6 +5738,7 @@ BOOLEAN OS0SelectWorldObject(SOLDIERTYPE* target, GridNo gridNo,
 	// not close the loot window that the double-click has just opened.
 	if (!sameWorldSelection)
 	{
+		gItemDetailsVisible = FALSE;
 		gLootVisible = FALSE;
 		gFloatingPanels[static_cast<size_t>(FloatingPanelId::OBJECT_INVENTORY)].visible = FALSE;
 	}
@@ -5397,6 +5763,8 @@ void OS0HoverWorldObject(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 		gHoverCursorGridNo = gridNo;
 		gHoverCursorLevel = level;
 		gHoverCursorTileIndex = tileIndex;
+		if (!target && tileIndex < NUMBEROFTILES)
+			StartExplodedView(gridNo, tileIndex, FALSE);
 		if (!gWorldMovePending && !gWorldMoveWalking)
 		{
 			std::array<UINT8, 6> actions{};
@@ -5754,6 +6122,9 @@ void OS0OpenWorldContainer(GridNo gridNo, UINT8 level, UINT16 tileIndex)
 	gInspectedGridNo = gridNo;
 	gInspectedLevel = level;
 	gInspectedTileIndex = tileIndex;
+	gItemDetailsVisible = FALSE;
+	RefreshObjectSymbol(tileIndex);
+	StartExplodedView(gridNo, tileIndex, TRUE);
 	gMode = ComputerMode::CONTENTS;
 	gContentsMode = ContentsMode::WORLD;
 	const BOOLEAN hasContents = GetItemPool(gridNo, level) != nullptr ||

@@ -50,6 +50,14 @@ playtest in its own folder and point the launcher to the original game directory
     impact chips, eventual destruction and material loot; ordinary walls must remain.
 24. Open a fresh container once by double-click and a second fresh container through
     right-click `OPEN CONTENTS`; both paths must seed and display loot exactly once.
+25. Select several different world assets. Verify each OS0 window shows the object's
+    real pixel silhouette and the world marker briefly expands into three linked parts.
+26. Choose `DETAILS / ATTACHMENTS` on ground and inventory items. Verify the OS0 detail
+    window opens immediately, remains responsive and lists ammunition/attachments.
+27. Click `STRATEGIC MAP`, switch among `BASE`, `ARULCO MAP` and `TEAM`, select map
+    sectors, then select and center an operator from the team list without leaving play.
+28. At 2x zoom, scroll to all four map limits and verify the true edge is visible and
+    world interaction remains aligned with the cursor.
 
 ## Writing a useful report
 
