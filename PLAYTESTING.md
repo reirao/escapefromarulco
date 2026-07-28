@@ -54,7 +54,7 @@ playtest in its own folder and point the launcher to the original game directory
 24. Open a fresh container once by double-click and a second fresh container through
     right-click `OPEN CONTENTS`; both paths must seed and display loot exactly once.
 25. Select several different world assets. Verify each OS0 window shows the object's
-    real pixel silhouette and the world marker briefly expands into three linked parts.
+    real pixel silhouette and the world marker settles without restarting on hover.
 26. Choose `DETAILS / ATTACHMENTS` on ground and inventory items. Verify the OS0 detail
     window opens immediately, remains responsive and lists ammunition/attachments.
 27. Click `STRATEGIC MAP`, switch among `BASE`, `ARULCO MAP` and `TEAM`, select map
@@ -64,6 +64,10 @@ playtest in its own folder and point the launcher to the original game directory
 29. Hover and click across the full visible silhouettes of a large wreck, tree, debris
     heap and multi-tile structure. The same object must remain identified on every
     opaque section; transparent gaps should continue to select the world behind it.
+30. Right-click world objects and terrain. Verify the object-anchored icon fan stays
+    still, follows camera/zoom movement, shows an action label on hover and every
+    enabled icon is directly clickable. Character and item-specific text menus should
+    continue to work after closing the icon fan.
 
 ## Writing a useful report
 

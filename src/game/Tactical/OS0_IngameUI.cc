@@ -293,6 +293,7 @@ namespace
 	BOOLEAN gInventoryVisible = FALSE;
 	BOOLEAN gLootVisible = FALSE;
 	BOOLEAN gContextVisible = FALSE;
+	BOOLEAN gObjectActionFanVisible = FALSE;
 	ContentsMode gContentsMode = ContentsMode::SOLDIER;
 	BOOLEAN gHoverVisible = FALSE;
 	BOOLEAN gBagDragging = FALSE;
@@ -1556,6 +1557,7 @@ namespace
 	void CloseContextMenu()
 	{
 		gContextVisible = FALSE;
+		gObjectActionFanVisible = FALSE;
 		gHoverVisible = FALSE;
 		gContextEntryCount = 0;
 		gContextInventorySlot = NO_SLOT;
@@ -1576,6 +1578,33 @@ namespace
 	{
 		if (gPanelActionEntryCount >= gPanelActionEntries.size()) return;
 		gPanelActionEntries[gPanelActionEntryCount++] = { action, label, enabled };
+	}
+
+	UINT16 ContextActionIconFrame(ContextAction action)
+	{
+		switch (action)
+		{
+			case ContextAction::CONTENTS:
+			case ContextAction::PICK_UP:
+			case ContextAction::EQUIP_ITEM:
+			case ContextAction::MOVE_ITEM: return 18;
+			case ContextAction::CARRY:
+			case ContextAction::STAND:
+			case ContextAction::TAKE_COVER: return 3;
+			case ContextAction::CROUCH: return 6;
+			case ContextAction::PRONE: return 9;
+			case ContextAction::TALK: return 21;
+			case ContextAction::ATTACK:
+			case ContextAction::WEAPON_MODE:
+			case ContextAction::RELOAD:
+			case ContextAction::UNLOAD: return 24;
+			case ContextAction::DIG:
+			case ContextAction::SALVAGE:
+			case ContextAction::BUILD: return 39;
+			case ContextAction::CATALOG: return 12;
+			case ContextAction::STEALTH: return 0;
+			default: return 12;
+		}
 	}
 
 	const char* TerrainPhysicsName(TerrainTypeDefines terrain)
@@ -2112,13 +2141,71 @@ namespace
 
 	void PositionContextRegions()
 	{
+		if (gObjectActionFanVisible)
+		{
+			constexpr INT16 iconSize = 26;
+			constexpr INT16 cellSize = 30;
+			const size_t columns = std::min<size_t>(6, gContextEntryCount);
+			const size_t rows = (gContextEntryCount + 5) / 6;
+			const INT16 width = std::max<INT16>(64,
+				static_cast<INT16>(columns * cellSize + 8));
+			const INT16 height = static_cast<INT16>(
+				16 + rows * cellSize + 31);
+
+			INT16 anchorX = gContextX + width / 2;
+			INT16 anchorY = gContextY + height + 12;
+			if (gContextGridNo >= 0 && gContextGridNo < WORLD_MAX)
+			{
+				GetGridNoScreenPos(gContextGridNo, gContextLevel,
+					&anchorX, &anchorY);
+				OS0MapWorldToDisplayScreen(&anchorX, &anchorY);
+			}
+			const INT16 preferredY = static_cast<INT16>(anchorY - height - 14);
+			gContextX = std::clamp<INT16>(anchorX - width / 2,
+				gsVIEWPORT_START_X, std::max<INT16>(gsVIEWPORT_START_X,
+					gsVIEWPORT_END_X - width));
+			gContextY = preferredY >= gsVIEWPORT_WINDOW_START_Y ? preferredY :
+				std::clamp<INT16>(anchorY + 18, gsVIEWPORT_WINDOW_START_Y,
+					std::max<INT16>(gsVIEWPORT_WINDOW_START_Y,
+						gsVIEWPORT_WINDOW_END_Y - height));
+
+			gContextBlock.RegionTopLeftX = gContextX;
+			gContextBlock.RegionTopLeftY = gContextY;
+			gContextBlock.RegionBottomRightX = gContextX + width;
+			gContextBlock.RegionBottomRightY = gContextY + height;
+			for (size_t i = 0; i < gContextRegions.size(); ++i)
+			{
+				if (i >= gContextEntryCount) continue;
+				const size_t row = i / 6;
+				const size_t first = row * 6;
+				const size_t rowCount = std::min<size_t>(6,
+					gContextEntryCount - first);
+				const INT16 rowWidth = static_cast<INT16>(rowCount * cellSize);
+				const INT16 x = static_cast<INT16>(gContextX +
+					(width - rowWidth) / 2 + (i - first) * cellSize + 2);
+				const INT16 y = static_cast<INT16>(gContextY + 16 + row * cellSize);
+				gContextRegions[i].RegionTopLeftX = x;
+				gContextRegions[i].RegionTopLeftY = y;
+				gContextRegions[i].RegionBottomRightX = x + iconSize;
+				gContextRegions[i].RegionBottomRightY = y + iconSize;
+				gContextRegions[i].SetFastHelpText(gContextEntries[i].label);
+			}
+			return;
+		}
+		constexpr INT16 width = 168;
 		const INT16 height = static_cast<INT16>(20 + gContextEntryCount * 18);
-		MoveRegion(gContextBlock, gContextX, gContextY);
+		gContextBlock.RegionTopLeftX = gContextX;
+		gContextBlock.RegionTopLeftY = gContextY;
+		gContextBlock.RegionBottomRightX = gContextX + width;
 		gContextBlock.RegionBottomRightY = gContextY + height;
 		for (size_t i = 0; i < gContextRegions.size(); ++i)
 		{
-			MoveRegion(gContextRegions[i], gContextX + 4,
+			const INT16 y = static_cast<INT16>(
 				gContextY + 17 + static_cast<INT16>(i) * 18);
+			gContextRegions[i].RegionTopLeftX = gContextX + 4;
+			gContextRegions[i].RegionTopLeftY = y;
+			gContextRegions[i].RegionBottomRightX = gContextX + 164;
+			gContextRegions[i].RegionBottomRightY = y + 17;
 		}
 	}
 
@@ -3898,25 +3985,8 @@ namespace
 		}
 		for (size_t i = 0; i < gPanelActionEntryCount; ++i)
 		{
-			UINT16 iconFrame = 12;
-			switch (gPanelActionEntries[i].action)
-			{
-				case ContextAction::CONTENTS:
-				case ContextAction::PICK_UP:
-				case ContextAction::EQUIP_ITEM:
-				case ContextAction::MOVE_ITEM: iconFrame = 18; break;
-				case ContextAction::CARRY:
-				case ContextAction::STAND: iconFrame = 3; break;
-				case ContextAction::CROUCH: iconFrame = 6; break;
-				case ContextAction::PRONE: iconFrame = 9; break;
-				case ContextAction::TALK: iconFrame = 21; break;
-				case ContextAction::ATTACK:
-				case ContextAction::WEAPON_MODE: iconFrame = 24; break;
-				case ContextAction::DIG:
-				case ContextAction::SALVAGE:
-				case ContextAction::BUILD: iconFrame = 39; break;
-				default: break;
-			}
+			const UINT16 iconFrame =
+				ContextActionIconFrame(gPanelActionEntries[i].action);
 			if (gGodNewIcons)
 				BltVideoObject(FRAME_BUFFER, gGodNewIcons, iconFrame,
 					panel.x + 7, panel.y + 21 + static_cast<INT16>(i) * 18);
@@ -4567,6 +4637,85 @@ namespace
 	void DrawContextMenu()
 	{
 		if (!gContextVisible || gContextEntryCount == 0) return;
+		if (gObjectActionFanVisible)
+		{
+			PositionContextRegions();
+			constexpr INT16 iconSize = 26;
+			const UINT16 red = Get16BPPColor(FROMRGB(205, 12, 12));
+			const UINT16 mutedRed = Get16BPPColor(FROMRGB(92, 8, 8));
+			const UINT16 dark = Get16BPPColor(FROMRGB(4, 7, 7));
+			const UINT16 disabled = Get16BPPColor(FROMRGB(38, 38, 38));
+			const INT16 centreX = static_cast<INT16>(
+				(gContextBlock.RegionTopLeftX + gContextBlock.RegionBottomRightX) / 2);
+			const INT16 symbolY = static_cast<INT16>(gContextBlock.RegionBottomRightY - 27);
+			INT16 anchorX = centreX;
+			INT16 anchorY = symbolY + 14;
+			if (gContextGridNo >= 0 && gContextGridNo < WORLD_MAX)
+			{
+				GetGridNoScreenPos(gContextGridNo, gContextLevel, &anchorX, &anchorY);
+				OS0MapWorldToDisplayScreen(&anchorX, &anchorY);
+			}
+			SetFont(TINYFONT1);
+			SetFontBackground(FONT_MCOLOR_BLACK);
+			SetFontForeground(FONT_MCOLOR_RED);
+			MPrint(gContextX + 3, gContextY + 4, gContextTitle.left(29));
+
+			// The icon fan is a real control: each arm ends in its own stable
+			// mouse region. The selected object remains the visual centre instead
+			// of being copied three times as an unclickable pseudo menu.
+			for (size_t i = 0; i < gContextEntryCount; ++i)
+			{
+				MOUSE_REGION const& region = gContextRegions[i];
+				const INT16 x = region.RegionTopLeftX;
+				const INT16 y = region.RegionTopLeftY;
+				const INT16 iconCentreX = x + iconSize / 2;
+				ColorFillVideoSurfaceArea(FRAME_BUFFER,
+					std::min(centreX, iconCentreX), symbolY + 10,
+					std::max(centreX, iconCentreX), symbolY + 10, mutedRed);
+				ColorFillVideoSurfaceArea(FRAME_BUFFER, iconCentreX, y + iconSize,
+					iconCentreX, symbolY + 10, mutedRed);
+				ColorFillVideoSurfaceArea(FRAME_BUFFER, x, y,
+					x + iconSize - 1, y + iconSize - 1, dark);
+				const BOOLEAN hot = gusMouseXPos >= x && gusMouseXPos <= x + iconSize &&
+					gusMouseYPos >= y && gusMouseYPos <= y + iconSize;
+				OutlineBox(x, y, iconSize, iconSize,
+					!gContextEntries[i].enabled ? disabled : hot ? red : mutedRed);
+				if (gGodNewIcons)
+					BltVideoObject(FRAME_BUFFER, gGodNewIcons,
+						ContextActionIconFrame(gContextEntries[i].action), x + 3, y + 3);
+				if (hot)
+				{
+					SetFont(TINYFONT1);
+					SetFontBackground(FONT_MCOLOR_BLACK);
+					SetFontForeground(gContextEntries[i].enabled ?
+						FONT_WHITE : FONT_MCOLOR_DKGRAY);
+					MPrint(gContextX + 3, gContextY + 4,
+						gContextEntries[i].label.left(29));
+				}
+			}
+			ColorFillVideoSurfaceArea(FRAME_BUFFER,
+				std::min(centreX, anchorX), symbolY + 10,
+				std::max(centreX, anchorX), symbolY + 10, mutedRed);
+			ColorFillVideoSurfaceArea(FRAME_BUFFER, anchorX,
+				std::min<INT16>(symbolY + 10, anchorY), anchorX,
+				std::max<INT16>(symbolY + 10, anchorY), mutedRed);
+			if (gContextTileIndex < NUMBEROFTILES &&
+				gObjectSymbolTileIndex < NUMBEROFTILES)
+				DrawObjectSymbol(centreX - 12, symbolY, 24);
+			else if (gGodNewIcons)
+			{
+				ColorFillVideoSurfaceArea(FRAME_BUFFER, centreX - 12, symbolY,
+					centreX + 11, symbolY + 23, dark);
+				OutlineBox(centreX - 12, symbolY, 24, 24, red);
+				BltVideoObject(FRAME_BUFFER, gGodNewIcons, 12,
+					centreX - 9, symbolY + 3);
+			}
+			InvalidateRegion(gContextBlock.RegionTopLeftX - 2,
+				gContextBlock.RegionTopLeftY - 2,
+				gContextBlock.RegionBottomRightX + 2,
+				std::max<INT16>(gContextBlock.RegionBottomRightY + 2, anchorY + 2));
+			return;
+		}
 		const INT16 width = 168;
 		const INT16 height = static_cast<INT16>(20 + gContextEntryCount * 18);
 		const UINT16 red = Get16BPPColor(FROMRGB(205, 12, 12));
@@ -4657,31 +4806,11 @@ namespace
 		const UINT32 age = GetJA2Clock() - gExplodedViewStarted;
 		const INT16 settledX = x + 19;
 		const INT16 settledY = y - 39;
-		if (age >= 900)
-		{
-			DrawObjectSymbol(settledX, settledY, 18);
-			InvalidateRegion(settledX - 2, settledY - 2,
-				settledX + 20, settledY + 20);
-			return;
-		}
-		const INT16 spread = static_cast<INT16>(8 + age * 24 / 900);
-		const INT16 topX = x - 9;
-		const INT16 topY = y - 32 - spread / 2;
-		const INT16 leftX = x - 10 - spread;
-		const INT16 leftY = y - 15;
-		const INT16 rightX = x + spread - 8;
-		const INT16 rightY = y - 15;
-		const UINT16 connector = Get16BPPColor(FROMRGB(205, 12, 12));
-		ColorFillVideoSurfaceArea(FRAME_BUFFER, x - spread, y - 7,
-			x + spread, y - 7, connector);
-		ColorFillVideoSurfaceArea(FRAME_BUFFER, x, topY + 18,
-			x, y - 7, connector);
-		DrawObjectSymbol(topX, topY, 18);
-		DrawObjectSymbol(leftX, leftY, 18);
-		DrawObjectSymbol(rightX, rightY, 18);
-		InvalidateRegion(x - spread - 14, topY - 3,
-			x + spread + 14, y + 8);
-		SetRenderFlags(RENDER_FLAG_FULL);
+		const INT16 size = age < 180 ?
+			static_cast<INT16>(14 + age * 4 / 180) : 18;
+		DrawObjectSymbol(settledX, settledY, size);
+		InvalidateRegion(settledX - 2, settledY - 2,
+			settledX + 22, settledY + 22);
 	}
 
 	BOOLEAN FinalizeWorldMove()
@@ -5763,8 +5892,6 @@ void OS0HoverWorldObject(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 		gHoverCursorGridNo = gridNo;
 		gHoverCursorLevel = level;
 		gHoverCursorTileIndex = tileIndex;
-		if (!target && tileIndex < NUMBEROFTILES)
-			StartExplodedView(gridNo, tileIndex, FALSE);
 		if (!gWorldMovePending && !gWorldMoveWalking)
 		{
 			std::array<UINT8, 6> actions{};
@@ -5900,6 +6027,7 @@ void OS0OpenContextMenu(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 	else if (hasItems || hasAsset)
 	{
 		OS0SelectWorldObject(nullptr, gridNo, level, tileIndex);
+		gObjectActionFanVisible = TRUE;
 		gContextSoldier = nullptr;
 		gContextGridNo = gridNo;
 		gContextLevel = level;
@@ -5956,6 +6084,7 @@ void OS0OpenContextMenu(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 	}
 	else if (hasTerrain)
 	{
+		gObjectActionFanVisible = TRUE;
 		gContextSoldier = nullptr;
 		gContextGridNo = gridNo;
 		gContextLevel = 0;
@@ -6009,12 +6138,15 @@ void OS0OpenContextMenu(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 	}
 	if (gContextEntryCount == 0) return;
 
-	const INT16 width = 168;
-	const INT16 height = static_cast<INT16>(20 + gContextEntryCount * 18);
-	gContextX = std::clamp<INT16>(screenX, 0,
-		std::max<INT16>(0, gsVIEWPORT_END_X - width));
-	gContextY = std::clamp<INT16>(screenY, 0,
-		std::max<INT16>(0, gsVIEWPORT_END_Y - height));
+	if (!gObjectActionFanVisible)
+	{
+		const INT16 width = 168;
+		const INT16 height = static_cast<INT16>(20 + gContextEntryCount * 18);
+		gContextX = std::clamp<INT16>(screenX, 0,
+			std::max<INT16>(0, gsVIEWPORT_END_X - width));
+		gContextY = std::clamp<INT16>(screenY, 0,
+			std::max<INT16>(0, gsVIEWPORT_END_Y - height));
+	}
 	gContextVisible = TRUE;
 	PositionContextRegions();
 	SetBagRegionsEnabled(TRUE);
