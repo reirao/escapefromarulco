@@ -3431,7 +3431,7 @@ namespace
 			gsVIEWPORT_END_X - 1, gOrbY + COMMAND_BAR_H - 1, black);
 		ColorFillVideoSurfaceArea(FRAME_BUFFER, 0, gOrbY,
 			gsVIEWPORT_END_X - 1, gOrbY + 1, bright);
-		if (!gCommandBarExpanded)
+		if (!gCommandBarExpanded || gAimAutoCollapsed)
 		{
 			OutlineBox(3, gOrbY + 4, COLLAPSED_OS0_W - 6,
 				COMMAND_BAR_H - 7, red);
