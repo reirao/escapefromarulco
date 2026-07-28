@@ -1,21 +1,21 @@
 # Feature wiring audit
 
 This matrix compares the public prototype claims with the actual runtime path in
-the source. It was last verified for `v0.5.3-alpha`.
+the source. It was last verified for `v0.5.4-alpha`.
 
 | Feature | Runtime status | Wiring / persistence |
 | --- | --- | --- |
 | Direct tactical start | Verified | `JAScreens` starts the OS0 sandbox; the bootstrap creates the operator, clears enemies, marks the sector controlled and enters `GAME_SCREEN`. |
 | Character creation | Verified | Name, ten attributes and two freely selected traits are written to both the live soldier and merc profile. |
-| Artwork workspace and movable/minimizable windows | Verified | A compact OS0 launcher expands into an eight-module command bar controlling character, context, tools, actions, object inventory, live strategy and feedback windows. Positions persist in the user profile and scale across resolutions; panels keep independent drag/close regions and the event log uses real recorded OS0 actions. |
+| Object-first workspace | Verified | The duplicate context/tools/actions/object panels are retired. Actor equipment, pockets and object contents unfold at their world anchors; a single compact field-computer icon opens the persistent mobile OS window. |
 | Object-derived UI symbols | Verified | The selected world tile is rendered once into an OS0-owned pixel surface and reused by context, interaction and container windows. Selection uses a stable in-world marker, while right-click opens a real object-anchored icon fan with independent clickable regions and hover labels. |
 | Pixel-accurate scenery selection | Verified | Hover and all mouse-button actions scan nearby visible object/structure sprites by opaque pixel instead of relying only on the ground cell. Multi-tile structures resolve to their canonical base object. |
 | Character inventory drag/drop | Verified | Uses JA2's item-pointer and placement functions, so slot rules and item stacks remain engine-owned. |
-| Container inventory drag/drop | Verified | Double-click, right-click `OPEN CONTENTS` and the actions panel now share one open path. |
+| Container inventory drag/drop | Verified | Double-click and right-click `OPEN CONTENTS` share one path; the container's own scaled world sprite becomes the centre of its spatial item layout. |
 | Deterministic container loot | Verified | First open seeds material and useful/damaged equipment; an invisible world-item marker prevents refilling and is saved with sector world items. |
 | Context actions | Verified | Object, terrain, character, loot and weapon entries call real JA2 or OS0 actions rather than display-only labels. |
 | Character radial actions | Verified | Right-clicking a merc anchors a circular JA2-icon action ring to that actor. Every icon owns a stable mouse region and keeps the detailed action name as hover text. |
-| In-world equipment view | Verified as an initial RPG inventory layer | `INVENTORY / EQUIPMENT` expands helmet, face, armour, leg and hand slots around the merc. They are the real saveable JA2 inventory objects and accept the native item cursor; `PACK` toggles the full pocket container. |
+| In-world equipment view | Verified as an initial RPG inventory layer | Equipment expands around the merc and PACK unfolds only the real pocket slots. Dragging an item onto a character exposes registry-driven hand, pack and drop intents with safe swap/fallback behavior. |
 | Stack quantity transfer | Verified for player inventory/equipment | Dragging a stack opens an OS0 quantity dialog with single-step, all, take and cancel controls before attaching the chosen count to JA2's native item cursor. |
 | Hover cursor / middle-click cycle | Verified after audit fix | Hover is connected to the viewport movement callback; middle click cycles the valid action set for the current target. |
 | Long-hold graphical merc menu | Verified | JA2's original 3x3 movement frame remains active and a second frame invokes character, inventory, stealth, weapon, reload and icon-library actions. |

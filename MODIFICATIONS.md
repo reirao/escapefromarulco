@@ -152,3 +152,22 @@ The code is experimental and does not represent an official JA2 Stracciatella re
   until collision-valid placement commits atomically.
 - Successful structure handling awards persistent JA2 strength sub-points, extending
   the engine's existing learn-by-doing system to environmental work.
+
+## v0.5.4-alpha object-first interface
+
+- Retired the duplicate context, tools, actions and rectangular object-inventory
+  panels from the live tactical interface. Their old state can no longer be revived
+  by saved layouts or legacy action paths.
+- Replaced the full-width OS0 dock with one compact field-computer object. Its movable
+  window owns base building, the Arulco control map, team selection and feedback.
+- Embedded the current sector's real JA2 radar artwork in the movable computer and
+  permanently suppressed the fixed radar that reappeared during exit-sector dialogs.
+- Character pockets now unfold from PACK around the actor; world-container contents
+  unfold around a scaled copy of that object's own map sprite.
+- Hover inspection captures a live 64x64 preview without selecting the target or
+  resetting its action animation.
+- OS0 mouse regions preserve JA2's external item cursor, fixing held weapons/items
+  disappearing or changing cursor while crossing the new UI.
+- Added a registry-backed object-to-actor transfer surface. A carried item exposes
+  `TAKE IN HANDS`, `PUT IN PACK` and `DROP HERE`; occupied gear is swapped safely and
+  anything that cannot be stored becomes a real world item instead of being deleted.

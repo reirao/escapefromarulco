@@ -1,3 +1,9 @@
+/*
+ * Escape from Arulco modification notice:
+ * Modified from JA2 Stracciatella on 2026-07-28.
+ * See MODIFICATIONS.md and the SFI source-code license agreement.
+ */
+
 #include "Directories.h"
 #include "Font.h"
 #include "HImage.h"
@@ -105,6 +111,16 @@ void ClearOutRadarMapImage( void )
 		DeleteVideoObject(gusRadarImage);
 		gusRadarImage = 0;
 	}
+}
+
+
+BOOLEAN BlitRadarScreenImage(SGPVSurface* destination, INT16 x, INT16 y)
+{
+	if (!destination || !gusRadarImage) return FALSE;
+	const BOOLEAN darken = NightTime() && gWorldSector.z == 0;
+	gusRadarImage->CurrentShade(darken ? 1 : 0);
+	BltVideoObject(destination, gusRadarImage, 0, x, y);
+	return TRUE;
 }
 
 

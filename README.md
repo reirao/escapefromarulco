@@ -8,8 +8,8 @@ An experimental, non-commercial rework of *Jagged Alliance 2* built on
 
 ## Download and play
 
-1. Open the [v0.5.0-alpha release](https://github.com/reirao/escapefromarulco/releases/tag/v0.5.0-alpha).
-2. Download `Escape-from-Arulco-Playtest-v0.5.0-alpha.zip`.
+1. Open the [v0.5.4-alpha release](https://github.com/reirao/escapefromarulco/releases/tag/v0.5.4-alpha).
+2. Download `Escape-from-Arulco-Playtest-v0.5.4-alpha.zip`.
 3. Extract the complete ZIP into a writable folder.
 4. Run `START_PLAYTEST.cmd`.
 5. In the launcher, select your own legally installed JA2 or JA2 Gold directory.
@@ -23,9 +23,8 @@ the original JA2 game data. Windows x64 and an existing JA2 installation are req
 
 - Direct tactical-sector start without helicopter arrival or starting enemies
 - In-world character creation with freely selected attributes and traits
-- Movable OS0 windows for character, context, tools, actions and object inventory
-- Artwork-aligned tactical workspace with an expandable icon-driven eight-module
-  command bar, persistent movable windows and a live event log
+- Object-first character equipment, pocket and container views anchored in the world
+- One compact field-computer icon with a persistent movable Base/Map/Team/Report OS
 - Character and container inventories with item drag and drop
 - Context-sensitive object, weapon, loot and stance actions
 - Hover-selected context cursors with middle-click cycling through valid actions
@@ -55,8 +54,7 @@ The exact implementation status and current boundaries are recorded in
   character, inventory, icon library, stealth, weapon mode and reload
 - **Middle click:** cycle the current cursor action
 - **Double click:** open a character, container or world object
-- **SECT:** open the current sector stockpile and upgrade window
-- **FB:** open the feedback window, including during character creation
+- **Computer icon:** open Base, Arulco map/radar, Team and Report
 - **GOD / CATALOG ASSET:** right-click a world asset and classify it for the shared
   construction/resource database
 
@@ -65,7 +63,7 @@ This file can be shared between testers without distributing original JA2 graphi
 Every saved feedback report embeds a catalog snapshot. Reviewed records are promoted
 into the bundled curated database in later builds; a tester's local records override it.
 
-In the feedback window, choose a category, describe the problem and press
+In the computer's `REPORT` tab, choose a category, describe the problem and press
 `SAVE REPORT`. Reports are saved to `%APPDATA%\JA2\Feedback` and include relevant
 game context, recent OS0 actions and the tail of the engine log.
 

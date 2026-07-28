@@ -19,7 +19,7 @@ playtest in its own folder and point the launcher to the original game directory
 ## Suggested test pass
 
 1. Complete character creation using a custom name, attributes and two traits.
-2. Move every OS0 window, close it and reopen it from the bottom dock.
+2. Move the field-computer window, close it and reopen it from the computer icon.
 3. Hold the right mouse button over two different owned mercs. Verify the correct merc
    is selected and both graphical JA2 button frames appear.
 4. Open the God icon library from the second frame, select several symbols and verify
@@ -71,17 +71,29 @@ playtest in its own folder and point the launcher to the original game directory
 31. Right-click an owned merc. Verify a circular icon ring surrounds that merc and
     `INVENTORY / EQUIPMENT` expands the real helmet, face, armour, legs and hand slots
     above the actor. Drag an item between one of those slots and the world/pocket UI.
-32. Click `PACK` in the exploded equipment view. Verify the character pocket window
-    toggles without closing the equipment slots and both views show the same live items.
+32. Click `PACK` in the exploded equipment view. Verify the real pocket slots unfold
+    beside the actor without a rectangular character window or duplicate body slots.
 33. Drag a slot containing multiple objects. Choose `+`, `-`, `ALL`, `TAKE` and cancel
     in separate attempts; only the selected count should attach to the item cursor.
 34. Reposition one light and one heavy movable object. The light object should be held
     above the merc; the heavier object should trail behind as `DRAG`. Invalid placement
     must leave the original intact, while a valid move should log strength practice.
+35. Carry a weapon across every visible OS0 element. Its item cursor must stay visible.
+    Hover the merc and test `TAKE IN HANDS`, `PUT IN PACK` and `DROP HERE`, including
+    a case where both hands and all pockets are occupied.
+36. Open a crate. Verify its own world sprite is the centre of the view and each real
+    contained item unfolds around it. Close/reopen it and confirm no duplicate panel
+    appears and contents persist.
+37. Hover several assets without clicking. Verify the live preview follows the target
+    while selection and the existing object action animation remain unchanged.
+38. Click the small computer symbol, drag its single OS window, and exercise `BASE`,
+    `ARULCO`, `TEAM` and `REPORT`. Trigger the exit-sector dialog and verify no fixed
+    legacy minimap appears; the real sector radar stays inside the movable OS window.
 
 ## Writing a useful report
 
-Open `FB`, choose the closest category and include:
+Open the small field computer and choose `REPORT`, then select the closest category
+and include:
 
 - what you were trying to do;
 - exact mouse button or key used;
