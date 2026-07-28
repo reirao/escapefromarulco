@@ -138,3 +138,17 @@ The code is experimental and does not represent an official JA2 Stracciatella re
 - Corrected the Windows playtest manifest: the dynamically linked launcher requires
   FLTK, PNG, JPEG and zlib runtime DLLs. They are now bundled beside the executable;
   they are not Windows or graphics-driver components.
+
+## v0.5.3-alpha spatial character inventory
+
+- Replaced the character right-click list with a circular, actor-anchored JA2 icon
+  ring while retaining text menus for detailed item and weapon state.
+- Added an in-world equipment explosion for helmet, face, armour, legs and both hands.
+  Every displayed object is the original saveable JA2 inventory slot and supports the
+  native item cursor; PACK toggles the character's real pocket container.
+- Added a modal quantity chooser before dragging a multi-object player stack.
+- Split environmental handling into lift and drag presentation according to material
+  mass versus wound-adjusted strength capacity. The original structure remains alive
+  until collision-valid placement commits atomically.
+- Successful structure handling awards persistent JA2 strength sub-points, extending
+  the engine's existing learn-by-doing system to environmental work.

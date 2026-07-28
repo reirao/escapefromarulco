@@ -95,6 +95,7 @@ REAL_OBJECT* CreatePhysicalObject(const OBJECTTYPE* pGameObj, float dLifeLength,
 void RemoveAllPhysicsObjects(void);
 
 WORLD_PHYSICS_PROFILE GetWorldPhysicsProfile(const STRUCTURE* structure);
+float GetSoldierWorldCarryCapacityKg(const SOLDIERTYPE* soldier);
 BOOLEAN CanSoldierMoveWorldStructure(const SOLDIERTYPE* soldier, const STRUCTURE* structure);
 
 

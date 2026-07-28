@@ -186,18 +186,24 @@ WORLD_PHYSICS_PROFILE GetWorldPhysicsProfile(STRUCTURE const* const structure)
 	return profile;
 }
 
-BOOLEAN CanSoldierMoveWorldStructure(SOLDIERTYPE const* const soldier,
-	STRUCTURE const* const structure)
+float GetSoldierWorldCarryCapacityKg(SOLDIERTYPE const* const soldier)
 {
-	if (!soldier || soldier->bLife < OKLIFE) return FALSE;
-	WORLD_PHYSICS_PROFILE const profile = GetWorldPhysicsProfile(structure);
+	if (!soldier || soldier->bLife <= 0) return 0.0f;
 	// Strength is deliberately not a binary class gate. Every point adds usable
 	// carrying capacity, while wounds reduce how much force can be controlled.
 	const float healthFactor = std::clamp(
 		soldier->bLife / static_cast<float>(std::max<INT8>(1, soldier->bLifeMax)),
 		0.25f, 1.0f);
-	const float capacityKg = (12.0f + soldier->bStrength * 0.72f) * healthFactor;
-	return profile.portableObject && profile.massKg <= capacityKg;
+	return (12.0f + soldier->bStrength * 0.72f) * healthFactor;
+}
+
+BOOLEAN CanSoldierMoveWorldStructure(SOLDIERTYPE const* const soldier,
+	STRUCTURE const* const structure)
+{
+	if (!soldier || soldier->bLife < OKLIFE) return FALSE;
+	WORLD_PHYSICS_PROFILE const profile = GetWorldPhysicsProfile(structure);
+	return profile.portableObject &&
+		profile.massKg <= GetSoldierWorldCarryCapacityKg(soldier);
 }
 
 namespace {

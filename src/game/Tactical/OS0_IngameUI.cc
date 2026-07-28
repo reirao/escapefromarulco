@@ -9,6 +9,7 @@
 #include "Animation_Control.h"
 #include "AI.h"
 #include "ArmourModel.h"
+#include "Campaign.h"
 #include "Campaign_Types.h"
 #include "Cursors.h"
 #include "Directories.h"
@@ -288,17 +289,35 @@ namespace
 		{ SMALLPOCK8POS,   INVENTORY_X + 216, 104, SM_INV_SLOT_WIDTH,   SM_INV_SLOT_HEIGHT }
 	}};
 
+	// These are the body-mounted slots shown in the in-world exploded view.
+	// Pockets stay in the backpack window, so every object continues to live in
+	// JA2's real, saveable soldier inventory rather than a parallel UI model.
+	constexpr std::array<INT8, 7> gExplodedEquipmentSlots{{
+		HELMETPOS, HEAD1POS, HEAD2POS, VESTPOS, LEGPOS, HANDPOS, SECONDHANDPOS
+	}};
+	constexpr std::array<const char*, 7> gExplodedEquipmentLabels{{
+		"HELMET", "FACE 1", "FACE 2", "VEST", "LEGS", "R HAND", "L HAND"
+	}};
+
 	BOOLEAN gInitialized = FALSE;
 	BOOLEAN gBagVisible = TRUE;
 	BOOLEAN gInventoryVisible = FALSE;
 	BOOLEAN gLootVisible = FALSE;
 	BOOLEAN gContextVisible = FALSE;
 	BOOLEAN gObjectActionFanVisible = FALSE;
+	BOOLEAN gCharacterActionFanVisible = FALSE;
+	BOOLEAN gEquipmentExplodedVisible = FALSE;
+	BOOLEAN gStackSplitVisible = FALSE;
+	SOLDIERTYPE* gEquipmentSoldier = nullptr;
+	SOLDIERTYPE* gStackSplitSoldier = nullptr;
+	INT8 gStackSplitSlot = NO_SLOT;
+	UINT8 gStackSplitAmount = 1;
 	ContentsMode gContentsMode = ContentsMode::SOLDIER;
 	BOOLEAN gHoverVisible = FALSE;
 	BOOLEAN gBagDragging = FALSE;
 	BOOLEAN gAimAutoCollapsed = FALSE;
 	BOOLEAN gBagVisibleBeforeAim = FALSE;
+	BOOLEAN gEquipmentVisibleBeforeAim = FALSE;
 	INT8 gLootDragCandidate = -1;
 	INT16 gLootDragStartX = 0;
 	INT16 gLootDragStartY = 0;
@@ -316,6 +335,10 @@ namespace
 	INT16 gOrbY = 316;
 	INT16 gContextX = 0;
 	INT16 gContextY = 0;
+	INT16 gEquipmentCentreX = 0;
+	INT16 gEquipmentCentreY = 0;
+	INT16 gStackSplitX = 0;
+	INT16 gStackSplitY = 0;
 	INT16 gHoverX = 0;
 	INT16 gHoverY = 0;
 	INT16 gDragOffsetX = 0;
@@ -351,6 +374,7 @@ namespace
 	SOLDIERTYPE* gWorldMoveCarrier = nullptr;
 	UINT8 gWorldMoveOldShade = DEFAULT_SHADE_LEVEL;
 	BOOLEAN gWorldMoveSourceShaded = FALSE;
+	BOOLEAN gWorldMoveLifted = FALSE;
 	UINT8 gWorldZoom = 1;
 	BOOLEAN gCommandBarExpanded = FALSE;
 	UINT8 gCursorAction = 0;
@@ -387,6 +411,8 @@ namespace
 
 	void OutlineBox(INT16 x, INT16 y, INT16 w, INT16 h, UINT16 colour);
 	void ContextActionCallback(MOUSE_REGION* region, UINT32 reason);
+	void EquipmentPackCallback(MOUSE_REGION* region, UINT32 reason);
+	void StackSplitCallback(MOUSE_REGION* region, UINT32 reason);
 	void OperationsActionCallback(MOUSE_REGION* region, UINT32 reason);
 	void GodIconCallback(MOUSE_REGION* region, UINT32 reason);
 	void AssetCatalogCallback(MOUSE_REGION* region, UINT32 reason);
@@ -429,6 +455,10 @@ namespace
 	MOUSE_REGION gSectorTeamRegion;
 	std::array<MOUSE_REGION, NUM_INV_SLOTS> gSlotRegions;
 	std::array<MOUSE_REGION, NUM_INV_SLOTS> gObjectSlotRegions;
+	std::array<MOUSE_REGION, 7> gEquipmentRegions;
+	MOUSE_REGION gEquipmentPackRegion;
+	MOUSE_REGION gStackSplitBlock;
+	std::array<MOUSE_REGION, 5> gStackSplitRegions;
 	MOUSE_REGION gOrbRegion;
 	MOUSE_REGION gTutorialContinue;
 	std::array<MOUSE_REGION, 20> gTutorialStats;
@@ -439,6 +469,7 @@ namespace
 	std::array<INT32, 12> gLootWorldItems;
 	std::array<ST::string, NUM_INV_SLOTS> gSlotHelp;
 	std::array<ST::string, NUM_INV_SLOTS> gObjectSlotHelp;
+	std::array<ST::string, 7> gEquipmentHelp;
 	std::array<ST::string, 12> gLootHelp;
 	GridNo gLootGridNo = NOWHERE;
 	UINT8 gLootLevel = 0;
@@ -1376,6 +1407,7 @@ namespace
 		gWorldMoveActionGrid = NOWHERE;
 		gWorldMoveTileIndex = NO_TILE;
 		gWorldMoveCarrier = nullptr;
+		gWorldMoveLifted = FALSE;
 	}
 
 	GridNo FindCarryActionGrid(SOLDIERTYPE* carrier, GridNo destination)
@@ -1438,6 +1470,13 @@ namespace
 		gWorldMoveSource = gInspectedGridNo;
 		gWorldMoveTileIndex = gInspectedTileIndex;
 		gWorldMoveCarrier = GetSelectedMan();
+		if (STRUCTURE const* const structure = WorldStructureAt(gWorldMoveSource, 0,
+			gWorldMoveTileIndex))
+		{
+			WORLD_PHYSICS_PROFILE const physics = GetWorldPhysicsProfile(structure);
+			gWorldMoveLifted = physics.massKg <=
+				GetSoldierWorldCarryCapacityKg(gWorldMoveCarrier) * 0.55f;
+		}
 		ShadeWorldMoveSource();
 		gLootVisible = FALSE;
 		guiPendingOverrideEvent = M_CHANGE_TO_HANDMODE;
@@ -1558,6 +1597,7 @@ namespace
 	{
 		gContextVisible = FALSE;
 		gObjectActionFanVisible = FALSE;
+		gCharacterActionFanVisible = FALSE;
 		gHoverVisible = FALSE;
 		gContextEntryCount = 0;
 		gContextInventorySlot = NO_SLOT;
@@ -2141,6 +2181,45 @@ namespace
 
 	void PositionContextRegions()
 	{
+		if (gCharacterActionFanVisible && gContextSoldier)
+		{
+			constexpr INT16 iconSize = 26;
+			struct RingPoint { INT16 x; INT16 y; };
+			constexpr std::array<RingPoint, 12> ring{{
+				{  0, -76 }, { 38, -65 }, { 66, -38 }, { 76,   0 },
+				{ 66,  38 }, { 38,  65 }, {  0,  76 }, {-38,  65 },
+				{-66,  38 }, {-76,   0 }, {-66, -38 }, {-38, -65 }
+			}};
+			INT16 anchorX;
+			INT16 anchorY;
+			GetGridNoScreenPos(gContextSoldier->sGridNo, gContextSoldier->bLevel,
+				&anchorX, &anchorY);
+			OS0MapWorldToDisplayScreen(&anchorX, &anchorY);
+			gContextX = std::clamp<INT16>(anchorX,
+				gsVIEWPORT_START_X + 92, gsVIEWPORT_END_X - 92);
+			gContextY = std::clamp<INT16>(anchorY - 12,
+				gsVIEWPORT_WINDOW_START_Y + 92,
+				gsVIEWPORT_WINDOW_END_Y - 92);
+			gContextBlock.RegionTopLeftX = gContextX - 92;
+			gContextBlock.RegionTopLeftY = gContextY - 92;
+			gContextBlock.RegionBottomRightX = gContextX + 92;
+			gContextBlock.RegionBottomRightY = gContextY + 92;
+			for (size_t i = 0; i < gContextRegions.size(); ++i)
+			{
+				if (i >= gContextEntryCount) continue;
+				const size_t ringIndex = i * ring.size() / gContextEntryCount;
+				const INT16 x = static_cast<INT16>(
+					gContextX + ring[ringIndex].x - iconSize / 2);
+				const INT16 y = static_cast<INT16>(
+					gContextY + ring[ringIndex].y - iconSize / 2);
+				gContextRegions[i].RegionTopLeftX = x;
+				gContextRegions[i].RegionTopLeftY = y;
+				gContextRegions[i].RegionBottomRightX = x + iconSize;
+				gContextRegions[i].RegionBottomRightY = y + iconSize;
+				gContextRegions[i].SetFastHelpText(gContextEntries[i].label);
+			}
+			return;
+		}
 		if (gObjectActionFanVisible)
 		{
 			constexpr INT16 iconSize = 26;
@@ -2236,13 +2315,47 @@ namespace
 			source.y = destination.y + destination.h - source.h;
 	}
 
+	void PositionEquipmentRegions()
+	{
+		if (!gEquipmentExplodedVisible || !gEquipmentSoldier) return;
+		struct EquipmentPoint { INT16 x; INT16 y; };
+		constexpr std::array<EquipmentPoint, 7> offsets{{
+			{ -17, -122 }, { -60, -94 }, { 26, -94 }, { -17, -91 },
+			{ -17, -59 }, { -63, -58 }, { 29, -58 }
+		}};
+		INT16 anchorX;
+		INT16 anchorY;
+		GetGridNoScreenPos(gEquipmentSoldier->sGridNo,
+			gEquipmentSoldier->bLevel, &anchorX, &anchorY);
+		OS0MapWorldToDisplayScreen(&anchorX, &anchorY);
+		gEquipmentCentreX = std::clamp<INT16>(anchorX,
+			gsVIEWPORT_START_X + 82, gsVIEWPORT_END_X - 82);
+		gEquipmentCentreY = std::clamp<INT16>(anchorY,
+			gsVIEWPORT_WINDOW_START_Y + 128,
+			gsVIEWPORT_WINDOW_END_Y - 34);
+		for (size_t i = 0; i < gEquipmentRegions.size(); ++i)
+		{
+			const INT16 x = gEquipmentCentreX + offsets[i].x;
+			const INT16 y = gEquipmentCentreY + offsets[i].y;
+			gEquipmentRegions[i].RegionTopLeftX = x;
+			gEquipmentRegions[i].RegionTopLeftY = y;
+			gEquipmentRegions[i].RegionBottomRightX = x + 34;
+			gEquipmentRegions[i].RegionBottomRightY = y + 25;
+		}
+		gEquipmentPackRegion.RegionTopLeftX = gEquipmentCentreX + 37;
+		gEquipmentPackRegion.RegionTopLeftY = gEquipmentCentreY - 27;
+		gEquipmentPackRegion.RegionBottomRightX = gEquipmentCentreX + 83;
+		gEquipmentPackRegion.RegionBottomRightY = gEquipmentCentreY - 2;
+	}
+
 	void SetBagRegionsEnabled(BOOLEAN enabled)
 	{
 		auto setVisible = [enabled](MOUSE_REGION& r, BOOLEAN visible)
 		{
-			if (enabled && visible) r.Enable();
+			if (enabled && visible && !gStackSplitVisible) r.Enable();
 			else r.Disable();
 		};
+		PositionEquipmentRegions();
 		setVisible(gBagBlock, gBagVisible);
 		setVisible(gBagGrabber, gBagVisible);
 		// Keep close control active as long as the panel is visible.
@@ -2299,14 +2412,15 @@ namespace
 			!gTutorialActive && gSectorPanelMode == SectorPanelMode::TEAM);
 		for (size_t i = 0; i < gContextRegions.size(); ++i)
 		{
-			if (enabled && gContextVisible && i < gContextEntryCount)
+			if (enabled && !gStackSplitVisible && gContextVisible &&
+				i < gContextEntryCount)
 				gContextRegions[i].Enable();
 			else
 				gContextRegions[i].Disable();
 		}
 		for (MOUSE_REGION& r : gSlotRegions)
 		{
-			if (enabled && gBagVisible &&
+			if (enabled && !gStackSplitVisible && gBagVisible &&
 				(!gTutorialActive || gTutorialStep == 4) &&
 				!gContextVisible &&
 				showContentInventory &&
@@ -2316,7 +2430,7 @@ namespace
 		}
 		for (MOUSE_REGION& r : gObjectSlotRegions)
 		{
-			if (enabled && objectPanel.visible && !gContextVisible &&
+			if (enabled && !gStackSplitVisible && objectPanel.visible && !gContextVisible &&
 				gContentsMode == ContentsMode::SOLDIER && gInspectedSoldier &&
 				gInspectedSoldier->bTeam != OUR_TEAM &&
 				CanAccessSoldierContents(gInspectedSoldier)) r.Enable();
@@ -2324,7 +2438,8 @@ namespace
 		}
 		for (MOUSE_REGION& r : gLootRegions)
 		{
-			if (enabled && gLootVisible && !gContextVisible && showContentLoot)
+			if (enabled && !gStackSplitVisible && gLootVisible &&
+				!gContextVisible && showContentLoot)
 				r.Enable();
 			else r.Disable();
 		}
@@ -2332,6 +2447,12 @@ namespace
 		{
 			r.Disable();
 		}
+		for (MOUSE_REGION& r : gEquipmentRegions)
+			setVisible(r, gEquipmentExplodedVisible && gEquipmentSoldier &&
+				CanAccessSoldierContents(gEquipmentSoldier) && !gContextVisible);
+		setVisible(gEquipmentPackRegion, gEquipmentExplodedVisible &&
+			gEquipmentSoldier && gEquipmentSoldier->bTeam == OUR_TEAM &&
+			!gContextVisible);
 		if (enabled && gTutorialActive && !gContextVisible && !feedbackPanel.visible)
 		{
 			gTutorialContinue.Enable();
@@ -2351,6 +2472,16 @@ namespace
 			gTutorialContinue.Disable();
 			for (MOUSE_REGION& r : gTutorialStats) r.Disable();
 			for (MOUSE_REGION& r : gTutorialTraitRegions) r.Disable();
+		}
+		if (enabled && gStackSplitVisible)
+		{
+			gStackSplitBlock.Enable();
+			for (MOUSE_REGION& r : gStackSplitRegions) r.Enable();
+		}
+		else
+		{
+			gStackSplitBlock.Disable();
+			for (MOUSE_REGION& r : gStackSplitRegions) r.Disable();
 		}
 	}
 
@@ -2486,6 +2617,23 @@ namespace
 				sector.y + 72 + static_cast<INT16>(i) * 39);
 		MoveRegion(gStrategicMapRegion, sector.x + 12, sector.y + 55);
 		MoveRegion(gSectorTeamRegion, sector.x + 8, sector.y + 55);
+		gStackSplitX = std::max<INT16>(0, (gsVIEWPORT_END_X - 224) / 2);
+		gStackSplitY = std::max<INT16>(gsVIEWPORT_WINDOW_START_Y,
+			(gsVIEWPORT_WINDOW_END_Y - 82) / 2);
+		gStackSplitBlock.RegionTopLeftX = 0;
+		gStackSplitBlock.RegionTopLeftY = 0;
+		gStackSplitBlock.RegionBottomRightX = gsVIEWPORT_END_X;
+		gStackSplitBlock.RegionBottomRightY = gsVIEWPORT_END_Y;
+		constexpr std::array<INT16, 5> splitX{{ 8, 43, 78, 122, 173 }};
+		constexpr std::array<INT16, 5> splitW{{ 30, 30, 39, 46, 43 }};
+		for (size_t i = 0; i < gStackSplitRegions.size(); ++i)
+		{
+			gStackSplitRegions[i].RegionTopLeftX = gStackSplitX + splitX[i];
+			gStackSplitRegions[i].RegionTopLeftY = gStackSplitY + 51;
+			gStackSplitRegions[i].RegionBottomRightX =
+				gStackSplitX + splitX[i] + splitW[i];
+			gStackSplitRegions[i].RegionBottomRightY = gStackSplitY + 74;
+		}
 		if (gContextVisible) PositionContextRegions();
 	}
 
@@ -2956,7 +3104,14 @@ namespace
 					if (gContextSoldier->bTeam == OUR_TEAM)
 					{
 						gInventorySoldier = gContextSoldier;
-						gBagVisible = gInventoryVisible;
+						const BOOLEAN opening = gInventoryVisible &&
+							(!gEquipmentExplodedVisible ||
+							 gEquipmentSoldier != gContextSoldier);
+						gEquipmentSoldier = gContextSoldier;
+						gEquipmentExplodedVisible = opening;
+						// Equipment lives around the actor. PACK is the explicit
+						// gateway to the pocket/container window.
+						gBagVisible = FALSE;
 					}
 					else
 					{
@@ -3229,6 +3384,88 @@ namespace
 		SetRenderFlags(RENDER_FLAG_FULL);
 	}
 
+	void BeginStackSplit(SOLDIERTYPE* soldier, INT8 slot)
+	{
+		if (!soldier || slot < 0 || slot >= NUM_INV_SLOTS ||
+			soldier->inv[slot].ubNumberOfObjects <= 1) return;
+		CloseContextMenu();
+		gStackSplitSoldier = soldier;
+		gStackSplitSlot = slot;
+		gStackSplitAmount = 1;
+		gStackSplitVisible = TRUE;
+		PositionBagRegions();
+		SetBagRegionsEnabled(TRUE);
+		SetRenderFlags(RENDER_FLAG_FULL);
+	}
+
+	void CloseStackSplit()
+	{
+		gStackSplitVisible = FALSE;
+		gStackSplitSoldier = nullptr;
+		gStackSplitSlot = NO_SLOT;
+		gStackSplitAmount = 1;
+		SetBagRegionsEnabled(TRUE);
+		SetRenderFlags(RENDER_FLAG_FULL);
+	}
+
+	void ConfirmStackSplit()
+	{
+		if (!gStackSplitSoldier || gStackSplitSlot < 0 ||
+			gStackSplitSlot >= NUM_INV_SLOTS || gpItemPointer) return;
+		OBJECTTYPE& source = gStackSplitSoldier->inv[gStackSplitSlot];
+		const UINT8 amount = std::min(gStackSplitAmount,
+			source.ubNumberOfObjects);
+		if (amount == 0) return;
+		OBJECTTYPE moving{};
+		for (UINT8 i = 0; i < amount; ++i)
+		{
+			OBJECTTYPE one{};
+			GetObjFrom(&source, 0, &one);
+			if (i == 0) moving = one;
+			else StackObjs(&one, &moving, 1);
+		}
+		SOLDIERTYPE* const soldier = gStackSplitSoldier;
+		const INT8 slot = gStackSplitSlot;
+		gStackSplitVisible = FALSE;
+		gStackSplitSoldier = nullptr;
+		gStackSplitSlot = NO_SLOT;
+		InternalBeginItemPointer(soldier, &moving, slot);
+		RecordFeedbackEvent(ST::format("STACK MOVE {} OBJECTS", amount));
+		SetBagRegionsEnabled(TRUE);
+		SetRenderFlags(RENDER_FLAG_FULL);
+	}
+
+	void StackSplitCallback(MOUSE_REGION* region, UINT32 reason)
+	{
+		if (!(reason & MSYS_CALLBACK_REASON_POINTER_UP) ||
+			!gStackSplitVisible || !gStackSplitSoldier ||
+			gStackSplitSlot < 0) return;
+		const size_t action = static_cast<size_t>(region->GetUserData<0>());
+		const UINT8 maximum = gStackSplitSoldier->inv[gStackSplitSlot].ubNumberOfObjects;
+		switch (action)
+		{
+			case 0: if (gStackSplitAmount > 1) --gStackSplitAmount; break;
+			case 1: if (gStackSplitAmount < maximum) ++gStackSplitAmount; break;
+			case 2: gStackSplitAmount = maximum; break;
+			case 3: ConfirmStackSplit(); return;
+			case 4: CloseStackSplit(); return;
+			default: return;
+		}
+		SetRenderFlags(RENDER_FLAG_FULL);
+	}
+
+	void EquipmentPackCallback(MOUSE_REGION*, UINT32 reason)
+	{
+		if (!(reason & MSYS_CALLBACK_REASON_POINTER_UP) ||
+			!gEquipmentExplodedVisible || !gEquipmentSoldier) return;
+		gInventorySoldier = gEquipmentSoldier;
+		gInventoryVisible = TRUE;
+		gBagVisible = !gBagVisible;
+		PositionBagRegions();
+		SetBagRegionsEnabled(TRUE);
+		SetRenderFlags(RENDER_FLAG_FULL);
+	}
+
 	void SlotCallback(MOUSE_REGION* region, UINT32 reason)
 	{
 		if (GetJA2Clock() < gPanelInteractionGuardUntil) return;
@@ -3246,6 +3483,11 @@ namespace
 		else if ((reason & MSYS_CALLBACK_REASON_POINTER_DWN) &&
 			gpItemPointer == nullptr && soldier->inv[slot].usItem != NOTHING)
 		{
+			if (soldier == selected && soldier->inv[slot].ubNumberOfObjects > 1)
+			{
+				BeginStackSplit(soldier, slot);
+				return;
+			}
 			// Hand control to JA2. Its native item cursor can place this object
 			// in another pocket, give/throw it, or drop it onto a world tile.
 			if (soldier == selected)
@@ -4634,9 +4876,182 @@ namespace
 		}
 	}
 
+	void DrawExplodedEquipment()
+	{
+		if (!gEquipmentExplodedVisible || !gEquipmentSoldier ||
+			!CanAccessSoldierContents(gEquipmentSoldier)) return;
+		PositionEquipmentRegions();
+		const UINT16 red = Get16BPPColor(FROMRGB(205, 12, 12));
+		const UINT16 mutedRed = Get16BPPColor(FROMRGB(92, 8, 8));
+		const UINT16 dark = Get16BPPColor(FROMRGB(4, 7, 7));
+		INT16 anchorX;
+		INT16 anchorY;
+		GetGridNoScreenPos(gEquipmentSoldier->sGridNo,
+			gEquipmentSoldier->bLevel, &anchorX, &anchorY);
+		OS0MapWorldToDisplayScreen(&anchorX, &anchorY);
+		for (size_t i = 0; i < gEquipmentRegions.size(); ++i)
+		{
+			MOUSE_REGION const& region = gEquipmentRegions[i];
+			const INT16 x = region.RegionTopLeftX;
+			const INT16 y = region.RegionTopLeftY;
+			const INT16 slotCentreX = x + 17;
+			const INT16 slotCentreY = y + 12;
+			ColorFillVideoSurfaceArea(FRAME_BUFFER,
+				std::min(slotCentreX, anchorX), slotCentreY,
+				std::max(slotCentreX, anchorX), slotCentreY, mutedRed);
+			const INT16 bodyY = static_cast<INT16>(anchorY - 9);
+			ColorFillVideoSurfaceArea(FRAME_BUFFER, anchorX,
+				std::min(slotCentreY, bodyY), anchorX,
+				std::max(slotCentreY, bodyY), mutedRed);
+			ColorFillVideoSurfaceArea(FRAME_BUFFER, x, y, x + 33, y + 24, dark);
+			const BOOLEAN hot = gusMouseXPos >= x && gusMouseXPos <= x + 34 &&
+				gusMouseYPos >= y && gusMouseYPos <= y + 25;
+			OutlineBox(x, y, 34, 25, hot ? red : mutedRed);
+			const INT8 slot = gExplodedEquipmentSlots[i];
+			OBJECTTYPE const& object = gEquipmentSoldier->inv[slot];
+			ST::string help = gExplodedEquipmentLabels[i];
+			if (object.usItem != NOTHING)
+			{
+				ItemModel const* const item = GCM->getItem(object.usItem);
+				help = ST::format("{} / {} / {}%", gExplodedEquipmentLabels[i],
+					item->getName(), object.bStatus[0]);
+				INVRenderItem(FRAME_BUFFER, gEquipmentSoldier, object,
+					x, y, 34, 25, DIRTYLEVEL2, 0, SGP_TRANSPARENT);
+			}
+			else
+			{
+				SetFont(TINYFONT1);
+				SetFontBackground(FONT_MCOLOR_BLACK);
+				SetFontForeground(FONT_MCOLOR_DKGRAY);
+				MPrint(x + 3, y + 9, ST::string(gExplodedEquipmentLabels[i]).left(6));
+			}
+			if (help != gEquipmentHelp[i])
+			{
+				gEquipmentHelp[i] = help;
+				gEquipmentRegions[i].SetFastHelpText(help);
+			}
+		}
+		const INT16 packX = gEquipmentPackRegion.RegionTopLeftX;
+		const INT16 packY = gEquipmentPackRegion.RegionTopLeftY;
+		ColorFillVideoSurfaceArea(FRAME_BUFFER, packX, packY,
+			packX + 45, packY + 24, dark);
+		OutlineBox(packX, packY, 46, 25, gBagVisible ? red : mutedRed);
+		if (gGodNewIcons)
+			BltVideoObject(FRAME_BUFFER, gGodNewIcons, 18, packX + 3, packY + 3);
+		SetFont(TINYFONT1);
+		SetFontBackground(FONT_MCOLOR_BLACK);
+		SetFontForeground(FONT_WHITE);
+		MPrint(packX + 23, packY + 9, "PACK");
+		gEquipmentPackRegion.SetFastHelpText(
+			"BACKPACK / REAL SOLDIER POCKETS / CLICK TO TOGGLE");
+		SetBagRegionsEnabled(TRUE);
+		InvalidateRegion(gEquipmentCentreX - 86, gEquipmentCentreY - 126,
+			gEquipmentCentreX + 86, gEquipmentCentreY + 4);
+	}
+
+	void DrawStackSplitDialog()
+	{
+		if (!gStackSplitVisible || !gStackSplitSoldier ||
+			gStackSplitSlot < 0 || gStackSplitSlot >= NUM_INV_SLOTS) return;
+		OBJECTTYPE const& object = gStackSplitSoldier->inv[gStackSplitSlot];
+		if (object.usItem == NOTHING || object.ubNumberOfObjects <= 1)
+		{
+			CloseStackSplit();
+			return;
+		}
+		const UINT16 red = Get16BPPColor(FROMRGB(205, 12, 12));
+		const UINT16 bright = Get16BPPColor(FROMRGB(235, 25, 25));
+		const UINT16 dark = Get16BPPColor(FROMRGB(4, 7, 7));
+		ColorFillVideoSurfaceArea(FRAME_BUFFER, gStackSplitX, gStackSplitY,
+			gStackSplitX + 223, gStackSplitY + 81, dark);
+		OutlineBox(gStackSplitX, gStackSplitY, 224, 82, red);
+		INVRenderItem(FRAME_BUFFER, gStackSplitSoldier, object,
+			gStackSplitX + 8, gStackSplitY + 20, 42, 27,
+			DIRTYLEVEL2, 0, SGP_TRANSPARENT);
+		SetFont(TINYFONT1);
+		SetFontBackground(FONT_MCOLOR_BLACK);
+		SetFontForeground(FONT_MCOLOR_RED);
+		MPrint(gStackSplitX + 8, gStackSplitY + 6, "MOVE STACK / QUANTITY");
+		SetFontForeground(FONT_WHITE);
+		MPrint(gStackSplitX + 56, gStackSplitY + 24,
+			GCM->getItem(object.usItem)->getName().left(22));
+		MPrint(gStackSplitX + 56, gStackSplitY + 38,
+			ST::format("{} OF {}", gStackSplitAmount, object.ubNumberOfObjects));
+		constexpr std::array<const char*, 5> labels{{ "-", "+", "ALL", "TAKE", "X" }};
+		for (size_t i = 0; i < gStackSplitRegions.size(); ++i)
+		{
+			MOUSE_REGION const& region = gStackSplitRegions[i];
+			const BOOLEAN hot = gusMouseXPos >= region.RegionTopLeftX &&
+				gusMouseXPos <= region.RegionBottomRightX &&
+				gusMouseYPos >= region.RegionTopLeftY &&
+				gusMouseYPos <= region.RegionBottomRightY;
+			OutlineBox(region.RegionTopLeftX, region.RegionTopLeftY,
+				region.W(), region.H(), hot ? bright : red);
+			SetFontForeground(hot ? FONT_WHITE : FONT_MCOLOR_LTGRAY);
+			MPrint(region.RegionTopLeftX + 6, region.RegionTopLeftY + 8, labels[i]);
+		}
+		InvalidateRegion(gStackSplitX, gStackSplitY,
+			gStackSplitX + 224, gStackSplitY + 82);
+	}
+
+	void DrawCharacterActionFan()
+	{
+		PositionContextRegions();
+		constexpr INT16 iconSize = 26;
+		const UINT16 red = Get16BPPColor(FROMRGB(205, 12, 12));
+		const UINT16 mutedRed = Get16BPPColor(FROMRGB(92, 8, 8));
+		const UINT16 dark = Get16BPPColor(FROMRGB(4, 7, 7));
+		const UINT16 disabled = Get16BPPColor(FROMRGB(38, 38, 38));
+		ST::string activeLabel = gContextTitle;
+		for (size_t i = 0; i < gContextEntryCount; ++i)
+		{
+			MOUSE_REGION const& region = gContextRegions[i];
+			const INT16 x = region.RegionTopLeftX;
+			const INT16 y = region.RegionTopLeftY;
+			const INT16 iconCentreX = x + iconSize / 2;
+			const INT16 iconCentreY = y + iconSize / 2;
+			ColorFillVideoSurfaceArea(FRAME_BUFFER,
+				std::min(gContextX, iconCentreX), gContextY,
+				std::max(gContextX, iconCentreX), gContextY, mutedRed);
+			ColorFillVideoSurfaceArea(FRAME_BUFFER, iconCentreX,
+				std::min(gContextY, iconCentreY), iconCentreX,
+				std::max(gContextY, iconCentreY), mutedRed);
+			ColorFillVideoSurfaceArea(FRAME_BUFFER, x, y,
+				x + iconSize - 1, y + iconSize - 1, dark);
+			const BOOLEAN hot = gusMouseXPos >= x && gusMouseXPos <= x + iconSize &&
+				gusMouseYPos >= y && gusMouseYPos <= y + iconSize;
+			OutlineBox(x, y, iconSize, iconSize,
+				!gContextEntries[i].enabled ? disabled : hot ? red : mutedRed);
+			if (gGodNewIcons)
+				BltVideoObject(FRAME_BUFFER, gGodNewIcons,
+					ContextActionIconFrame(gContextEntries[i].action), x + 3, y + 3);
+			if (hot) activeLabel = gContextEntries[i].label;
+		}
+		EnsurePortrait(gContextSoldier);
+		ColorFillVideoSurfaceArea(FRAME_BUFFER, gContextX - 25, gContextY - 23,
+			gContextX + 24, gContextY + 22, dark);
+		OutlineBox(gContextX - 25, gContextY - 23, 50, 46, red);
+		if (gPortrait)
+			BltVideoObject(FRAME_BUFFER, gPortrait, 0, gContextX - 24, gContextY - 22);
+		ColorFillVideoSurfaceArea(FRAME_BUFFER, gContextX - 78, gContextY + 29,
+			gContextX + 77, gContextY + 43, dark);
+		OutlineBox(gContextX - 78, gContextY + 29, 156, 15, mutedRed);
+		SetFont(TINYFONT1);
+		SetFontBackground(FONT_MCOLOR_BLACK);
+		SetFontForeground(FONT_WHITE);
+		MPrint(gContextX - 73, gContextY + 33, activeLabel.left(27));
+		InvalidateRegion(gContextX - 96, gContextY - 96,
+			gContextX + 96, gContextY + 96);
+	}
+
 	void DrawContextMenu()
 	{
 		if (!gContextVisible || gContextEntryCount == 0) return;
+		if (gCharacterActionFanVisible)
+		{
+			DrawCharacterActionFan();
+			return;
+		}
 		if (gObjectActionFanVisible)
 		{
 			PositionContextRegions();
@@ -4827,6 +5242,7 @@ namespace
 		if (!structure || !sourceNode || !structure->pDBStructureRef ||
 			!OkayToAddStructureToWorld(gWorldMoveDestination, 0,
 				structure->pDBStructureRef, INVALID_STRUCTURE_ID)) return FALSE;
+		WORLD_PHYSICS_PROFILE const physics = GetWorldPhysicsProfile(structure);
 
 		try
 		{
@@ -4853,6 +5269,19 @@ namespace
 				CaptureInspectorPreview(gWorldMoveDestination, gInspectedLevel);
 				RefreshObjectSymbol(gInspectedTileIndex);
 				StartExplodedView(gWorldMoveDestination, gInspectedTileIndex, TRUE);
+			}
+			// Heavy handling grows the attribute that was actually used. JA2's
+			// StatChange stores sub-points in the merc profile, giving us the same
+			// learn-by-doing loop as the rest of the campaign rather than a new XP bar.
+			if (gWorldMoveCarrier)
+			{
+				const UINT16 practice = static_cast<UINT16>(std::clamp<INT32>(
+					static_cast<INT32>(physics.massKg / 10.0f) +
+					(gWorldMoveLifted ? 1 : 3), 2, 12));
+				StatChange(*gWorldMoveCarrier, STRAMT, practice, FROM_SUCCESS);
+				RecordFeedbackEvent(ST::format("{} {} KG / STR PRACTICE {}",
+					gWorldMoveLifted ? "LIFT" : "DRAG",
+					static_cast<INT32>(physics.massKg + 0.5f), practice));
 			}
 			return TRUE;
 		}
@@ -4939,6 +5368,30 @@ namespace
 			DrawCarryGhost(gusMouseXPos, gusMouseYPos, FALSE);
 		else if (gWorldMoveWalking && gWorldMoveCarrier)
 		{
+			INT16 carrierX;
+			INT16 carrierY;
+			GetGridNoScreenPos(gWorldMoveCarrier->sGridNo,
+				gWorldMoveCarrier->bLevel, &carrierX, &carrierY);
+			OS0MapWorldToDisplayScreen(&carrierX, &carrierY);
+			INT16 objectX = carrierX;
+			INT16 objectY = carrierY;
+			if (!gWorldMoveLifted && gWorldMoveSource >= 0)
+			{
+				INT16 sourceX;
+				INT16 sourceY;
+				GetGridNoScreenPos(gWorldMoveSource, 0, &sourceX, &sourceY);
+				OS0MapWorldToDisplayScreen(&sourceX, &sourceY);
+				// A dragged object trails toward its source while the merc advances;
+				// a light object is held above the body by DrawCarryGhost.
+				objectX += std::clamp<INT16>(sourceX - carrierX, -22, 22);
+				objectY += std::clamp<INT16>(sourceY - carrierY, -12, 12);
+			}
+			DrawCarryGhost(objectX, objectY, gWorldMoveLifted);
+			SetFont(TINYFONT1);
+			SetFontBackground(FONT_MCOLOR_BLACK);
+			SetFontForeground(FONT_MCOLOR_RED);
+			MPrint(carrierX - 13, carrierY - 48,
+				gWorldMoveLifted ? "LIFT" : "DRAG");
 			if (gWorldMoveDestination >= 0)
 			{
 				INT16 destinationX;
@@ -4946,9 +5399,6 @@ namespace
 				GetGridNoScreenPos(gWorldMoveDestination, 0,
 					&destinationX, &destinationY);
 				OS0MapWorldToDisplayScreen(&destinationX, &destinationY);
-				// While the merc walks, the asset stays as a placement ghost at
-				// the chosen destination instead of covering the character sprite.
-				DrawCarryGhost(destinationX, destinationY, FALSE);
 				const UINT16 red = Get16BPPColor(FROMRGB(205, 12, 12));
 				OutlineBox(destinationX - 9, destinationY - 5, 19, 10, red);
 				InvalidateRegion(destinationX - 11, destinationY - 7,
@@ -5450,6 +5900,28 @@ void InitializeOS0IngameUI()
 			ObjectSoldierSlotCallback);
 		gObjectSlotRegions[i].SetUserData<0>(slot.slot);
 	}
+	for (size_t i = 0; i < gEquipmentRegions.size(); ++i)
+	{
+		MSYS_DefineRegion(&gEquipmentRegions[i], 0, 0, 34, 25,
+			MSYS_PRIORITY_HIGHEST, CURSOR_NORMAL, MSYS_NO_CALLBACK, SlotCallback);
+		gEquipmentRegions[i].SetUserData<0>(gExplodedEquipmentSlots[i]);
+		gEquipmentRegions[i].Disable();
+	}
+	MSYS_DefineRegion(&gEquipmentPackRegion, 0, 0, 46, 25,
+		MSYS_PRIORITY_HIGHEST, CURSOR_NORMAL, MSYS_NO_CALLBACK,
+		EquipmentPackCallback);
+	gEquipmentPackRegion.Disable();
+	MSYS_DefineRegion(&gStackSplitBlock, 0, 0, 224, 82,
+		MSYS_PRIORITY_HIGH, CURSOR_NORMAL, MSYS_NO_CALLBACK, BagBlockCallback);
+	gStackSplitBlock.Disable();
+	for (size_t i = 0; i < gStackSplitRegions.size(); ++i)
+	{
+		MSYS_DefineRegion(&gStackSplitRegions[i], 0, 0, 30, 23,
+			MSYS_PRIORITY_HIGHEST, CURSOR_NORMAL, MSYS_NO_CALLBACK,
+			StackSplitCallback);
+		gStackSplitRegions[i].SetUserData<0>(i);
+		gStackSplitRegions[i].Disable();
+	}
 
 	MSYS_DefineRegion(&gOrbRegion, 0, gOrbY, CommandModuleWidth(),
 		gOrbY + COMMAND_BAR_H, MSYS_PRIORITY_HIGHEST, CURSOR_NORMAL,
@@ -5530,6 +6002,10 @@ void ShutdownOS0IngameUI()
 	MSYS_RemoveRegion(&gSectorTeamRegion);
 	for (MOUSE_REGION& r : gSlotRegions) MSYS_RemoveRegion(&r);
 	for (MOUSE_REGION& r : gObjectSlotRegions) MSYS_RemoveRegion(&r);
+	for (MOUSE_REGION& r : gEquipmentRegions) MSYS_RemoveRegion(&r);
+	MSYS_RemoveRegion(&gEquipmentPackRegion);
+	MSYS_RemoveRegion(&gStackSplitBlock);
+	for (MOUSE_REGION& r : gStackSplitRegions) MSYS_RemoveRegion(&r);
 	MSYS_RemoveRegion(&gOrbRegion);
 	MSYS_RemoveRegion(&gTutorialContinue);
 	for (MOUSE_REGION& r : gTutorialStats) MSYS_RemoveRegion(&r);
@@ -5583,11 +6059,17 @@ void ShutdownOS0IngameUI()
 	gLootTileIndex = NO_TILE;
 	gInventoryVisible = FALSE;
 	gLootVisible = FALSE;
+	gEquipmentExplodedVisible = FALSE;
+	gEquipmentSoldier = nullptr;
+	gStackSplitVisible = FALSE;
+	gStackSplitSoldier = nullptr;
+	gStackSplitSlot = NO_SLOT;
 	gLootDragCandidate = -1;
 	gPanelInteractionGuardUntil = 0;
 	gLootIgnoreInputUntil = 0;
 	gAimAutoCollapsed = FALSE;
 	gBagVisibleBeforeAim = FALSE;
+	gEquipmentVisibleBeforeAim = FALSE;
 	gFieldToolIssued = FALSE;
 	gContentsMode = ContentsMode::SOLDIER;
 	gGodLibraryVisible = FALSE;
@@ -5623,6 +6105,7 @@ void RenderOS0IngameUI()
 		{
 			StopFeedbackEditing();
 			gBagVisibleBeforeAim = gBagVisible;
+			gEquipmentVisibleBeforeAim = gEquipmentExplodedVisible;
 			for (FloatingPanel& panel : gFloatingPanels)
 			{
 				panel.visibleBeforeAim = panel.visible;
@@ -5630,6 +6113,10 @@ void RenderOS0IngameUI()
 			}
 			gAimAutoCollapsed = TRUE;
 			gBagVisible = FALSE;
+			gEquipmentExplodedVisible = FALSE;
+			gStackSplitVisible = FALSE;
+			gStackSplitSoldier = nullptr;
+			gStackSplitSlot = NO_SLOT;
 			gGodLibraryVisible = FALSE;
 			gAssetCatalogVisible = FALSE;
 			gAssetCatalogNameEditing = FALSE;
@@ -5643,6 +6130,9 @@ void RenderOS0IngameUI()
 			gAimAutoCollapsed = FALSE;
 			gBagVisible = gBagVisibleBeforeAim;
 			gBagVisibleBeforeAim = FALSE;
+			gEquipmentExplodedVisible = gEquipmentVisibleBeforeAim &&
+				gEquipmentSoldier != nullptr;
+			gEquipmentVisibleBeforeAim = FALSE;
 			for (FloatingPanel& panel : gFloatingPanels)
 			{
 				panel.visible = panel.visibleBeforeAim;
@@ -5702,6 +6192,7 @@ void RenderOS0IngameUI()
 		}
 	}
 	DrawWorldSelection();
+	DrawExplodedEquipment();
 	DrawWorldAssetExplodedView();
 	DrawImpactParticles();
 	DrawOrb();
@@ -5711,6 +6202,7 @@ void RenderOS0IngameUI()
 	DrawFeedbackPanel();
 	DrawGodIconLibrary();
 	DrawAssetCatalog();
+	DrawStackSplitDialog();
 
 	// The tactical renderer uses dirty rectangles. A full refresh while moving
 	// prevents the "hall of mirrors" trails visible in the previous prototype.
@@ -5719,7 +6211,8 @@ void RenderOS0IngameUI()
 		floatingPanelDragging |= panel.dragging;
 	if (gContextVisible || gHoverVisible || gGodLibraryVisible ||
 		gAssetCatalogVisible || gBagDragging || floatingPanelDragging ||
-		gWorldMovePending || gWorldMoveWalking)
+		gWorldMovePending || gWorldMoveWalking || gEquipmentExplodedVisible ||
+		gStackSplitVisible)
 		SetRenderFlags(RENDER_FLAG_FULL);
 }
 
@@ -5981,12 +6474,14 @@ void OS0OpenContextMenu(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 	if (target)
 	{
 		OS0OpenCharacterPanel(target);
+		gCharacterActionFanVisible = TRUE;
+		if (target->bTeam == OUR_TEAM) gBagVisible = FALSE;
 		gContextSoldier = target;
 		gContextTitle = target->name;
 		const BOOLEAN own = target->bTeam == OUR_TEAM;
 		AddContextEntry(ContextAction::INSPECT, "INSPECT / INFO");
 		AddContextEntry(ContextAction::CONTENTS,
-			own ? "INVENTORY" : "LOOT / CONTENTS",
+			own ? "INVENTORY / EQUIPMENT" : "LOOT / CONTENTS",
 			CanAccessSoldierContents(target));
 		if (own)
 		{
@@ -6230,6 +6725,12 @@ BOOLEAN OS0HandleCursorAction(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 	gWorldMoveSource = gridNo;
 	gWorldMoveTileIndex = tileIndex;
 	gWorldMoveCarrier = selected;
+	if (STRUCTURE const* const moving = WorldStructureAt(gridNo, 0, tileIndex))
+	{
+		WORLD_PHYSICS_PROFILE const physics = GetWorldPhysicsProfile(moving);
+		gWorldMoveLifted = physics.massKg <=
+			GetSoldierWorldCarryCapacityKg(selected) * 0.55f;
+	}
 	ShadeWorldMoveSource();
 	gLootVisible = FALSE;
 	SetBagRegionsEnabled(TRUE);

@@ -68,6 +68,16 @@ playtest in its own folder and point the launcher to the original game directory
     still, follows camera/zoom movement, shows an action label on hover and every
     enabled icon is directly clickable. Character and item-specific text menus should
     continue to work after closing the icon fan.
+31. Right-click an owned merc. Verify a circular icon ring surrounds that merc and
+    `INVENTORY / EQUIPMENT` expands the real helmet, face, armour, legs and hand slots
+    above the actor. Drag an item between one of those slots and the world/pocket UI.
+32. Click `PACK` in the exploded equipment view. Verify the character pocket window
+    toggles without closing the equipment slots and both views show the same live items.
+33. Drag a slot containing multiple objects. Choose `+`, `-`, `ALL`, `TAKE` and cancel
+    in separate attempts; only the selected count should attach to the item cursor.
+34. Reposition one light and one heavy movable object. The light object should be held
+    above the merc; the heavier object should trail behind as `DRAG`. Invalid placement
+    must leave the original intact, while a valid move should log strength practice.
 
 ## Writing a useful report
 

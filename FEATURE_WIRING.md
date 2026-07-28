@@ -1,7 +1,7 @@
 # Feature wiring audit
 
 This matrix compares the public prototype claims with the actual runtime path in
-the source. It was last verified for `v0.5.1-alpha`.
+the source. It was last verified for `v0.5.3-alpha`.
 
 | Feature | Runtime status | Wiring / persistence |
 | --- | --- | --- |
@@ -14,13 +14,16 @@ the source. It was last verified for `v0.5.1-alpha`.
 | Container inventory drag/drop | Verified | Double-click, right-click `OPEN CONTENTS` and the actions panel now share one open path. |
 | Deterministic container loot | Verified | First open seeds material and useful/damaged equipment; an invisible world-item marker prevents refilling and is saved with sector world items. |
 | Context actions | Verified | Object, terrain, character, loot and weapon entries call real JA2 or OS0 actions rather than display-only labels. |
+| Character radial actions | Verified | Right-clicking a merc anchors a circular JA2-icon action ring to that actor. Every icon owns a stable mouse region and keeps the detailed action name as hover text. |
+| In-world equipment view | Verified as an initial RPG inventory layer | `INVENTORY / EQUIPMENT` expands helmet, face, armour, leg and hand slots around the merc. They are the real saveable JA2 inventory objects and accept the native item cursor; `PACK` toggles the full pocket container. |
+| Stack quantity transfer | Verified for player inventory/equipment | Dragging a stack opens an OS0 quantity dialog with single-step, all, take and cancel controls before attaching the chosen count to JA2's native item cursor. |
 | Hover cursor / middle-click cycle | Verified after audit fix | Hover is connected to the viewport movement callback; middle click cycles the valid action set for the current target. |
 | Long-hold graphical merc menu | Verified | JA2's original 3x3 movement frame remains active and a second frame invokes character, inventory, stealth, weapon, reload and icon-library actions. |
 | AI run-to-cover command | Verified | Uses JA2's cover evaluator, a peaceful-sector geometry fallback, engine pathing and a prone/crouch arrival stance. |
 | God icon atlas | Verified | Loads 24 symbols from JA2 STI resources and feeds the selected symbol back into the extended command menu. |
 | Asset catalog | Verified | Records tileset/base-tile key, inferred footprint, custom name/category/material/role/size and buildable metadata to a user TSV; local data overrides the bundled catalog. |
 | Material/physics profile | Verified as an early gameplay model | Engine structure data determines mass, friction, restitution, integrity and carrying capacity. This is not a general rigid-body simulation. |
-| Structure carry/reposition | Verified for eligible single-tile structures | Strength/health and structure flags gate carrying; the real tile sprite follows the merc and placement uses JA2 collision checks. |
+| Structure carry/reposition | Verified for eligible single-tile structures | Material mass, strength and wounds determine eligibility and whether the merc lifts or drags. The real tile sprite follows above or behind the actor, placement stays transactional through JA2 collision checks, and successful handling trains persistent strength sub-points. |
 | Weapon impact chips and asset durability | Verified after audit fix | OS0 owns damage for salvageable/resource assets before vanilla can invalidate the structure pointer; critical geometry remains JA2-owned. Destroyed map objects and material drops persist. |
 | Salvage and surface digging | Verified | Nearby tool-gated actions remove map objects/surface layers through map-temp recording and create physical timber, stone, scrap or soil stacks. Digging is surface editing, not deep voxel terrain. |
 | Sector stockpiles/upgrades | Verified | Four resource counters and three upgrade flags use reserved bits in saved `SECTORINFO`. Workshop and depot alter yields; the built shelter can be clicked to recover the current team. |
@@ -36,6 +39,11 @@ the source. It was last verified for `v0.5.1-alpha`.
 - A deep, voxel-like terrain volume or general-purpose rigid-body physics engine.
 - JA2 1.13 data/code integration.
 - Network multiplayer or synchronized co-op simulation.
+- Removable nested backpack items with their own independent saved contents. `PACK`
+  currently exposes the merc's real persistent pocket slots as one container.
+- Continuous rigid-body pushing/rotation for map structures. Movement currently keeps
+  the original map node alive until a collision-valid destination is committed and
+  animates lift/drag along the merc; it does not solve structure collisions every frame.
 - A balanced campaign, enemy progression or production economy.
 - Live travel plotting, assignments, militia management and finance inside OS0 windows.
 
