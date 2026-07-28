@@ -8,7 +8,7 @@ An experimental, non-commercial rework of *Jagged Alliance 2* built on
 
 ## Download and play
 
-1. Open the [latest release](https://github.com/reirao/escapefromarulco/releases/latest).
+1. Open the [v0.1.0-alpha release](https://github.com/reirao/escapefromarulco/releases/tag/v0.1.0-alpha).
 2. Download `Escape-from-Arulco-Playtest-2026-07-28.zip`.
 3. Extract the complete ZIP into a writable folder.
 4. Run `START_PLAYTEST.cmd`.
@@ -76,4 +76,3 @@ The original Stracciatella README is preserved at
   [contributors.txt](contributors.txt).
 
 *Jagged Alliance 2* and associated original assets belong to their respective owners.
-
