@@ -79,11 +79,11 @@ namespace
 	constexpr INT16 TAB_Y = BAG_H - 22;
 	constexpr INT16 INVENTORY_X = 145;
 	constexpr INT16 CONTINUE_X = PANE_W - 125;
-	constexpr INT16 PANEL_HEADER_H = 17;
+	constexpr INT16 PANEL_HEADER_H = 19;
 	constexpr INT16 CONTEXT_PANEL_W = 190;
 	constexpr INT16 CONTEXT_PANEL_H = 112;
 	constexpr INT16 TOOLS_PANEL_W = 168;
-	constexpr INT16 TOOLS_PANEL_H = 126;
+	constexpr INT16 TOOLS_PANEL_H = 174;
 	constexpr INT16 ACTIONS_PANEL_W = 194;
 	constexpr INT16 ACTIONS_PANEL_H = 174;
 	constexpr INT16 FEEDBACK_PANEL_W = 390;
@@ -101,6 +101,8 @@ namespace
 	constexpr INT16 BRAND_H = 40;
 	constexpr INT16 EVENT_LOG_W = 218;
 	constexpr INT16 EVENT_LOG_H = 58;
+	constexpr INT16 COLLAPSED_OS0_W = 54;
+	constexpr const char* UI_LAYOUT_PATH = "OS0/os0-ui-layout.tsv";
 
 	enum class ResourceKind : UINT8
 	{
@@ -332,6 +334,7 @@ namespace
 	UINT8 gWorldMoveOldShade = DEFAULT_SHADE_LEVEL;
 	BOOLEAN gWorldMoveSourceShaded = FALSE;
 	UINT8 gWorldZoom = 1;
+	BOOLEAN gCommandBarExpanded = FALSE;
 	UINT8 gCursorAction = 0;
 	SOLDIERTYPE* gHoverCursorSoldier = nullptr;
 	GridNo gHoverCursorGridNo = NOWHERE;
@@ -371,6 +374,9 @@ namespace
 	void AssetCatalogCallback(MOUSE_REGION* region, UINT32 reason);
 	void SetBagRegionsEnabled(BOOLEAN enabled);
 	void PositionBagRegions();
+	void ClampWindowPositions();
+	BOOLEAN SaveUILayout();
+	void LoadUILayout();
 	BOOLEAN AssetCatalogKeyboardHook(InputAtom* event);
 	ST::string SerializeAssetCatalog();
 	void RecordFeedbackEvent(const ST::string& event);
@@ -516,7 +522,8 @@ namespace
 
 	INT16 WorkspaceBottom()
 	{
-		return std::max<INT16>(0, gOrbY - 3);
+		return std::max<INT16>(0, std::min<INT16>(gOrbY - 3,
+			gsVIEWPORT_WINDOW_END_Y));
 	}
 
 	BOOLEAN CompactArtworkWorkspace()
@@ -561,6 +568,126 @@ namespace
 			gBagX = std::max<INT16>(0, gsVIEWPORT_END_X - PANE_W - 8);
 			gBagY = 8;
 		}
+	}
+
+	void ClampWindowPositions()
+	{
+		const INT16 bottom = WorkspaceBottom();
+		gBagX = std::clamp<INT16>(gBagX, 0,
+			std::max<INT16>(0, gsVIEWPORT_END_X - PANE_W));
+		gBagY = std::clamp<INT16>(gBagY, 0,
+			std::max<INT16>(0, bottom - BAG_H));
+		for (FloatingPanel& panel : gFloatingPanels)
+		{
+			panel.x = std::clamp<INT16>(panel.x, 0,
+				std::max<INT16>(0, gsVIEWPORT_END_X - panel.w));
+			panel.y = std::clamp<INT16>(panel.y, 0,
+				std::max<INT16>(0, bottom - panel.h));
+		}
+		FloatingPanel const& object =
+			gFloatingPanels[static_cast<size_t>(FloatingPanelId::OBJECT_INVENTORY)];
+		gInventoryX = gBagX;
+		gInventoryY = gBagY;
+		gLootX = object.x;
+		gLootY = object.y;
+	}
+
+	BOOLEAN SaveUILayout()
+	{
+		try
+		{
+			GCM->userPrivateFiles()->createDir("OS0");
+			ST::string output = ST::format(
+				"# Escape from Arulco UI layout v1\n"
+				"screen {} {}\n"
+				"expanded {}\n"
+				"bag {} {}\n",
+				SCREEN_WIDTH, SCREEN_HEIGHT, gCommandBarExpanded ? 1 : 0,
+				gBagX, gBagY);
+			for (size_t i = 0; i < gFloatingPanels.size(); ++i)
+			{
+				FloatingPanel const& panel = gFloatingPanels[i];
+				output += ST::format("panel {} {} {}\n", i, panel.x, panel.y);
+			}
+			AutoSGPFile file{
+				GCM->userPrivateFiles()->openForWriting(UI_LAYOUT_PATH, true) };
+			file->write(output.c_str(), output.size());
+			return TRUE;
+		}
+		catch (...)
+		{
+			return FALSE;
+		}
+	}
+
+	void LoadUILayout()
+	{
+		INT32 savedWidth = SCREEN_WIDTH;
+		INT32 savedHeight = SCREEN_HEIGHT;
+		INT32 bagX = gBagX;
+		INT32 bagY = gBagY;
+		INT32 expanded = gCommandBarExpanded ? 1 : 0;
+		std::array<INT32, static_cast<size_t>(FloatingPanelId::COUNT)> panelX{};
+		std::array<INT32, static_cast<size_t>(FloatingPanelId::COUNT)> panelY{};
+		for (size_t i = 0; i < gFloatingPanels.size(); ++i)
+		{
+			panelX[i] = gFloatingPanels[i].x;
+			panelY[i] = gFloatingPanels[i].y;
+		}
+		try
+		{
+			AutoSGPFile file{
+				GCM->userPrivateFiles()->openForReading(UI_LAYOUT_PATH) };
+			std::istringstream stream(file->readStringToEnd().c_str());
+			std::string line;
+			while (std::getline(stream, line))
+			{
+				if (line.empty() || line[0] == '#') continue;
+				std::istringstream row(line);
+				std::string key;
+				row >> key;
+				if (key == "screen") row >> savedWidth >> savedHeight;
+				else if (key == "expanded") row >> expanded;
+				else if (key == "bag") row >> bagX >> bagY;
+				else if (key == "panel")
+				{
+					INT32 index = -1;
+					INT32 x = 0;
+					INT32 y = 0;
+					if (row >> index >> x >> y && index >= 0 &&
+						index < static_cast<INT32>(gFloatingPanels.size()))
+					{
+						panelX[index] = x;
+						panelY[index] = y;
+					}
+				}
+			}
+		}
+		catch (...)
+		{
+			return;
+		}
+
+		const INT32 safeWidth = std::max<INT32>(1, savedWidth);
+		const INT32 safeHeight = std::max<INT32>(1,
+			savedHeight - COMMAND_BAR_H);
+		auto scaleX = [safeWidth](INT32 value)
+		{
+			return static_cast<INT16>(value * SCREEN_WIDTH / safeWidth);
+		};
+		auto scaleY = [safeHeight](INT32 value)
+		{
+			return static_cast<INT16>(value * WorkspaceBottom() / safeHeight);
+		};
+		gBagX = scaleX(bagX);
+		gBagY = scaleY(bagY);
+		for (size_t i = 0; i < gFloatingPanels.size(); ++i)
+		{
+			gFloatingPanels[i].x = scaleX(panelX[i]);
+			gFloatingPanels[i].y = scaleY(panelY[i]);
+		}
+		gCommandBarExpanded = expanded != 0;
+		ClampWindowPositions();
 	}
 
 	BOOLEAN CanAccessSoldierContents(SOLDIERTYPE const* soldier)
@@ -1981,7 +2108,7 @@ namespace
 		{
 			const BOOLEAN tutorialFeedback = gTutorialActive &&
 				i == static_cast<size_t>(FloatingPanelId::FEEDBACK) + 1;
-			setVisible(gPanelDockRegions[i], !gAimAutoCollapsed &&
+			setVisible(gPanelDockRegions[i], gCommandBarExpanded && !gAimAutoCollapsed &&
 				(!gTutorialActive || tutorialFeedback));
 		}
 		const FloatingPanel& toolsPanel =
@@ -2157,13 +2284,14 @@ namespace
 			gPanelDockRegions[i].RegionBottomRightY = gOrbY + COMMAND_BAR_H;
 		}
 		MoveRegion(gOrbRegion, 0, gOrbY);
-		gOrbRegion.RegionBottomRightX = CommandModuleWidth();
+		gOrbRegion.RegionBottomRightX = gCommandBarExpanded ?
+			CommandModuleWidth() : COLLAPSED_OS0_W;
 		gOrbRegion.RegionBottomRightY = gOrbY + COMMAND_BAR_H;
 		const FloatingPanel& tools =
 			gFloatingPanels[static_cast<size_t>(FloatingPanelId::TOOLS)];
 		for (size_t i = 0; i < gToolRegions.size(); ++i)
 			MoveRegion(gToolRegions[i], tools.x + 7,
-				tools.y + 21 + static_cast<INT16>(i) * 10);
+				tools.y + 21 + static_cast<INT16>(i) * 15);
 		const FloatingPanel& actions =
 			gFloatingPanels[static_cast<size_t>(FloatingPanelId::ACTIONS)];
 		for (size_t i = 0; i < gActionPanelRegions.size(); ++i)
@@ -2238,6 +2366,7 @@ namespace
 		{
 			UpdateWindowDragging();
 			gBagDragging = FALSE;
+			SaveUILayout();
 			SetRenderFlags(RENDER_FLAG_FULL);
 		}
 	}
@@ -2271,6 +2400,7 @@ namespace
 		{
 			UpdateWindowDragging();
 			panel.dragging = FALSE;
+			SaveUILayout();
 			SetRenderFlags(RENDER_FLAG_FULL);
 		}
 	}
@@ -2302,7 +2432,7 @@ namespace
 			{
 				for (FloatingPanel& panel : gFloatingPanels) panel.visible = FALSE;
 			}
-			ApplyArtworkWorkspaceLayout(gBagVisible);
+			ClampWindowPositions();
 		}
 		else if (index <= gFloatingPanels.size())
 		{
@@ -3144,7 +3274,8 @@ namespace
 				gFloatingPanels[static_cast<size_t>(FloatingPanelId::CONTEXT)].visible = TRUE;
 				gFloatingPanels[static_cast<size_t>(FloatingPanelId::ACTIONS)].visible = TRUE;
 				gFloatingPanels[static_cast<size_t>(FloatingPanelId::TOOLS)].visible = TRUE;
-				ApplyArtworkWorkspaceLayout(gBagVisible);
+				ClampWindowPositions();
+				SaveUILayout();
 				RefreshPanelActions();
 				SetUIKeyboardHook(nullptr);
 				SetBagRegionsEnabled(TRUE);
@@ -3270,15 +3401,24 @@ namespace
 	void OrbCallback(MOUSE_REGION*, UINT32 reason)
 	{
 		if (!(reason & MSYS_CALLBACK_REASON_POINTER_UP)) return;
-		StopFeedbackEditing();
-		gBagVisible = FALSE;
-		gGodLibraryVisible = FALSE;
-		gAssetCatalogVisible = FALSE;
-		for (FloatingPanel& panel : gFloatingPanels) panel.visible = FALSE;
-		CloseContextMenu();
-		OS0CancelCursorAction();
+		gCommandBarExpanded = !gCommandBarExpanded;
+		SaveUILayout();
 		SetBagRegionsEnabled(TRUE);
 		SetRenderFlags(RENDER_FLAG_FULL);
+	}
+
+	void DrawCommandIcon(size_t index, INT16 x, INT16 y)
+	{
+		if (index == 6 && gGodDoorIcons)
+		{
+			BltVideoObject(FRAME_BUFFER, gGodDoorIcons, 0, x, y);
+			return;
+		}
+		if (!gGodNewIcons) return;
+		constexpr std::array<UINT16, COMMAND_MODULE_COUNT> frames{{
+			24, 21, 12, 39, 18, 18, 42, 21
+		}};
+		BltVideoObject(FRAME_BUFFER, gGodNewIcons, frames[index], x, y);
 	}
 
 	void DrawOrb()
@@ -3291,19 +3431,31 @@ namespace
 			gsVIEWPORT_END_X - 1, gOrbY + COMMAND_BAR_H - 1, black);
 		ColorFillVideoSurfaceArea(FRAME_BUFFER, 0, gOrbY,
 			gsVIEWPORT_END_X - 1, gOrbY + 1, bright);
+		if (!gCommandBarExpanded)
+		{
+			OutlineBox(3, gOrbY + 4, COLLAPSED_OS0_W - 6,
+				COMMAND_BAR_H - 7, red);
+			DrawCommandIcon(0, 7, gOrbY + 9);
+			SetFont(TINYFONT1);
+			SetFontBackground(FONT_MCOLOR_BLACK);
+			SetFontForeground(FONT_MCOLOR_RED);
+			MPrint(28, gOrbY + 8, "OS0");
+			SetFontForeground(FONT_MCOLOR_DKGRAY);
+			MPrint(28, gOrbY + 20, ">>");
+			InvalidateRegion(0, gOrbY, gsVIEWPORT_END_X,
+				gOrbY + COMMAND_BAR_H);
+			return;
+		}
 
 		const std::array<const char*, COMMAND_MODULE_COUNT> titles{{
-			"TACTICAL", "CHARACTER", "WORLD", "TOOLS",
+			"OS0", "CHARACTER", "WORLD", "TOOLS",
 			"ACTIONS", "INVENTORY", "SECTOR", "FEEDBACK"
 		}};
 		const std::array<const char*, COMMAND_MODULE_COUNT> subtitles{{
-			"MERC GAME", "STATS + GEAR", "TARGET INFO", "CURSOR + FIELD",
+			"COLLAPSE", "STATS + GEAR", "TARGET INFO", "CURSOR + FIELD",
 			"COMMANDS", "LOOT SYSTEM", "BASE BUILD", "PLAYTEST"
 		}};
 		const INT16 cellW = CommandModuleWidth();
-		BOOLEAN anyWindowVisible = gBagVisible;
-		for (FloatingPanel const& panel : gFloatingPanels)
-			anyWindowVisible |= panel.visible;
 		SetFont(TINYFONT1);
 		SetFontBackground(FONT_MCOLOR_BLACK);
 		for (size_t i = 0; i < COMMAND_MODULE_COUNT; ++i)
@@ -3311,7 +3463,7 @@ namespace
 			const INT16 x = static_cast<INT16>(i) * cellW;
 			const INT16 right = i + 1 == COMMAND_MODULE_COUNT ?
 				gsVIEWPORT_END_X : std::min<INT16>(gsVIEWPORT_END_X, x + cellW);
-			BOOLEAN active = i == 0 && !anyWindowVisible;
+			BOOLEAN active = i == 0;
 			if (i == 1) active = gBagVisible;
 			else if (i >= 2)
 				active = gFloatingPanels[i - 2].visible;
@@ -3321,15 +3473,13 @@ namespace
 					right - 2, gOrbY + COMMAND_BAR_H - 2, dark);
 			ColorFillVideoSurfaceArea(FRAME_BUFFER, right - 1, gOrbY + 3,
 				right - 1, gOrbY + COMMAND_BAR_H - 2, red);
-			OutlineBox(x + 6, gOrbY + 10, 8, 8, active ? bright : red);
-			if (active)
-				ColorFillVideoSurfaceArea(FRAME_BUFFER, x + 8, gOrbY + 12,
-					x + 11, gOrbY + 15, bright);
+			DrawCommandIcon(i, x + 5, gOrbY + 9);
+			if (active) OutlineBox(x + 3, gOrbY + 6, 22, 22, bright);
 			SetFontForeground(!available ? FONT_MCOLOR_DKGRAY :
 				active ? FONT_MCOLOR_RED : FONT_MCOLOR_LTGRAY);
-			MPrint(x + 18, gOrbY + 7, titles[i]);
+			MPrint(x + 28, gOrbY + 7, titles[i]);
 			SetFontForeground(available ? FONT_MCOLOR_DKGRAY : FONT_MCOLOR_BLACK);
-			MPrint(x + 18, gOrbY + 20, subtitles[i]);
+			MPrint(x + 28, gOrbY + 20, subtitles[i]);
 		}
 		if (gWorldZoom > 1)
 		{
@@ -3443,7 +3593,8 @@ namespace
 			gBagX + PANE_W - 2, gBagY + 17, bright);
 	}
 
-	void DrawFloatingPanelShell(FloatingPanel const& panel, const ST::string& title)
+	void DrawFloatingPanelShell(FloatingPanel const& panel, FloatingPanelId id,
+		const ST::string& title)
 	{
 		const UINT16 red = Get16BPPColor(FROMRGB(205, 12, 12));
 		const UINT16 muted = Get16BPPColor(FROMRGB(78, 5, 5));
@@ -3461,7 +3612,11 @@ namespace
 		SetFont(TINYFONT1);
 		SetFontBackground(FONT_MCOLOR_BLACK);
 		SetFontForeground(FONT_MCOLOR_RED);
-		MPrint(panel.x + 6, panel.y + 5, title);
+		const std::array<size_t, static_cast<size_t>(FloatingPanelId::COUNT)> icons{{
+			2, 3, 4, 5, 6, 7
+		}};
+		DrawCommandIcon(icons[static_cast<size_t>(id)], panel.x + 5, panel.y + 1);
+		MPrint(panel.x + 28, panel.y + 5, title);
 		MPrint(panel.x + panel.w - 13, panel.y + 5, "X");
 	}
 
@@ -3470,7 +3625,7 @@ namespace
 		const FloatingPanel& panel =
 			gFloatingPanels[static_cast<size_t>(FloatingPanelId::CONTEXT)];
 		if (!panel.visible) return;
-		DrawFloatingPanelShell(panel, gInspectedSoldier ?
+		DrawFloatingPanelShell(panel, FloatingPanelId::CONTEXT, gInspectedSoldier ?
 			"CHARACTER / INSPECT" : "WORLD ASSET / FIELD EDITING");
 		SetFont(TINYFONT1);
 		SetFontBackground(FONT_MCOLOR_BLACK);
@@ -3549,7 +3704,8 @@ namespace
 		const FloatingPanel& panel =
 			gFloatingPanels[static_cast<size_t>(FloatingPanelId::TOOLS)];
 		if (!panel.visible) return;
-		DrawFloatingPanelShell(panel, "ACTIONS / SQUAD COMMANDS");
+		DrawFloatingPanelShell(panel, FloatingPanelId::TOOLS,
+			"ACTIONS / SQUAD COMMANDS");
 		const std::array<const char*, 10> labels{{
 			"MOVE", "USE / LOOT", "CARRY", "LOOK", "TALK", "ATTACK",
 			"STRATEGIC MAP", "END TURN", "PREV SQUAD", "NEXT SQUAD"
@@ -3558,9 +3714,15 @@ namespace
 		SetFontBackground(FONT_MCOLOR_BLACK);
 		for (size_t i = 0; i < labels.size(); ++i)
 		{
+			constexpr std::array<UINT16, 10> iconFrames{{
+				3, 18, 18, 12, 21, 24, 12, 15, 0, 3
+			}};
+			if (gGodNewIcons)
+				BltVideoObject(FRAME_BUFFER, gGodNewIcons, iconFrames[i],
+					panel.x + 7, panel.y + 21 + static_cast<INT16>(i) * 15);
 			SetFontForeground(i < 6 && gCursorAction == i ?
 				FONT_MCOLOR_RED : FONT_MCOLOR_LTGRAY);
-			MPrint(panel.x + 9, panel.y + 24 + static_cast<INT16>(i) * 10,
+			MPrint(panel.x + 30, panel.y + 25 + static_cast<INT16>(i) * 15,
 				ST::format("{} {}", i < 6 && gCursorAction == i ? ">" : " ", labels[i]));
 		}
 		InvalidateRegion(panel.x, panel.y, panel.x + panel.w, panel.y + panel.h);
@@ -3572,7 +3734,8 @@ namespace
 			gFloatingPanels[static_cast<size_t>(FloatingPanelId::ACTIONS)];
 		if (!panel.visible) return;
 		RefreshPanelActions();
-		DrawFloatingPanelShell(panel, "OBJECT / INTERACTION");
+		DrawFloatingPanelShell(panel, FloatingPanelId::ACTIONS,
+			"OBJECT / INTERACTION");
 		SetFont(TINYFONT1);
 		SetFontBackground(FONT_MCOLOR_BLACK);
 		if (gPanelActionEntryCount == 0)
@@ -3582,10 +3745,32 @@ namespace
 		}
 		for (size_t i = 0; i < gPanelActionEntryCount; ++i)
 		{
+			UINT16 iconFrame = 12;
+			switch (gPanelActionEntries[i].action)
+			{
+				case ContextAction::CONTENTS:
+				case ContextAction::PICK_UP:
+				case ContextAction::EQUIP_ITEM:
+				case ContextAction::MOVE_ITEM: iconFrame = 18; break;
+				case ContextAction::CARRY:
+				case ContextAction::STAND: iconFrame = 3; break;
+				case ContextAction::CROUCH: iconFrame = 6; break;
+				case ContextAction::PRONE: iconFrame = 9; break;
+				case ContextAction::TALK: iconFrame = 21; break;
+				case ContextAction::ATTACK:
+				case ContextAction::WEAPON_MODE: iconFrame = 24; break;
+				case ContextAction::DIG:
+				case ContextAction::SALVAGE:
+				case ContextAction::BUILD: iconFrame = 39; break;
+				default: break;
+			}
+			if (gGodNewIcons)
+				BltVideoObject(FRAME_BUFFER, gGodNewIcons, iconFrame,
+					panel.x + 7, panel.y + 21 + static_cast<INT16>(i) * 18);
 			SetFontForeground(gPanelActionEntries[i].enabled ?
 				FONT_WHITE : FONT_MCOLOR_DKGRAY);
-			MPrint(panel.x + 9, panel.y + 25 + static_cast<INT16>(i) * 18,
-				ST::format("[>] {}", gPanelActionEntries[i].label).left(30));
+			MPrint(panel.x + 30, panel.y + 25 + static_cast<INT16>(i) * 18,
+				gPanelActionEntries[i].label.left(26));
 		}
 		SetBagRegionsEnabled(TRUE);
 		InvalidateRegion(panel.x, panel.y, panel.x + panel.w, panel.y + panel.h);
@@ -3596,7 +3781,7 @@ namespace
 		FloatingPanel const& panel =
 			gFloatingPanels[static_cast<size_t>(FloatingPanelId::SECTOR)];
 		if (!panel.visible) return;
-		DrawFloatingPanelShell(panel,
+		DrawFloatingPanelShell(panel, FloatingPanelId::SECTOR,
 			ST::format("SECTOR / {}", gWorldSector.AsShortString()));
 		const UINT16 red = Get16BPPColor(FROMRGB(118, 0, 0));
 		SetFont(TINYFONT1);
@@ -3641,7 +3826,8 @@ namespace
 		FloatingPanel const& panel =
 			gFloatingPanels[static_cast<size_t>(FloatingPanelId::FEEDBACK)];
 		if (!panel.visible) return;
-		DrawFloatingPanelShell(panel, "PLAYTEST / FEEDBACK REPORT");
+		DrawFloatingPanelShell(panel, FloatingPanelId::FEEDBACK,
+			"PLAYTEST / FEEDBACK REPORT");
 		const UINT16 red = Get16BPPColor(FROMRGB(118, 0, 0));
 		const UINT16 brightRed = Get16BPPColor(FROMRGB(205, 12, 12));
 		OutlineBox(panel.x + 8, panel.y + 24, panel.w - 16, 18, red);
@@ -4290,12 +4476,6 @@ namespace
 			DrawCarryGhost(gusMouseXPos, gusMouseYPos, FALSE);
 		else if (gWorldMoveWalking && gWorldMoveCarrier)
 		{
-			INT16 x;
-			INT16 y;
-			GetGridNoScreenPos(gWorldMoveCarrier->sGridNo,
-				gWorldMoveCarrier->bLevel, &x, &y);
-			OS0MapWorldToDisplayScreen(&x, &y);
-			DrawCarryGhost(x, y, TRUE);
 			if (gWorldMoveDestination >= 0)
 			{
 				INT16 destinationX;
@@ -4303,6 +4483,9 @@ namespace
 				GetGridNoScreenPos(gWorldMoveDestination, 0,
 					&destinationX, &destinationY);
 				OS0MapWorldToDisplayScreen(&destinationX, &destinationY);
+				// While the merc walks, the asset stays as a placement ghost at
+				// the chosen destination instead of covering the character sprite.
+				DrawCarryGhost(destinationX, destinationY, FALSE);
 				const UINT16 red = Get16BPPColor(FROMRGB(205, 12, 12));
 				OutlineBox(destinationX - 9, destinationY - 5, 19, 10, red);
 				InvalidateRegion(destinationX - 11, destinationY - 7,
@@ -4641,7 +4824,7 @@ void InitializeOS0IngameUI()
 {
 	if (gInitialized) return;
 
-	gOrbY = std::max<INT16>(0, gsVIEWPORT_END_Y - COMMAND_BAR_H);
+	gOrbY = std::max<INT16>(0, SCREEN_HEIGHT - COMMAND_BAR_H);
 	const INT16 centerX = std::max<INT16>(0, (gsVIEWPORT_END_X - PANE_W) / 2);
 	const INT16 centerY = std::max<INT16>(0, (WorkspaceBottom() - BAG_H) / 2);
 	gBagX = centerX;
@@ -4670,6 +4853,7 @@ void InitializeOS0IngameUI()
 	gLootX = gFloatingPanels[static_cast<size_t>(FloatingPanelId::OBJECT_INVENTORY)].x;
 	gLootY = gFloatingPanels[static_cast<size_t>(FloatingPanelId::OBJECT_INVENTORY)].y;
 	ApplyArtworkWorkspaceLayout(!gTutorialActive);
+	LoadUILayout();
 	gGodLibraryX = std::max<INT16>(0,
 		(gsVIEWPORT_END_X - GOD_LIBRARY_W) / 2);
 	gGodLibraryY = std::max<INT16>(4,
@@ -4744,7 +4928,7 @@ void InitializeOS0IngameUI()
 	}
 	for (size_t i = 0; i < gToolRegions.size(); ++i)
 	{
-		MSYS_DefineRegion(&gToolRegions[i], 0, 0, TOOLS_PANEL_W - 14, 10,
+		MSYS_DefineRegion(&gToolRegions[i], 0, 0, TOOLS_PANEL_W - 14, 14,
 			MSYS_PRIORITY_HIGHEST, CURSOR_NORMAL, MSYS_NO_CALLBACK,
 			ToolPanelCallback);
 		gToolRegions[i].SetUserData<0>(i);
@@ -4828,6 +5012,10 @@ void InitializeOS0IngameUI()
 	PositionBagRegions();
 	SetBagRegionsEnabled(gBagVisible);
 	gInitialized = TRUE;
+	// Materialize the layout immediately. Drag releases and OS0 expansion keep
+	// updating it, while a crash or forced process exit can no longer lose the
+	// last successfully loaded/default arrangement.
+	SaveUILayout();
 	SetRenderFlags(RENDER_FLAG_FULL);
 }
 
@@ -4835,6 +5023,7 @@ void InitializeOS0IngameUI()
 void ShutdownOS0IngameUI()
 {
 	if (!gInitialized) return;
+	SaveUILayout();
 	ClearWorldMoveState();
 	CloseContextMenu();
 	gHoverVisible = FALSE;
@@ -5695,7 +5884,13 @@ void OS0AdjustWorldZoom(INT8 direction)
 	if (next == gWorldZoom) return;
 	CloseContextMenu();
 	gWorldZoom = next;
-	ClearWorldMoveState();
+	// Zoom is a view operation. It must not cancel a crate/asset placement that
+	// is currently attached to the cursor or waiting for its carrier.
+	if (gWorldZoomBuffer)
+	{
+		DeleteVideoSurface(gWorldZoomBuffer);
+		gWorldZoomBuffer = nullptr;
+	}
 	SetRenderFlags(RENDER_FLAG_FULL);
 	InvalidateScreen();
 }
@@ -5773,6 +5968,13 @@ void OS0MapWorldToDisplayScreen(INT16* x, INT16* y)
 	GetWorldZoomRects(source, destination);
 	*x = destination.x + (*x - source.x) * gWorldZoom;
 	*y = destination.y + (*y - source.y) * gWorldZoom;
+}
+
+
+INT16 OS0WorldViewportBottom()
+{
+	return std::min<INT16>(gsVIEWPORT_WINDOW_END_Y,
+		std::max<INT16>(0, SCREEN_HEIGHT - COMMAND_BAR_H));
 }
 
 

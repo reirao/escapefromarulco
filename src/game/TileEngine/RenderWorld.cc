@@ -15,6 +15,7 @@
 #include "Isometric_Utils.h"
 #include "Logger.h"
 #include "Overhead.h"
+#include "OS0_IngameUI.h"
 #include "Radar_Screen.h"
 #include "Render_Dirty.h"
 #include "Render_Fun.h"
@@ -2011,10 +2012,15 @@ void ScrollWorld(void)
 			}
 
 			if (!gfIsUsingTouch && !fIsScrollingByOffset) {
-				if (gusMouseYPos <  NO_PX_SHOW_EXIT_CURS)                 ScrollFlags |= SCROLL_UP;
-				if (gusMouseYPos >= SCREEN_HEIGHT - NO_PX_SHOW_EXIT_CURS) ScrollFlags |= SCROLL_DOWN;
-				if (gusMouseXPos >= SCREEN_WIDTH  - NO_PX_SHOW_EXIT_CURS) ScrollFlags |= SCROLL_RIGHT;
-				if (gusMouseXPos <  NO_PX_SHOW_EXIT_CURS)                 ScrollFlags |= SCROLL_LEFT;
+				const INT16 worldBottom = OS0WorldViewportBottom();
+				if (gusMouseYPos < gsVIEWPORT_WINDOW_START_Y + NO_PX_SHOW_EXIT_CURS)
+					ScrollFlags |= SCROLL_UP;
+				if (gusMouseYPos >= worldBottom - NO_PX_SHOW_EXIT_CURS &&
+					gusMouseYPos < worldBottom) ScrollFlags |= SCROLL_DOWN;
+				if (gusMouseXPos >= gsVIEWPORT_END_X - NO_PX_SHOW_EXIT_CURS)
+					ScrollFlags |= SCROLL_RIGHT;
+				if (gusMouseXPos < gsVIEWPORT_START_X + NO_PX_SHOW_EXIT_CURS)
+					ScrollFlags |= SCROLL_LEFT;
 			}
 		}
 	}

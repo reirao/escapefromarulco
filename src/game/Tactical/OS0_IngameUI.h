@@ -38,6 +38,7 @@ void OS0ApplyWorldZoom();
 void OS0MapDisplayToWorldScreen(INT16* x, INT16* y);
 void OS0MapDisplayToWorldScreen(UINT16* x, UINT16* y);
 void OS0MapWorldToDisplayScreen(INT16* x, INT16* y);
+INT16 OS0WorldViewportBottom();
 void OS0PlaceTalkingPanel(INT16 panelWidth, INT16 panelHeight, INT16* x, INT16* y);
 void OS0TalkingPanelClosed();
 void OS0ExecuteCharacterQuickAction(SOLDIERTYPE* soldier,

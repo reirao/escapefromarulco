@@ -126,11 +126,11 @@ void UILayout::recalculatePositions()
 	m_VIEWPORT_START_Y            = 0;
 	m_VIEWPORT_WINDOW_START_Y     = 0;
 	m_VIEWPORT_END_X              = m_screenWidth;
-	// Escape from Arulco uses a floating field computer instead of JA2's
-	// permanently reserved tactical bar. The world therefore owns the full
-	// screen height.
-	m_VIEWPORT_END_Y              = m_screenHeight;
-	m_VIEWPORT_WINDOW_END_Y       = m_screenHeight;
+	// OS0 replaces JA2's large fixed tactical panel with a 38-pixel command
+	// strip. Keep that strip outside the rendered world so zoom, hit testing,
+	// camera scrolling and the visible play area all share the same viewport.
+	m_VIEWPORT_END_Y              = m_screenHeight - 38;
+	m_VIEWPORT_WINDOW_END_Y       = m_screenHeight - 38;
 	m_tacticalMapCenterX          = (m_VIEWPORT_END_X - m_VIEWPORT_START_X) / 2;
 	m_tacticalMapCenterY          = (m_VIEWPORT_END_Y - m_VIEWPORT_START_Y) / 2;
 

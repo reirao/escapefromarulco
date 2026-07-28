@@ -102,5 +102,19 @@ The code is experimental and does not represent an official JA2 Stracciatella re
 - Rebuilt the OS0 presentation around the concept artwork: full-width eight-module
   command bar, quiet corner branding, live system/event log, thin red-black field
   panels and a deterministic wide/compact workspace layout.
-- The `TACTICAL` module now clears the workspace and cancels contextual tools, while
-  every other module continues to open the real wired character/gameplay window.
+- The command strip routes every module to its real wired character/gameplay window;
+  the first module is now the compact OS0 expand/collapse control.
+
+### Post-v0.5.1 interaction follow-up
+
+- Reserved the 38-pixel OS0 command strip outside the tactical world viewport, so
+  zoom rendering, mouse hit conversion and edge scrolling use one shared boundary.
+- Zoom no longer cancels an active environment carry operation or restores a stale
+  zoom buffer.
+- Carried scenery remains previewed at the selected placement tile while the merc
+  walks there instead of obscuring the merc sprite.
+- Window positions and the expanded/collapsed OS0 state persist in
+  `%APPDATA%/JA2/OS0/os0-ui-layout.tsv` and scale safely across resolutions.
+- OS0 now starts as a compact launcher and expands into the live eight-module bar.
+  The bar, panel headers, squad commands and context actions use original JA2 pixel
+  glyphs from `newicons3.sti` and `door_op2.sti`.

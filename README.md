@@ -24,7 +24,8 @@ the original JA2 game data. Windows x64 and an existing JA2 installation are req
 - Direct tactical-sector start without helicopter arrival or starting enemies
 - In-world character creation with freely selected attributes and traits
 - Movable OS0 windows for character, context, tools, actions and object inventory
-- Artwork-aligned tactical workspace with an eight-module command bar and live event log
+- Artwork-aligned tactical workspace with an expandable icon-driven eight-module
+  command bar, persistent movable windows and a live event log
 - Character and container inventories with item drag and drop
 - Context-sensitive object, weapon, loot and stance actions
 - Hover-selected context cursors with middle-click cycling through valid actions

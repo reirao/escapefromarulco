@@ -7,7 +7,7 @@ the source. It was last verified for `v0.5.1-alpha`.
 | --- | --- | --- |
 | Direct tactical start | Verified | `JAScreens` starts the OS0 sandbox; the bootstrap creates the operator, clears enemies, marks the sector controlled and enters `GAME_SCREEN`. |
 | Character creation | Verified | Name, ten attributes and two freely selected traits are written to both the live soldier and merc profile. |
-| Artwork workspace and movable/minimizable windows | Verified | A fixed eight-module command bar controls character, context, tools, actions, object inventory, sector and feedback windows. Panels keep independent drag regions, close controls and adaptive compact-screen placement; the event log uses real recorded OS0 actions. |
+| Artwork workspace and movable/minimizable windows | Verified | A compact OS0 launcher expands into an eight-module command bar controlling character, context, tools, actions, object inventory, sector and feedback windows. Positions persist in the user profile and scale across resolutions; panels keep independent drag/close regions and the event log uses real recorded OS0 actions. |
 | Character inventory drag/drop | Verified | Uses JA2's item-pointer and placement functions, so slot rules and item stacks remain engine-owned. |
 | Container inventory drag/drop | Verified | Double-click, right-click `OPEN CONTENTS` and the actions panel now share one open path. |
 | Deterministic container loot | Verified | First open seeds material and useful/damaged equipment; an invisible world-item marker prevents refilling and is saved with sector world items. |
