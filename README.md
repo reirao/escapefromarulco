@@ -8,8 +8,8 @@ An experimental, non-commercial rework of *Jagged Alliance 2* built on
 
 ## Download and play
 
-1. Open the [v0.5.4-alpha release](https://github.com/reirao/escapefromarulco/releases/tag/v0.5.4-alpha).
-2. Download `Escape-from-Arulco-Playtest-v0.5.4-alpha.zip`.
+1. Open the [v0.5.5-alpha release](https://github.com/reirao/escapefromarulco/releases/tag/v0.5.5-alpha).
+2. Download `Escape-from-Arulco-Playtest-v0.5.5-alpha.zip`.
 3. Extract the complete ZIP into a writable folder.
 4. Run `START_PLAYTEST.cmd`.
 5. In the launcher, select your own legally installed JA2 or JA2 Gold directory.
@@ -30,7 +30,10 @@ the original JA2 game data. Windows x64 and an existing JA2 installation are req
 - Hover-selected context cursors with middle-click cycling through valid actions
 - Player-issued AI command for running to cover and choosing prone/crouched stance
 - Extended graphical JA2 long-hold menu for character, inventory and combat actions
-- In-game God-mode atlas containing 24 reusable JA2 interface symbols
+- Star-menu God hub with a movable current-sector asset library and the existing
+  24-symbol JA2 interface atlas
+- Live asset cards with the real tile sprite, occurrence count, material, footprint,
+  salvage yield, durability/tool profile and one-click focus/cataloguing
 - In-game asset catalog editor with custom names, categories, materials, roles and
   measured multi-tile footprints
 - Movable world structures and early material/physics properties
@@ -39,6 +42,7 @@ the original JA2 game data. Windows x64 and an existing JA2 installation are req
 - Material-aware doors, furniture, fences, stone, debris and resource objects
 - Persistent container seeding with useful loot and recoverable materials
 - Dismantling and digging that produce timber, stone, scrap and topsoil
+- Material-specific debug tools for debris, fences, trees, metal and earth
 - Per-sector stockpiles and buildable shelter, workshop and secure depot upgrades
 - Zoomed tactical view
 - Built-in playtest feedback reports
@@ -50,13 +54,15 @@ The exact implementation status and current boundaries are recorded in
 ## Controls and feedback
 
 - **Right click:** context menu for the object or terrain under the cursor
-- **Hold right click:** graphical character/movement menu; the second frame contains
-  character, inventory, icon library, stealth, weapon mode and reload
+- **Hold right click:** graphical character/movement menu; its star opens the Asset
+  Library/JA2 icon hub and the other symbols control character, gear and combat
 - **Middle click:** cycle the current cursor action
 - **Double click:** open a character, container or world object
 - **Computer icon:** open Base, Arulco map/radar, Team and Report
 - **GOD / CATALOG ASSET:** right-click a world asset and classify it for the shared
   construction/resource database
+- **Asset Library:** left-click a card to center its real map instance; right-click the
+  card to edit its reusable catalog record
 
 Asset classifications are written to `%APPDATA%\JA2\AssetCatalog\os0-assets.tsv`.
 This file can be shared between testers without distributing original JA2 graphics.

@@ -96,8 +96,8 @@ namespace
 	constexpr INT16 SECTOR_PANEL_W = 300;
 	constexpr INT16 SECTOR_PANEL_H = 226;
 	constexpr INT16 STRATEGIC_CELL = 9;
-	constexpr INT16 GOD_LIBRARY_W = 234;
-	constexpr INT16 GOD_LIBRARY_H = 112;
+	constexpr INT16 GOD_LIBRARY_W = 420;
+	constexpr INT16 GOD_LIBRARY_H = 250;
 	constexpr INT16 ASSET_CATALOG_W = 318;
 	constexpr INT16 ASSET_CATALOG_H = 194;
 	constexpr size_t PANEL_DOCK_COUNT = 7;
@@ -163,6 +163,30 @@ namespace
 		MAP,
 		TEAM,
 		REPORT
+	};
+
+	enum class DebugLibraryMode : UINT8
+	{
+		ASSETS,
+		ICONS
+	};
+
+	enum class AssetLibraryFilter : UINT8
+	{
+		ALL,
+		UNCATALOGUED,
+		DEBRIS,
+		COUNT
+	};
+
+	enum class FieldToolKind : UINT8
+	{
+		NONE,
+		FIELD_SHOVEL,
+		CROWBAR,
+		WIRE_CUTTERS,
+		TOOLKIT,
+		CUTTING_TOOL
 	};
 
 	enum class ContextAction : UINT8
@@ -262,6 +286,16 @@ namespace
 		ResourceKind resource;
 		UINT8 amount;
 		BOOLEAN salvageable;
+	};
+
+	struct DebugAssetEntry
+	{
+		UINT16 tileIndex;
+		GridNo gridNo;
+		UINT8 level;
+		UINT16 count;
+		AssetCatalogRecord record;
+		BOOLEAN catalogued;
 	};
 
 	struct SectorUpgrade
@@ -416,15 +450,23 @@ namespace
 	size_t gImpactParticleNext = 0;
 	std::vector<AssetDamageState> gAssetDamage;
 	BOOLEAN gGodLibraryVisible = FALSE;
+	BOOLEAN gGodLibraryDragging = FALSE;
 	BOOLEAN gAssetCatalogVisible = FALSE;
+	BOOLEAN gAssetCatalogReturnToLibrary = FALSE;
 	BOOLEAN gAssetCatalogNameEditing = FALSE;
 	UINT8 gGodMenuIcon = 0;
+	DebugLibraryMode gDebugLibraryMode = DebugLibraryMode::ASSETS;
+	AssetLibraryFilter gAssetLibraryFilter = AssetLibraryFilter::ALL;
+	size_t gAssetLibraryPage = 0;
 	INT16 gGodLibraryX = 0;
 	INT16 gGodLibraryY = 0;
 	INT16 gAssetCatalogX = 0;
 	INT16 gAssetCatalogY = 0;
 	AssetCatalogRecord gCatalogDraft{};
 	std::vector<AssetCatalogRecord> gAssetCatalog;
+	std::vector<DebugAssetEntry> gDebugAssetLibrary;
+	UINT8 gDebugAssetLibrarySector = 0xff;
+	INT16 gDebugAssetLibraryTileset = -1;
 	SGPVSurface* gWorldZoomBuffer = nullptr;
 	std::array<FloatingPanel, static_cast<size_t>(FloatingPanelId::COUNT)> gFloatingPanels{{
 		{ 8, 36, CONTEXT_PANEL_W, CONTEXT_PANEL_H, FALSE, FALSE, FALSE },
@@ -444,6 +486,9 @@ namespace
 	void StackSplitCallback(MOUSE_REGION* region, UINT32 reason);
 	void OperationsActionCallback(MOUSE_REGION* region, UINT32 reason);
 	void GodIconCallback(MOUSE_REGION* region, UINT32 reason);
+	void DebugLibraryCallback(MOUSE_REGION* region, UINT32 reason);
+	void DebugLibraryGrabberCallback(MOUSE_REGION* region, UINT32 reason);
+	void DebugLibraryCloseCallback(MOUSE_REGION* region, UINT32 reason);
 	void AssetCatalogCallback(MOUSE_REGION* region, UINT32 reason);
 	void SetBagRegionsEnabled(BOOLEAN enabled);
 	void PositionBagRegions();
@@ -459,12 +504,16 @@ namespace
 	SGPVObject* gPortrait = nullptr;
 	SGPVSurface* gInspectorPreview = nullptr;
 	SGPVSurface* gObjectSymbolSurface = nullptr;
+	SGPVSurface* gAssetLibrarySymbolSurface = nullptr;
 	UINT16 gObjectSymbolTileIndex = NO_TILE;
 	SGPVObject* gGodNewIcons = nullptr;
 	SGPVObject* gGodDoorIcons = nullptr;
 	SGPVObject* gGodButtonFrame = nullptr;
 	MOUSE_REGION gGodLibraryBlock;
+	MOUSE_REGION gGodLibraryGrabber;
+	MOUSE_REGION gGodLibraryClose;
 	std::array<MOUSE_REGION, 25> gGodIconRegions;
+	std::array<MOUSE_REGION, 12> gAssetLibraryRegions;
 	MOUSE_REGION gAssetCatalogBlock;
 	std::array<MOUSE_REGION, 11> gAssetCatalogRegions;
 	MOUSE_REGION gContextBlock;
@@ -517,6 +566,7 @@ namespace
 	ST::string gContextTitle = "CONTEXT";
 	ST::string gHoverTitle;
 	ST::string gHoverDetail;
+	ST::string gHoverDebugDetail;
 	UINT8 gFeedbackCategory = 0;
 	BOOLEAN gFeedbackEditing = FALSE;
 	ST::string gFeedbackText;
@@ -663,6 +713,10 @@ namespace
 			std::max<INT16>(0, gsVIEWPORT_END_X - PANE_W));
 		gBagY = std::clamp<INT16>(gBagY, 0,
 			std::max<INT16>(0, bottom - BAG_H));
+		gGodLibraryX = std::clamp<INT16>(gGodLibraryX, 0,
+			std::max<INT16>(0, gsVIEWPORT_END_X - GOD_LIBRARY_W));
+		gGodLibraryY = std::clamp<INT16>(gGodLibraryY, 0,
+			std::max<INT16>(0, bottom - GOD_LIBRARY_H));
 		for (FloatingPanel& panel : gFloatingPanels)
 		{
 			panel.x = std::clamp<INT16>(panel.x, 0,
@@ -687,9 +741,10 @@ namespace
 				"# Escape from Arulco UI layout v1\n"
 				"screen {} {}\n"
 				"expanded {}\n"
-				"bag {} {}\n",
+				"bag {} {}\n"
+				"library {} {}\n",
 				SCREEN_WIDTH, SCREEN_HEIGHT, gCommandBarExpanded ? 1 : 0,
-				gBagX, gBagY);
+				gBagX, gBagY, gGodLibraryX, gGodLibraryY);
 			for (size_t i = 0; i < gFloatingPanels.size(); ++i)
 			{
 				FloatingPanel const& panel = gFloatingPanels[i];
@@ -712,6 +767,8 @@ namespace
 		INT32 savedHeight = SCREEN_HEIGHT;
 		INT32 bagX = gBagX;
 		INT32 bagY = gBagY;
+		INT32 libraryX = gGodLibraryX;
+		INT32 libraryY = gGodLibraryY;
 		INT32 expanded = gCommandBarExpanded ? 1 : 0;
 		std::array<INT32, static_cast<size_t>(FloatingPanelId::COUNT)> panelX{};
 		std::array<INT32, static_cast<size_t>(FloatingPanelId::COUNT)> panelY{};
@@ -735,6 +792,7 @@ namespace
 				if (key == "screen") row >> savedWidth >> savedHeight;
 				else if (key == "expanded") row >> expanded;
 				else if (key == "bag") row >> bagX >> bagY;
+				else if (key == "library") row >> libraryX >> libraryY;
 				else if (key == "panel")
 				{
 					INT32 index = -1;
@@ -767,6 +825,8 @@ namespace
 		};
 		gBagX = scaleX(bagX);
 		gBagY = scaleY(bagY);
+		gGodLibraryX = scaleX(libraryX);
+		gGodLibraryY = scaleY(libraryY);
 		for (size_t i = 0; i < gFloatingPanels.size(); ++i)
 		{
 			gFloatingPanels[i].x = scaleX(panelX[i]);
@@ -1306,20 +1366,39 @@ namespace
 						record.category = AssetCategory::STONE;
 						record.material = AssetMaterial::STONE;
 						record.role = AssetRole::RESOURCE_NODE;
+						record.label = "LOOSE STONE DEPOSIT";
 						break;
 					case DEBRISWOOD:
+						record.category = AssetCategory::DEBRIS;
+						record.material = AssetMaterial::WOOD;
+						record.role = AssetRole::SALVAGE;
+						record.label = "WOOD DEBRIS";
+						break;
 					case DEBRISWEEDS:
 					case DEBRISGRASS:
+						record.category = AssetCategory::DEBRIS;
+						record.material = AssetMaterial::ORGANIC;
+						record.role = AssetRole::SALVAGE;
+						record.label = "ORGANIC DEBRIS";
+						break;
 					case DEBRISSAND:
+						record.category = AssetCategory::DEBRIS;
+						record.material = AssetMaterial::SAND;
+						record.role = AssetRole::SALVAGE;
+						record.label = "LOOSE SAND / SOIL";
+						break;
 					case DEBRISMISC:
 					case DEBRIS2MISC:
 						record.category = AssetCategory::DEBRIS;
+						record.material = AssetMaterial::METAL;
 						record.role = AssetRole::SALVAGE;
+						record.label = "BROKEN SCRAP DEBRIS";
 						break;
 					default: break;
 				}
 			}
-			record.label = gAssetCategoryNames[static_cast<size_t>(record.category)];
+			if (record.label == "UNNAMED ASSET")
+				record.label = gAssetCategoryNames[static_cast<size_t>(record.category)];
 			return record;
 		}
 
@@ -1384,6 +1463,7 @@ namespace
 			gCatalogDraft = *existing;
 		else
 			gCatalogDraft = MakeDefaultCatalogRecord(gridNo, level, tileIndex);
+		gAssetCatalogReturnToLibrary = gGodLibraryVisible;
 		gAssetCatalogVisible = TRUE;
 		gGodLibraryVisible = FALSE;
 		PositionBagRegions();
@@ -1776,6 +1856,131 @@ namespace
 		return { ST::format("{} WORLD STRUCTURE", adjective), resource, 0, FALSE };
 	}
 
+	AssetCatalogRecord ResolveAssetRecord(GridNo gridNo, UINT8 level,
+		UINT16 tileIndex, BOOLEAN* catalogued = nullptr)
+	{
+		const UINT16 canonical = CanonicalAssetTileIndex(gridNo, level, tileIndex);
+		if (AssetCatalogRecord const* const record = FindAssetCatalogRecordConst(
+			static_cast<INT16>(giCurrentTilesetID), canonical))
+		{
+			if (catalogued) *catalogued = TRUE;
+			return *record;
+		}
+		if (catalogued) *catalogued = FALSE;
+		return MakeDefaultCatalogRecord(gridNo, level, tileIndex);
+	}
+
+	AssetMaterial ResolveAssetMaterial(GridNo gridNo, UINT8 level,
+		UINT16 tileIndex, AssetCatalogRecord const& record)
+	{
+		if (record.material != AssetMaterial::AUTO) return record.material;
+		return InferAssetMaterial(WorldStructureAt(gridNo, level, tileIndex));
+	}
+
+	FieldToolKind RequiredFieldTool(GridNo gridNo, UINT8 level, UINT16 tileIndex)
+	{
+		AssetCatalogRecord const record = ResolveAssetRecord(gridNo, level, tileIndex);
+		AssetMaterial const material = ResolveAssetMaterial(gridNo, level,
+			tileIndex, record);
+		STRUCTURE const* const structure = WorldStructureAt(gridNo, level, tileIndex);
+		if (record.category == AssetCategory::SANDBAG ||
+			material == AssetMaterial::SAND || material == AssetMaterial::EARTH ||
+			material == AssetMaterial::ORGANIC)
+			return FieldToolKind::FIELD_SHOVEL;
+		if (record.category == AssetCategory::TREE)
+			return FieldToolKind::CUTTING_TOOL;
+		if ((structure && structure->fFlags & STRUCTURE_ANYFENCE) ||
+			(record.role == AssetRole::BARRIER && material == AssetMaterial::METAL))
+			return FieldToolKind::WIRE_CUTTERS;
+		if (material == AssetMaterial::METAL ||
+			material == AssetMaterial::COMPOSITE)
+			return FieldToolKind::TOOLKIT;
+		if (material == AssetMaterial::WOOD || material == AssetMaterial::STONE ||
+			record.category == AssetCategory::DOOR ||
+			record.category == AssetCategory::CONTAINER ||
+			record.category == AssetCategory::FURNITURE)
+			return FieldToolKind::CROWBAR;
+		return FieldToolKind::NONE;
+	}
+
+	const char* FieldToolName(FieldToolKind tool)
+	{
+		switch (tool)
+		{
+			case FieldToolKind::NONE:          return "HANDS";
+			case FieldToolKind::FIELD_SHOVEL:  return "FIELD SHOVEL*";
+			case FieldToolKind::CROWBAR:       return "CROWBAR";
+			case FieldToolKind::WIRE_CUTTERS:  return "WIRE CUTTERS";
+			case FieldToolKind::TOOLKIT:       return "TOOLKIT";
+			case FieldToolKind::CUTTING_TOOL:  return "CUTTING TOOL";
+		}
+		return "TOOL";
+	}
+
+	UINT16 FieldToolItem(FieldToolKind tool)
+	{
+		switch (tool)
+		{
+			// A dedicated shovel asset is still externalization work. The debug
+			// build uses JA2's crowbar as a save-compatible shovel proxy.
+			case FieldToolKind::FIELD_SHOVEL:
+			case FieldToolKind::CROWBAR:      return CROWBAR;
+			case FieldToolKind::WIRE_CUTTERS: return WIRECUTTERS;
+			case FieldToolKind::TOOLKIT:      return TOOLKIT;
+			case FieldToolKind::CUTTING_TOOL: return COMBAT_KNIFE;
+			case FieldToolKind::NONE:         break;
+		}
+		return NOTHING;
+	}
+
+	BOOLEAN HasFieldTool(SOLDIERTYPE const* soldier, FieldToolKind tool)
+	{
+		if (tool == FieldToolKind::NONE) return TRUE;
+		const UINT16 item = FieldToolItem(tool);
+		return soldier && item != NOTHING && FindUsableObj(soldier, item) != NO_SLOT;
+	}
+
+	INT16 AssetDurabilityMaximum(AssetMaterial material)
+	{
+		switch (material)
+		{
+			case AssetMaterial::WOOD:
+			case AssetMaterial::ORGANIC: return 70;
+			case AssetMaterial::STONE:   return 160;
+			case AssetMaterial::METAL:   return 210;
+			case AssetMaterial::SAND:
+			case AssetMaterial::EARTH:   return 110;
+			default:                     return 90;
+		}
+	}
+
+	INT16 CurrentAssetDurability(GridNo gridNo, UINT16 tileIndex,
+		AssetMaterial material)
+	{
+		const auto state = std::find_if(gAssetDamage.begin(), gAssetDamage.end(),
+			[&](AssetDamageState const& value)
+			{
+				return value.gridNo == gridNo && value.tileIndex == tileIndex;
+			});
+		return state == gAssetDamage.end() ? AssetDurabilityMaximum(material) :
+			std::max<INT16>(0, state->remaining);
+	}
+
+	void EnsureDebugFieldTools(SOLDIERTYPE* soldier)
+	{
+		if (!soldier) return;
+		constexpr std::array<UINT16, 4> tools{{
+			CROWBAR, WIRECUTTERS, TOOLKIT, COMBAT_KNIFE
+		}};
+		for (UINT16 item : tools)
+		{
+			if (FindUsableObj(soldier, item) != NO_SLOT) continue;
+			OBJECTTYPE object{};
+			CreateItem(item, 100, &object);
+			AutoPlaceObject(soldier, &object, TRUE);
+		}
+	}
+
 	void AddResourceItemToPool(GridNo gridNo, UINT8 level, ResourceKind kind,
 		UINT8 amount)
 	{
@@ -1884,14 +2089,6 @@ namespace
 		return soldier && FindUsableObj(soldier, CROWBAR) != NO_SLOT;
 	}
 
-	void EnsureFieldShovel(SOLDIERTYPE* soldier)
-	{
-		if (!soldier || HasDiggingTool(soldier)) return;
-		OBJECTTYPE shovel{};
-		CreateItem(CROWBAR, 100, &shovel);
-		AutoPlaceObject(soldier, &shovel, TRUE);
-	}
-
 	BOOLEAN CanDigTerrainAt(SOLDIERTYPE const* soldier, GridNo gridNo)
 	{
 		if (!soldier || gridNo < 0 || gridNo >= WORLD_MAX || soldier->bLevel != 0 ||
@@ -1905,11 +2102,12 @@ namespace
 	BOOLEAN CanSalvageWorldAsset(SOLDIERTYPE const* soldier, GridNo gridNo,
 		UINT8 level, UINT16 tileIndex)
 	{
-		if (!soldier || !HasDiggingTool(soldier) || level != 0 ||
+		if (!soldier || level != 0 ||
 			gridNo < 0 || gridNo >= WORLD_MAX ||
 			PythSpacesAway(soldier->sGridNo, gridNo) > 2 ||
 			tileIndex >= NUMBEROFTILES) return FALSE;
-		return DescribeWorldAsset(gridNo, level, tileIndex).salvageable;
+		return DescribeWorldAsset(gridNo, level, tileIndex).salvageable &&
+			HasFieldTool(soldier, RequiredFieldTool(gridNo, level, tileIndex));
 	}
 
 	BOOLEAN SalvageWorldAsset(SOLDIERTYPE* soldier, GridNo gridNo,
@@ -2192,9 +2390,11 @@ namespace
 				gInspectedLevel, gInspectedTileIndex);
 			if (salvage.salvageable)
 			{
-				const BOOLEAN tool = HasDiggingTool(selected);
+				const FieldToolKind required = RequiredFieldTool(gInspectedGridNo,
+					gInspectedLevel, gInspectedTileIndex);
+				const BOOLEAN tool = HasFieldTool(selected, required);
 				AddPanelAction(ContextAction::SALVAGE,
-					!tool ? "DISMANTLE / NEED FIELD TOOL" :
+					!tool ? ST::format("NEED {}", FieldToolName(required)) :
 					ST::format("DISMANTLE / +{} {}", salvage.amount,
 						ResourceName(salvage.resource)),
 					CanSalvageWorldAsset(selected, gInspectedGridNo,
@@ -2354,18 +2554,16 @@ namespace
 		if (!gEquipmentExplodedVisible || !gEquipmentSoldier) return;
 		struct EquipmentPoint { INT16 x; INT16 y; };
 		constexpr std::array<EquipmentPoint, 7> offsets{{
-			{ -17, -122 }, { -60, -94 }, { 26, -94 }, { -17, -91 },
-			{ -17, -59 }, { -63, -58 }, { 29, -58 }
+			{ -17, -151 }, { -91, -116 }, { 57, -116 }, { -17, -109 },
+			{ -17, -68 }, { -99, -68 }, { 65, -68 }
 		}};
 		INT16 anchorX;
 		INT16 anchorY;
-		GetGridNoScreenPos(gEquipmentSoldier->sGridNo,
-			gEquipmentSoldier->bLevel, &anchorX, &anchorY);
-		OS0MapWorldToDisplayScreen(&anchorX, &anchorY);
+		if (!GetActorDisplayAnchor(gEquipmentSoldier, anchorX, anchorY)) return;
 		gEquipmentCentreX = std::clamp<INT16>(anchorX,
-			gsVIEWPORT_START_X + 82, gsVIEWPORT_END_X - 82);
+			gsVIEWPORT_START_X + 116, gsVIEWPORT_END_X - 116);
 		gEquipmentCentreY = std::clamp<INT16>(anchorY,
-			gsVIEWPORT_WINDOW_START_Y + 128,
+			gsVIEWPORT_WINDOW_START_Y + 157,
 			gsVIEWPORT_WINDOW_END_Y - 34);
 		for (size_t i = 0; i < gEquipmentRegions.size(); ++i)
 		{
@@ -2376,10 +2574,10 @@ namespace
 			gEquipmentRegions[i].RegionBottomRightX = x + 34;
 			gEquipmentRegions[i].RegionBottomRightY = y + 25;
 		}
-		gEquipmentPackRegion.RegionTopLeftX = gEquipmentCentreX + 37;
-		gEquipmentPackRegion.RegionTopLeftY = gEquipmentCentreY - 27;
-		gEquipmentPackRegion.RegionBottomRightX = gEquipmentCentreX + 83;
-		gEquipmentPackRegion.RegionBottomRightY = gEquipmentCentreY - 2;
+		gEquipmentPackRegion.RegionTopLeftX = gEquipmentCentreX + 79;
+		gEquipmentPackRegion.RegionTopLeftY = gEquipmentCentreY - 32;
+		gEquipmentPackRegion.RegionBottomRightX = gEquipmentCentreX + 125;
+		gEquipmentPackRegion.RegionBottomRightY = gEquipmentCentreY - 7;
 	}
 
 	void PositionItemTransferIntentRegions()
@@ -2409,7 +2607,16 @@ namespace
 	{
 		if (!soldier || soldier->sGridNo < 0 || soldier->sGridNo >= WORLD_MAX)
 			return FALSE;
-		GetGridNoScreenPos(soldier->sGridNo, soldier->bLevel, &x, &y);
+		// Follow JA2's interpolated animation position rather than GridNo. GridNo
+		// advances one tile at a time and made every attached UI element jump.
+		GetSoldierScreenPos(soldier, &x, &y);
+		if (x == 0 && y == 0)
+			GetGridNoScreenPos(soldier->sGridNo, soldier->bLevel, &x, &y);
+		else
+		{
+			x = static_cast<INT16>(x + soldier->sBoundingBoxWidth / 2);
+			y = static_cast<INT16>(y + soldier->sBoundingBoxHeight);
+		}
 		OS0MapWorldToDisplayScreen(&x, &y);
 		return TRUE;
 	}
@@ -2432,8 +2639,17 @@ namespace
 		setVisible(gBagClose, gBagVisible && gTutorialActive);
 		setVisible(gContextBlock, gContextVisible);
 		setVisible(gGodLibraryBlock, gGodLibraryVisible);
+		setVisible(gGodLibraryGrabber, gGodLibraryVisible);
+		setVisible(gGodLibraryClose, gGodLibraryVisible);
 		for (MOUSE_REGION& r : gGodIconRegions)
-			setVisible(r, gGodLibraryVisible);
+			setVisible(r, gGodLibraryVisible &&
+				gDebugLibraryMode == DebugLibraryMode::ICONS);
+		for (size_t i = 0; i < gAssetLibraryRegions.size(); ++i)
+		{
+			const BOOLEAN commonTab = i == 6 || i == 7;
+			setVisible(gAssetLibraryRegions[i], gGodLibraryVisible &&
+				(commonTab || gDebugLibraryMode == DebugLibraryMode::ASSETS));
+		}
 		setVisible(gAssetCatalogBlock, gAssetCatalogVisible);
 		for (MOUSE_REGION& r : gAssetCatalogRegions)
 			setVisible(r, gAssetCatalogVisible);
@@ -2662,6 +2878,28 @@ namespace
 		MoveRegion(gGodLibraryBlock, gGodLibraryX, gGodLibraryY);
 		gGodLibraryBlock.RegionBottomRightX = gGodLibraryX + GOD_LIBRARY_W;
 		gGodLibraryBlock.RegionBottomRightY = gGodLibraryY + GOD_LIBRARY_H;
+		MoveRegion(gGodLibraryGrabber, gGodLibraryX, gGodLibraryY);
+		gGodLibraryGrabber.RegionBottomRightX = gGodLibraryX + GOD_LIBRARY_W;
+		MoveRegion(gGodLibraryClose, gGodLibraryX + GOD_LIBRARY_W - 18,
+			gGodLibraryY + 2);
+		const std::array<SGPBox, 12> libraryRects{{
+			{ 8, 49, 196, 54 }, { 216, 49, 196, 54 },
+			{ 8, 106, 196, 54 }, { 216, 106, 196, 54 },
+			{ 8, 163, 196, 54 }, { 216, 163, 196, 54 },
+			{ 8, 24, 68, 18 }, { 80, 24, 82, 18 },
+			{ 168, 24, 112, 18 }, { 286, 224, 36, 18 },
+			{ 326, 224, 36, 18 }, { 366, 224, 46, 18 }
+		}};
+		for (size_t i = 0; i < gAssetLibraryRegions.size(); ++i)
+		{
+			SGPBox const& rect = libraryRects[i];
+			MoveRegion(gAssetLibraryRegions[i], gGodLibraryX + rect.x,
+				gGodLibraryY + rect.y);
+			gAssetLibraryRegions[i].RegionBottomRightX =
+				gGodLibraryX + rect.x + rect.w;
+			gAssetLibraryRegions[i].RegionBottomRightY =
+				gGodLibraryY + rect.y + rect.h;
+		}
 		for (size_t i = 0; i < gGodIconRegions.size(); ++i)
 		{
 			// 24 selectable symbols fill the first eight cells of each JA2
@@ -2671,8 +2909,8 @@ namespace
 			const INT16 frame = static_cast<INT16>(cell / 9);
 			const INT16 local = static_cast<INT16>(cell % 9);
 			MoveRegion(gGodIconRegions[i],
-				gGodLibraryX + frame * 78 + 9 + (local % 3) * 20,
-				gGodLibraryY + 25 + (local / 3) * 20);
+				gGodLibraryX + 88 + frame * 78 + 9 + (local % 3) * 20,
+				gGodLibraryY + 72 + (local / 3) * 20);
 		}
 		MoveRegion(gAssetCatalogBlock, gAssetCatalogX, gAssetCatalogY);
 		gAssetCatalogBlock.RegionBottomRightX = gAssetCatalogX + ASSET_CATALOG_W;
@@ -2770,6 +3008,16 @@ namespace
 			moved = x != gBagX || y != gBagY;
 			gBagX = x;
 			gBagY = y;
+		}
+		if (gGodLibraryDragging)
+		{
+			const INT16 x = std::clamp<INT16>(gusMouseXPos - gDragOffsetX, 0,
+				std::max<INT16>(0, gsVIEWPORT_END_X - GOD_LIBRARY_W));
+			const INT16 y = std::clamp<INT16>(gusMouseYPos - gDragOffsetY, 0,
+				std::max<INT16>(0, WorkspaceBottom() - GOD_LIBRARY_H));
+			moved |= x != gGodLibraryX || y != gGodLibraryY;
+			gGodLibraryX = x;
+			gGodLibraryY = y;
 		}
 		for (FloatingPanel& panel : gFloatingPanels)
 		{
@@ -3903,7 +4151,7 @@ namespace
 				break;
 			case 3:
 				ApplyTutorialTraits();
-				EnsureFieldShovel(GetSelectedMan());
+				EnsureDebugFieldTools(GetSelectedMan());
 				gFieldToolIssued = TRUE;
 				gTutorialStep = 4;
 				gMode = ComputerMode::CONTENTS;
@@ -4226,6 +4474,25 @@ namespace
 		ColorFillVideoSurfaceArea(FRAME_BUFFER, x + w - 1, y, x + w - 1, y + h - 1, colour);
 	}
 
+	void DrawIconCorners(INT16 x, INT16 y, INT16 w, INT16 h, UINT16 colour)
+	{
+		constexpr INT16 arm = 5;
+		ColorFillVideoSurfaceArea(FRAME_BUFFER, x, y, x + arm, y, colour);
+		ColorFillVideoSurfaceArea(FRAME_BUFFER, x, y, x, y + arm, colour);
+		ColorFillVideoSurfaceArea(FRAME_BUFFER, x + w - arm - 1, y,
+			x + w - 1, y, colour);
+		ColorFillVideoSurfaceArea(FRAME_BUFFER, x + w - 1, y,
+			x + w - 1, y + arm, colour);
+		ColorFillVideoSurfaceArea(FRAME_BUFFER, x, y + h - 1,
+			x + arm, y + h - 1, colour);
+		ColorFillVideoSurfaceArea(FRAME_BUFFER, x, y + h - arm - 1,
+			x, y + h - 1, colour);
+		ColorFillVideoSurfaceArea(FRAME_BUFFER, x + w - arm - 1, y + h - 1,
+			x + w - 1, y + h - 1, colour);
+		ColorFillVideoSurfaceArea(FRAME_BUFFER, x + w - 1, y + h - arm - 1,
+			x + w - 1, y + h - 1, colour);
+	}
+
 	void DrawOS0Shell()
 	{
 		const UINT16 red = Get16BPPColor(FROMRGB(118, 0, 0));
@@ -4374,10 +4641,20 @@ namespace
 			}
 			SetFontForeground(FONT_MCOLOR_LTGRAY);
 			MPrint(infoX, mapY + 53, ST::format("TEAM {}", teamCount));
-			MPrint(infoX, mapY + 73, "CLICK CELL");
-			MPrint(infoX, mapY + 86, "TO INSPECT");
+			SECTORINFO const& sectorInfo =
+				SectorInfo[gStrategicSelectedSector.AsByte()];
+			const UINT16 enemyCount = static_cast<UINT16>(sectorInfo.ubNumAdmins) +
+				sectorInfo.ubNumTroops + sectorInfo.ubNumElites;
+			const UINT16 militiaCount =
+				static_cast<UINT16>(sectorInfo.ubNumberOfCivsAtLevel[GREEN_MILITIA]) +
+				sectorInfo.ubNumberOfCivsAtLevel[REGULAR_MILITIA] +
+				sectorInfo.ubNumberOfCivsAtLevel[ELITE_MILITIA];
+			SetFontForeground(enemyCount > 0 ? FONT_MCOLOR_RED : FONT_MCOLOR_DKGRAY);
+			MPrint(infoX, mapY + 68, ST::format("ENEMY {}", enemyCount));
+			SetFontForeground(militiaCount > 0 ? FONT_WHITE : FONT_MCOLOR_DKGRAY);
+			MPrint(infoX, mapY + 82, ST::format("MILITIA {}", militiaCount));
 			SetFontForeground(FONT_MCOLOR_RED);
-			MPrint(infoX, mapY + 101, "LIVE SECTOR");
+			MPrint(infoX, mapY + 98, "LIVE MINIMAP");
 			OutlineBox(infoX, mapY + 113, RADAR_WINDOW_WIDTH + 4,
 				RADAR_WINDOW_HEIGHT + 4, dark);
 			BlitRadarScreenImage(FRAME_BUFFER, infoX + 2, mapY + 115);
@@ -4950,19 +5227,15 @@ namespace
 		if (!GetActorDisplayAnchor(soldier, anchorX, anchorY)) return;
 		const UINT16 red = Get16BPPColor(FROMRGB(205, 12, 12));
 		const UINT16 muted = Get16BPPColor(FROMRGB(92, 8, 8));
-		const UINT16 dark = Get16BPPColor(FROMRGB(4, 7, 7));
 		const INT16 bagX = std::clamp<INT16>(anchorX + 22,
 			gsVIEWPORT_START_X + 2, gsVIEWPORT_END_X - 31);
 		const INT16 bagY = std::clamp<INT16>(anchorY - 40,
 			gsVIEWPORT_WINDOW_START_Y + 2, gsVIEWPORT_WINDOW_END_Y - 37);
-		ColorFillVideoSurfaceArea(FRAME_BUFFER, bagX, bagY, bagX + 29, bagY + 34, dark);
-		OutlineBox(bagX, bagY, 30, 35, red);
 		if (gGodNewIcons)
 			BltVideoObject(FRAME_BUFFER, gGodNewIcons, 18, bagX + 5, bagY + 7);
-		SetFont(TINYFONT1);
-		SetFontBackground(FONT_MCOLOR_BLACK);
-		SetFontForeground(FONT_MCOLOR_RED);
-		MPrint(bagX + 4, bagY - 10, "PACK");
+		const BOOLEAN packHot = gusMouseXPos >= bagX && gusMouseXPos <= bagX + 30 &&
+			gusMouseYPos >= bagY && gusMouseYPos <= bagY + 35;
+		if (packHot) DrawIconCorners(bagX, bagY, 30, 35, red);
 
 		for (size_t i = 0; i < gSlots.size(); ++i)
 		{
@@ -4976,11 +5249,9 @@ namespace
 			ColorFillVideoSurfaceArea(FRAME_BUFFER,
 				std::min<INT16>(bagX + 15, cx), cy,
 				std::max<INT16>(bagX + 15, cx), cy, muted);
-			ColorFillVideoSurfaceArea(FRAME_BUFFER, x, y,
-				x + slot.w - 1, y + slot.h - 1, dark);
 			const BOOLEAN hot = gusMouseXPos >= x && gusMouseXPos <= x + slot.w &&
 				gusMouseYPos >= y && gusMouseYPos <= y + slot.h;
-			OutlineBox(x, y, slot.w, slot.h, hot ? red : muted);
+			if (hot) DrawIconCorners(x, y, slot.w, slot.h, red);
 			OBJECTTYPE const& object = soldier->inv[slot.slot];
 			ST::string help = "EMPTY POCKET / DROP ITEM HERE";
 			if (object.usItem != NOTHING)
@@ -4990,6 +5261,11 @@ namespace
 					item->getName(), object.bStatus[0], object.ubNumberOfObjects);
 				INVRenderItem(FRAME_BUFFER, soldier, object, x, y, slot.w, slot.h,
 					DIRTYLEVEL2, 0, SGP_TRANSPARENT);
+			}
+			else
+			{
+				ColorFillVideoSurfaceArea(FRAME_BUFFER, cx - 1, cy - 1,
+					cx + 1, cy + 1, muted);
 			}
 			if (help != gSlotHelp[i])
 			{
@@ -5044,12 +5320,12 @@ namespace
 		PositionEquipmentRegions();
 		const UINT16 red = Get16BPPColor(FROMRGB(205, 12, 12));
 		const UINT16 mutedRed = Get16BPPColor(FROMRGB(92, 8, 8));
-		const UINT16 dark = Get16BPPColor(FROMRGB(4, 7, 7));
+		constexpr std::array<UINT16, 7> slotGlyphs{{
+			12, 12, 12, 18, 3, 24, 24
+		}};
 		INT16 anchorX;
 		INT16 anchorY;
-		GetGridNoScreenPos(gEquipmentSoldier->sGridNo,
-			gEquipmentSoldier->bLevel, &anchorX, &anchorY);
-		OS0MapWorldToDisplayScreen(&anchorX, &anchorY);
+		if (!GetActorDisplayAnchor(gEquipmentSoldier, anchorX, anchorY)) return;
 		for (size_t i = 0; i < gEquipmentRegions.size(); ++i)
 		{
 			MOUSE_REGION const& region = gEquipmentRegions[i];
@@ -5064,10 +5340,9 @@ namespace
 			ColorFillVideoSurfaceArea(FRAME_BUFFER, anchorX,
 				std::min(slotCentreY, bodyY), anchorX,
 				std::max(slotCentreY, bodyY), mutedRed);
-			ColorFillVideoSurfaceArea(FRAME_BUFFER, x, y, x + 33, y + 24, dark);
 			const BOOLEAN hot = gusMouseXPos >= x && gusMouseXPos <= x + 34 &&
 				gusMouseYPos >= y && gusMouseYPos <= y + 25;
-			OutlineBox(x, y, 34, 25, hot ? red : mutedRed);
+			if (hot) DrawIconCorners(x, y, 34, 25, red);
 			const INT8 slot = gExplodedEquipmentSlots[i];
 			OBJECTTYPE const& object = gEquipmentSoldier->inv[slot];
 			ST::string help = gExplodedEquipmentLabels[i];
@@ -5081,10 +5356,9 @@ namespace
 			}
 			else
 			{
-				SetFont(TINYFONT1);
-				SetFontBackground(FONT_MCOLOR_BLACK);
-				SetFontForeground(FONT_MCOLOR_DKGRAY);
-				MPrint(x + 3, y + 9, ST::string(gExplodedEquipmentLabels[i]).left(6));
+				if (gGodNewIcons)
+					BltVideoObject(FRAME_BUFFER, gGodNewIcons, slotGlyphs[i],
+						x + 7, y + 3);
 			}
 			if (help != gEquipmentHelp[i])
 			{
@@ -5095,19 +5369,16 @@ namespace
 
 		const INT16 packX = gEquipmentPackRegion.RegionTopLeftX;
 		const INT16 packY = gEquipmentPackRegion.RegionTopLeftY;
-		ColorFillVideoSurfaceArea(FRAME_BUFFER, packX, packY,
-			packX + 45, packY + 24, dark);
-		OutlineBox(packX, packY, 46, 25, gBagVisible ? red : mutedRed);
 		if (gGodNewIcons)
-			BltVideoObject(FRAME_BUFFER, gGodNewIcons, 18, packX + 3, packY + 3);
-		SetFont(TINYFONT1);
-		SetFontBackground(FONT_MCOLOR_BLACK);
-		SetFontForeground(FONT_WHITE);
-		MPrint(packX + 23, packY + 9, "PACK");
+			BltVideoObject(FRAME_BUFFER, gGodNewIcons, 18, packX + 13, packY + 3);
+		const BOOLEAN packHot = gusMouseXPos >= packX && gusMouseXPos <= packX + 46 &&
+			gusMouseYPos >= packY && gusMouseYPos <= packY + 25;
+		if (packHot) DrawIconCorners(packX, packY, 46, 25,
+			gBagVisible ? red : mutedRed);
 		gEquipmentPackRegion.SetFastHelpText(
 			"BACKPACK / REAL SOLDIER POCKETS / CLICK TO TOGGLE");
-		InvalidateRegion(gEquipmentCentreX - 86, gEquipmentCentreY - 126,
-			gEquipmentCentreX + 86, gEquipmentCentreY + 4);
+		InvalidateRegion(gEquipmentCentreX - 118, gEquipmentCentreY - 155,
+			gEquipmentCentreX + 128, gEquipmentCentreY + 4);
 	}
 
 	void DrawItemTransferIntents()
@@ -5120,7 +5391,6 @@ namespace
 		if (!GetActorDisplayAnchor(gItemTransferTarget, anchorX, anchorY)) return;
 		const UINT16 red = Get16BPPColor(FROMRGB(205, 12, 12));
 		const UINT16 muted = Get16BPPColor(FROMRGB(92, 8, 8));
-		const UINT16 dark = Get16BPPColor(FROMRGB(4, 7, 7));
 		for (size_t i = 0; i < gItemTransferIntents.size(); ++i)
 		{
 			MOUSE_REGION const& region = gItemTransferIntentRegions[i];
@@ -5130,10 +5400,9 @@ namespace
 			const INT16 cy = y + 14;
 			ColorFillVideoSurfaceArea(FRAME_BUFFER, std::min(anchorX, cx), cy,
 				std::max(anchorX, cx), cy, muted);
-			ColorFillVideoSurfaceArea(FRAME_BUFFER, x, y, x + 27, y + 27, dark);
 			const BOOLEAN hot = gusMouseXPos >= x && gusMouseXPos <= x + 28 &&
 				gusMouseYPos >= y && gusMouseYPos <= y + 28;
-			OutlineBox(x, y, 28, 28, hot ? red : muted);
+			if (hot) DrawIconCorners(x, y, 28, 28, red);
 			if (gGodNewIcons)
 				BltVideoObject(FRAME_BUFFER, gGodNewIcons,
 					gItemTransferIntents[i].iconFrame, x + 4, y + 4);
@@ -5378,8 +5647,8 @@ namespace
 		const UINT16 red = Get16BPPColor(FROMRGB(205, 12, 12));
 		const UINT16 dark = Get16BPPColor(FROMRGB(4, 7, 7));
 		ColorFillVideoSurfaceArea(FRAME_BUFFER, gHoverX, gHoverY,
-			gHoverX + 269, gHoverY + 71, dark);
-		OutlineBox(gHoverX, gHoverY, 270, 72, red);
+			gHoverX + 309, gHoverY + 81, dark);
+		OutlineBox(gHoverX, gHoverY, 310, 82, red);
 		if (gInspectorPreview)
 		{
 			BltVideoSurface(FRAME_BUFFER, gInspectorPreview,
@@ -5390,14 +5659,19 @@ namespace
 		SetFont(TINYFONT1);
 		SetFontBackground(FONT_MCOLOR_BLACK);
 		SetFontForeground(FONT_MCOLOR_RED);
-		MPrint(gHoverX + 75, gHoverY + 10, gHoverTitle.left(27));
+		MPrint(gHoverX + 75, gHoverY + 9, gHoverTitle.left(35));
 		SetFontForeground(FONT_MCOLOR_LTGRAY);
-		MPrint(gHoverX + 75, gHoverY + 28, gHoverDetail.left(32));
+		MPrint(gHoverX + 75, gHoverY + 27, gHoverDetail.left(39));
+		if (!gHoverDebugDetail.empty())
+		{
+			SetFontForeground(FONT_WHITE);
+			MPrint(gHoverX + 75, gHoverY + 43, gHoverDebugDetail.left(39));
+		}
 		SetFontForeground(FONT_MCOLOR_DKGRAY);
-		MPrint(gHoverX + 75, gHoverY + 50,
+		MPrint(gHoverX + 75, gHoverY + 61,
 			gpItemPointer ? "SELECT DESTINATION / WORLD = DROP" :
 				"RMB OPTIONS / MMB CYCLE");
-		InvalidateRegion(gHoverX, gHoverY, gHoverX + 270, gHoverY + 72);
+		InvalidateRegion(gHoverX, gHoverY, gHoverX + 310, gHoverY + 82);
 	}
 
 	void DrawWorldSelection()
@@ -5680,9 +5954,216 @@ namespace
 		if (active) SetRenderFlags(RENDER_FLAG_FULL);
 	}
 
+	void AddDebugAsset(GridNo gridNo, UINT8 level, UINT16 tileIndex)
+	{
+		if (gridNo < 0 || gridNo >= WORLD_MAX || tileIndex >= NUMBEROFTILES) return;
+		const UINT16 canonical = CanonicalAssetTileIndex(gridNo, level, tileIndex);
+		for (DebugAssetEntry& entry : gDebugAssetLibrary)
+		{
+			if (entry.tileIndex == canonical && entry.level == level)
+			{
+				entry.count = std::min<UINT16>(65535, entry.count + 1);
+				return;
+			}
+		}
+		BOOLEAN catalogued = FALSE;
+		AssetCatalogRecord const record = ResolveAssetRecord(gridNo, level,
+			tileIndex, &catalogued);
+		gDebugAssetLibrary.push_back({ canonical, gridNo, level, 1, record,
+			catalogued });
+	}
+
+	void RebuildDebugAssetLibrary()
+	{
+		gDebugAssetLibrary.clear();
+		for (GridNo gridNo = 0; gridNo < WORLD_MAX; ++gridNo)
+		{
+			auto scanStructures = [gridNo](LEVELNODE* node, UINT8 level)
+			{
+				for (; node; node = node->pNext)
+				{
+					if (!node->pStructureData || node->usIndex >= NUMBEROFTILES ||
+						node->pStructureData->fFlags & STRUCTURE_PERSON) continue;
+					STRUCTURE* const base = FindBaseStructure(node->pStructureData);
+					if (!base || !(node->pStructureData->fFlags & STRUCTURE_BASE_TILE))
+						continue;
+					AddDebugAsset(base->sGridNo, level, node->usIndex);
+				}
+			};
+			scanStructures(gpWorldLevelData[gridNo].pStructHead, 0);
+			scanStructures(gpWorldLevelData[gridNo].pOnRoofHead, 1);
+			for (LEVELNODE* node = gpWorldLevelData[gridNo].pObjectHead;
+				node; node = node->pNext)
+			{
+				if (node->usIndex < NUMBEROFTILES &&
+					!(node->uiFlags & (LEVELNODE_ITEM | LEVELNODE_HIDDEN)))
+					AddDebugAsset(gridNo, 0, node->usIndex);
+			}
+		}
+		std::stable_sort(gDebugAssetLibrary.begin(), gDebugAssetLibrary.end(),
+			[](DebugAssetEntry const& left, DebugAssetEntry const& right)
+			{
+				if (left.catalogued != right.catalogued)
+					return left.catalogued < right.catalogued;
+				if (left.record.category != right.record.category)
+					return left.record.category < right.record.category;
+				return left.tileIndex < right.tileIndex;
+			});
+		gDebugAssetLibrarySector = gWorldSector.AsByte();
+		gDebugAssetLibraryTileset = static_cast<INT16>(giCurrentTilesetID);
+		gAssetLibraryPage = 0;
+		RecordFeedbackEvent(ST::format("ASSET LIBRARY SCAN / {} UNIQUE",
+			gDebugAssetLibrary.size()));
+	}
+
+	BOOLEAN DebugAssetMatches(DebugAssetEntry const& entry)
+	{
+		switch (gAssetLibraryFilter)
+		{
+			case AssetLibraryFilter::ALL: return TRUE;
+			case AssetLibraryFilter::UNCATALOGUED: return !entry.catalogued;
+			case AssetLibraryFilter::DEBRIS:
+				return entry.record.category == AssetCategory::DEBRIS ||
+					entry.record.category == AssetCategory::STONE ||
+					entry.record.role == AssetRole::SALVAGE ||
+					entry.record.role == AssetRole::RESOURCE_NODE;
+			case AssetLibraryFilter::COUNT: break;
+		}
+		return FALSE;
+	}
+
+	size_t DebugAssetCount()
+	{
+		return static_cast<size_t>(std::count_if(gDebugAssetLibrary.begin(),
+			gDebugAssetLibrary.end(), DebugAssetMatches));
+	}
+
+	DebugAssetEntry* DebugAssetAtCell(size_t cell)
+	{
+		const size_t wanted = gAssetLibraryPage * 6 + cell;
+		size_t visible = 0;
+		for (DebugAssetEntry& entry : gDebugAssetLibrary)
+		{
+			if (!DebugAssetMatches(entry)) continue;
+			if (visible++ == wanted) return &entry;
+		}
+		return nullptr;
+	}
+
+	const char* AssetLibraryFilterName()
+	{
+		switch (gAssetLibraryFilter)
+		{
+			case AssetLibraryFilter::ALL: return "ALL ASSETS";
+			case AssetLibraryFilter::UNCATALOGUED: return "UNCATALOGUED";
+			case AssetLibraryFilter::DEBRIS: return "DEBRIS / SALVAGE";
+			case AssetLibraryFilter::COUNT: break;
+		}
+		return "ASSETS";
+	}
+
+	void DrawAssetLibrarySymbol(UINT16 tileIndex, INT16 x, INT16 y, INT16 size)
+	{
+		if (!gAssetLibrarySymbolSurface)
+			gAssetLibrarySymbolSurface = AddVideoSurface(64, 64, PIXEL_DEPTH);
+		gAssetLibrarySymbolSurface->Fill(Get16BPPColor(FROMRGB(6, 8, 8)));
+		if (tileIndex >= NUMBEROFTILES) return;
+		TILE_ELEMENT const& tile = gTileDatabase[tileIndex];
+		if (!tile.hTileSurface) return;
+		ETRLEObject const& frame =
+			tile.hTileSurface->SubregionProperties(tile.usRegionIndex);
+		const INT16 drawX = static_cast<INT16>(32 - frame.usWidth / 2 -
+			frame.sOffsetX);
+		const INT16 drawY = static_cast<INT16>(57 - frame.usHeight -
+			frame.sOffsetY);
+		BltVideoObject(gAssetLibrarySymbolSurface, tile.hTileSurface,
+			tile.usRegionIndex, drawX, drawY);
+		const SGPBox source{ 0, 0, 64, 64 };
+		const SGPBox destination{
+			static_cast<UINT16>(std::max<INT16>(0, x)),
+			static_cast<UINT16>(std::max<INT16>(0, y)),
+			static_cast<UINT16>(size), static_cast<UINT16>(size)
+		};
+		BltStretchVideoSurface(FRAME_BUFFER, gAssetLibrarySymbolSurface,
+			&source, &destination);
+	}
+
+	void DebugLibraryGrabberCallback(MOUSE_REGION*, UINT32 reason)
+	{
+		if (reason & MSYS_CALLBACK_REASON_POINTER_DWN)
+		{
+			gGodLibraryDragging = TRUE;
+			gDragOffsetX = gusMouseXPos - gGodLibraryX;
+			gDragOffsetY = gusMouseYPos - gGodLibraryY;
+			SetRenderFlags(RENDER_FLAG_FULL);
+		}
+		if (reason & MSYS_CALLBACK_REASON_POINTER_UP)
+		{
+			UpdateWindowDragging();
+			gGodLibraryDragging = FALSE;
+			SaveUILayout();
+			SetRenderFlags(RENDER_FLAG_FULL);
+		}
+	}
+
+	void DebugLibraryCloseCallback(MOUSE_REGION*, UINT32 reason)
+	{
+		if (!(reason & MSYS_CALLBACK_REASON_POINTER_UP)) return;
+		gGodLibraryVisible = FALSE;
+		gGodLibraryDragging = FALSE;
+		SaveUILayout();
+		SetBagRegionsEnabled(TRUE);
+		SetRenderFlags(RENDER_FLAG_FULL);
+	}
+
+	void DebugLibraryCallback(MOUSE_REGION* region, UINT32 reason)
+	{
+		if (!(reason & (MSYS_CALLBACK_REASON_POINTER_UP |
+			MSYS_CALLBACK_REASON_RBUTTON_UP)) || !gGodLibraryVisible) return;
+		const size_t index = static_cast<size_t>(region->GetUserData<0>());
+		if (index < 6)
+		{
+			DebugAssetEntry* const entry = DebugAssetAtCell(index);
+			if (!entry) return;
+			InternalLocateGridNo(entry->gridNo, TRUE);
+			OS0SelectWorldObject(nullptr, entry->gridNo, entry->level,
+				entry->tileIndex);
+			gGodLibraryVisible = TRUE;
+			if (reason & MSYS_CALLBACK_REASON_RBUTTON_UP)
+				OpenAssetCatalog(entry->gridNo, entry->level, entry->tileIndex);
+			else
+				RecordFeedbackEvent(ST::format("ASSET LIBRARY FOCUS / TILE {} GRID {}",
+					entry->tileIndex, entry->gridNo));
+		}
+		else switch (index)
+		{
+			case 6: gDebugLibraryMode = DebugLibraryMode::ASSETS; break;
+			case 7: gDebugLibraryMode = DebugLibraryMode::ICONS; break;
+			case 8:
+				gAssetLibraryFilter = static_cast<AssetLibraryFilter>(
+					(static_cast<UINT8>(gAssetLibraryFilter) + 1) %
+					static_cast<UINT8>(AssetLibraryFilter::COUNT));
+				gAssetLibraryPage = 0;
+				break;
+			case 9: if (gAssetLibraryPage > 0) --gAssetLibraryPage; break;
+			case 10:
+			{
+				const size_t count = DebugAssetCount();
+				if ((gAssetLibraryPage + 1) * 6 < count) ++gAssetLibraryPage;
+				break;
+			}
+			case 11: RebuildDebugAssetLibrary(); break;
+			default: break;
+		}
+		PositionBagRegions();
+		SetBagRegionsEnabled(TRUE);
+		SetRenderFlags(RENDER_FLAG_FULL);
+	}
+
 	void GodIconCallback(MOUSE_REGION* region, UINT32 reason)
 	{
-		if (!(reason & MSYS_CALLBACK_REASON_POINTER_UP) || !gGodLibraryVisible)
+		if (!(reason & MSYS_CALLBACK_REASON_POINTER_UP) || !gGodLibraryVisible ||
+			gDebugLibraryMode != DebugLibraryMode::ICONS)
 			return;
 		const size_t index = static_cast<size_t>(region->GetUserData<0>());
 		if (index < gGodIconNames.size())
@@ -5700,9 +6181,15 @@ namespace
 	{
 		if (!gGodLibraryVisible || !gGodNewIcons || !gGodDoorIcons ||
 			!gGodButtonFrame) return;
+		if (gDebugAssetLibrarySector != gWorldSector.AsByte() ||
+			gDebugAssetLibraryTileset != static_cast<INT16>(giCurrentTilesetID))
+			RebuildDebugAssetLibrary();
 
 		const UINT16 red = Get16BPPColor(FROMRGB(205, 12, 12));
+		const UINT16 bright = Get16BPPColor(FROMRGB(238, 28, 22));
+		const UINT16 muted = Get16BPPColor(FROMRGB(74, 9, 8));
 		const UINT16 dark = Get16BPPColor(FROMRGB(4, 7, 7));
+		const UINT16 card = Get16BPPColor(FROMRGB(9, 12, 11));
 		ColorFillVideoSurfaceArea(FRAME_BUFFER, gGodLibraryX, gGodLibraryY,
 			gGodLibraryX + GOD_LIBRARY_W - 1, gGodLibraryY + GOD_LIBRARY_H - 1,
 			dark);
@@ -5711,19 +6198,101 @@ namespace
 		SetFontBackground(FONT_MCOLOR_BLACK);
 		SetFontForeground(FONT_MCOLOR_RED);
 		MPrint(gGodLibraryX + 6, gGodLibraryY + 5,
-			"GOD MODE / JA2 ICON LIBRARY");
+			"GOD MODE / ASSET REGISTRY");
+		MPrint(gGodLibraryX + GOD_LIBRARY_W - 14, gGodLibraryY + 5, "X");
+		const BOOLEAN assets = gDebugLibraryMode == DebugLibraryMode::ASSETS;
+		SetFontForeground(assets ? FONT_WHITE : FONT_MCOLOR_DKGRAY);
+		MPrint(gGodLibraryX + 12, gGodLibraryY + 30, "ASSETS");
+		SetFontForeground(!assets ? FONT_WHITE : FONT_MCOLOR_DKGRAY);
+		MPrint(gGodLibraryX + 85, gGodLibraryY + 30, "ACTION ICONS");
+		ColorFillVideoSurfaceArea(FRAME_BUFFER,
+			gGodLibraryX + (assets ? 8 : 80), gGodLibraryY + 42,
+			gGodLibraryX + (assets ? 74 : 160), gGodLibraryY + 42, bright);
+
+		if (assets)
+		{
+			SetFontForeground(FONT_MCOLOR_RED);
+			MPrint(gGodLibraryX + 174, gGodLibraryY + 30,
+				ST::format("FILTER / {}", AssetLibraryFilterName()).left(31));
+			for (size_t i = 0; i < 6; ++i)
+			{
+				DebugAssetEntry* const entry = DebugAssetAtCell(i);
+				MOUSE_REGION const& region = gAssetLibraryRegions[i];
+				const INT16 x = region.RegionTopLeftX;
+				const INT16 y = region.RegionTopLeftY;
+				const BOOLEAN hot = gusMouseXPos >= x &&
+					gusMouseXPos <= region.RegionBottomRightX &&
+					gusMouseYPos >= y && gusMouseYPos <= region.RegionBottomRightY;
+				ColorFillVideoSurfaceArea(FRAME_BUFFER, x, y,
+					region.RegionBottomRightX, region.RegionBottomRightY,
+					hot ? Get16BPPColor(FROMRGB(18, 17, 14)) : card);
+				ColorFillVideoSurfaceArea(FRAME_BUFFER, x, y,
+					x + (hot ? 42 : 18), y, hot ? bright : muted);
+				if (!entry)
+				{
+					SetFontForeground(FONT_MCOLOR_DKGRAY);
+					MPrint(x + 8, y + 23, "NO ASSET");
+					continue;
+				}
+				DrawAssetLibrarySymbol(entry->tileIndex, x + 3, y + 4, 45);
+				AssetMaterial const material = ResolveAssetMaterial(entry->gridNo,
+					entry->level, entry->tileIndex, entry->record);
+				FieldToolKind const tool = RequiredFieldTool(entry->gridNo,
+					entry->level, entry->tileIndex);
+				SalvageProfile const salvage = DescribeWorldAsset(entry->gridNo,
+					entry->level, entry->tileIndex);
+				STRUCTURE const* const structure = WorldStructureAt(entry->gridNo,
+					entry->level, entry->tileIndex);
+				const GridNo durabilityGrid = structure ?
+					structure->sGridNo : entry->gridNo;
+				const INT16 maximum = AssetDurabilityMaximum(material);
+				const INT16 current = CurrentAssetDurability(durabilityGrid,
+					entry->tileIndex, material);
+				SetFontForeground(entry->catalogued ? FONT_WHITE : FONT_MCOLOR_RED);
+				MPrint(x + 52, y + 5,
+					ST::format("T{} {} / {} x{}", entry->tileIndex,
+						entry->record.label, entry->catalogued ? "DB" : "AUTO",
+						entry->count).left(23));
+				SetFontForeground(FONT_MCOLOR_LTGRAY);
+				MPrint(x + 52, y + 20,
+					ST::format("{} / {} / {}x{}",
+						gAssetCategoryNames[static_cast<size_t>(entry->record.category)],
+						gAssetMaterialNames[static_cast<size_t>(material)],
+						entry->record.width, entry->record.height).left(23));
+				SetFontForeground(FONT_MCOLOR_DKGRAY);
+				MPrint(x + 52, y + 36,
+					ST::format("{} / HP {}/{}{}", FieldToolName(tool), current,
+						maximum, salvage.salvageable ? ST::format(" / +{}", salvage.amount) :
+							ST::string()).left(23));
+				gAssetLibraryRegions[i].SetFastHelpText(
+					"LMB: FOCUS ASSET / RMB: OPEN CATALOG EDITOR");
+			}
+			const size_t count = DebugAssetCount();
+			const size_t pages = std::max<size_t>(1, (count + 5) / 6);
+			SetFontForeground(FONT_MCOLOR_DKGRAY);
+			MPrint(gGodLibraryX + 9, gGodLibraryY + 229,
+				ST::format("{} UNIQUE / PAGE {}/{} / RMB EDITS DATABASE",
+					count, std::min(gAssetLibraryPage + 1, pages), pages).left(44));
+			SetFontForeground(FONT_MCOLOR_RED);
+			MPrint(gGodLibraryX + 294, gGodLibraryY + 230, "<");
+			MPrint(gGodLibraryX + 334, gGodLibraryY + 230, ">");
+			MPrint(gGodLibraryX + 369, gGodLibraryY + 230, "SCAN");
+			InvalidateRegion(gGodLibraryX, gGodLibraryY,
+				gGodLibraryX + GOD_LIBRARY_W, gGodLibraryY + GOD_LIBRARY_H);
+			return;
+		}
 
 		for (INT16 frame = 0; frame < 3; ++frame)
 			BltVideoObject(FRAME_BUFFER, gGodButtonFrame, 0,
-				gGodLibraryX + frame * 78, gGodLibraryY + 17);
+				gGodLibraryX + 88 + frame * 78, gGodLibraryY + 64);
 
 		for (size_t i = 0; i < gGodIconNames.size(); ++i)
 		{
 			const size_t cell = (i / 8) * 9 + (i % 8);
 			const INT16 frame = static_cast<INT16>(cell / 9);
 			const INT16 local = static_cast<INT16>(cell % 9);
-			const INT16 x = gGodLibraryX + frame * 78 + 9 + (local % 3) * 20;
-			const INT16 y = gGodLibraryY + 25 + (local / 3) * 20;
+			const INT16 x = gGodLibraryX + 88 + frame * 78 + 9 + (local % 3) * 20;
+			const INT16 y = gGodLibraryY + 72 + (local / 3) * 20;
 			if (i < 15)
 				BltVideoObject(FRAME_BUFFER, gGodNewIcons,
 					static_cast<UINT16>(i * 3), x, y);
@@ -5740,11 +6309,14 @@ namespace
 
 		// The original cancel glyph closes the atlas without changing selection.
 		BltVideoObject(FRAME_BUFFER, gGodNewIcons, 15,
-			gGodLibraryX + 2 * 78 + 49, gGodLibraryY + 65);
+			gGodLibraryX + 88 + 2 * 78 + 49, gGodLibraryY + 112);
 		SetFontForeground(FONT_WHITE);
-		MPrint(gGodLibraryX + 7, gGodLibraryY + 98,
+		MPrint(gGodLibraryX + 95, gGodLibraryY + 171,
 			ST::format("SELECTED {} / {}", gGodMenuIcon,
 				gGodIconNames[gGodMenuIcon]).left(36));
+		SetFontForeground(FONT_MCOLOR_DKGRAY);
+		MPrint(gGodLibraryX + 95, gGodLibraryY + 193,
+			"VANILLA STI SYMBOL ATLAS / CLICK TO BIND STAR");
 		InvalidateRegion(gGodLibraryX, gGodLibraryY,
 			gGodLibraryX + GOD_LIBRARY_W, gGodLibraryY + GOD_LIBRARY_H);
 	}
@@ -5787,6 +6359,8 @@ namespace
 				if (record) *record = gCatalogDraft;
 				else gAssetCatalog.push_back(gCatalogDraft);
 				const BOOLEAN saved = WriteAssetCatalog();
+				gDebugAssetLibrarySector = 0xff;
+				gDebugAssetLibraryTileset = -1;
 				RecordFeedbackEvent(ST::format("ASSET CATALOG {} tile {} category {} {}x{}",
 					saved ? "SAVED" : "FAILED", gCatalogDraft.tileIndex,
 					gAssetCategoryNames[static_cast<size_t>(gCatalogDraft.category)],
@@ -5798,12 +6372,16 @@ namespace
 					gContextTitle = DescribeWorldAsset(gInspectedGridNo,
 						gInspectedLevel, gInspectedTileIndex).displayName;
 				RefreshPanelActions();
+				gGodLibraryVisible = gAssetCatalogReturnToLibrary;
+				gAssetCatalogReturnToLibrary = FALSE;
 				break;
 			}
 			case 10:
 				gAssetCatalogVisible = FALSE;
 				gAssetCatalogNameEditing = FALSE;
 				SetUIKeyboardHook(nullptr);
+				gGodLibraryVisible = gAssetCatalogReturnToLibrary;
+				gAssetCatalogReturnToLibrary = FALSE;
 				break;
 			default: break;
 		}
@@ -5983,11 +6561,11 @@ void InitializeOS0IngameUI()
 	gLootX = gFloatingPanels[static_cast<size_t>(FloatingPanelId::OBJECT_INVENTORY)].x;
 	gLootY = gFloatingPanels[static_cast<size_t>(FloatingPanelId::OBJECT_INVENTORY)].y;
 	ApplyArtworkWorkspaceLayout(!gTutorialActive);
-	LoadUILayout();
 	gGodLibraryX = std::max<INT16>(0,
 		(gsVIEWPORT_END_X - GOD_LIBRARY_W) / 2);
 	gGodLibraryY = std::max<INT16>(4,
 		(gsVIEWPORT_WINDOW_END_Y - GOD_LIBRARY_H) / 2);
+	LoadUILayout();
 	gAssetCatalogX = std::max<INT16>(0,
 		(gsVIEWPORT_END_X - ASSET_CATALOG_W) / 2);
 	gAssetCatalogY = std::max<INT16>(4,
@@ -6007,6 +6585,12 @@ void InitializeOS0IngameUI()
 		MSYS_PRIORITY_HIGH, CURSOR_NORMAL, MSYS_NO_CALLBACK, BagBlockCallback);
 	MSYS_DefineRegion(&gGodLibraryBlock, 0, 0, GOD_LIBRARY_W, GOD_LIBRARY_H,
 		MSYS_PRIORITY_HIGH, CURSOR_NORMAL, MSYS_NO_CALLBACK, BagBlockCallback);
+	MSYS_DefineRegion(&gGodLibraryGrabber, 0, 0, GOD_LIBRARY_W, 20,
+		MSYS_PRIORITY_HIGHEST, CURSOR_NORMAL,
+		DebugLibraryGrabberCallback, DebugLibraryGrabberCallback);
+	MSYS_DefineRegion(&gGodLibraryClose, 0, 0, 16, 16,
+		MSYS_PRIORITY_HIGHEST, CURSOR_NORMAL, MSYS_NO_CALLBACK,
+		DebugLibraryCloseCallback);
 	for (size_t i = 0; i < gGodIconRegions.size(); ++i)
 	{
 		MSYS_DefineRegion(&gGodIconRegions[i], 0, 0, 20, 20,
@@ -6014,6 +6598,14 @@ void InitializeOS0IngameUI()
 			GodIconCallback);
 		gGodIconRegions[i].SetUserData<0>(i);
 		gGodIconRegions[i].Disable();
+	}
+	for (size_t i = 0; i < gAssetLibraryRegions.size(); ++i)
+	{
+		MSYS_DefineRegion(&gAssetLibraryRegions[i], 0, 0, 20, 18,
+			MSYS_PRIORITY_HIGHEST, CURSOR_NORMAL, MSYS_NO_CALLBACK,
+			DebugLibraryCallback);
+		gAssetLibraryRegions[i].SetUserData<0>(i);
+		gAssetLibraryRegions[i].Disable();
 	}
 	MSYS_DefineRegion(&gAssetCatalogBlock, 0, 0,
 		ASSET_CATALOG_W, ASSET_CATALOG_H, MSYS_PRIORITY_HIGH,
@@ -6210,7 +6802,10 @@ void ShutdownOS0IngameUI()
 	MSYS_RemoveRegion(&gBagClose);
 	MSYS_RemoveRegion(&gContextBlock);
 	MSYS_RemoveRegion(&gGodLibraryBlock);
+	MSYS_RemoveRegion(&gGodLibraryGrabber);
+	MSYS_RemoveRegion(&gGodLibraryClose);
 	for (MOUSE_REGION& r : gGodIconRegions) MSYS_RemoveRegion(&r);
+	for (MOUSE_REGION& r : gAssetLibraryRegions) MSYS_RemoveRegion(&r);
 	MSYS_RemoveRegion(&gAssetCatalogBlock);
 	for (MOUSE_REGION& r : gAssetCatalogRegions) MSYS_RemoveRegion(&r);
 	for (MOUSE_REGION& r : gContextRegions) MSYS_RemoveRegion(&r);
@@ -6275,6 +6870,11 @@ void ShutdownOS0IngameUI()
 		gObjectSymbolSurface = nullptr;
 		gObjectSymbolTileIndex = NO_TILE;
 	}
+	if (gAssetLibrarySymbolSurface)
+	{
+		DeleteVideoSurface(gAssetLibrarySymbolSurface);
+		gAssetLibrarySymbolSurface = nullptr;
+	}
 	SetUIKeyboardHook(nullptr);
 	gFeedbackEditing = FALSE;
 	gInspectedSoldier = nullptr;
@@ -6299,13 +6899,18 @@ void ShutdownOS0IngameUI()
 	gFieldToolIssued = FALSE;
 	gContentsMode = ContentsMode::SOLDIER;
 	gGodLibraryVisible = FALSE;
+	gGodLibraryDragging = FALSE;
 	gAssetCatalogVisible = FALSE;
+	gAssetCatalogReturnToLibrary = FALSE;
 	gAssetCatalogNameEditing = FALSE;
 	gHoverCursorSoldier = nullptr;
 	gHoverCursorGridNo = NOWHERE;
 	gCoverCommandSoldier = nullptr;
 	gCoverCommandDestination = NOWHERE;
 	gAssetDamage.clear();
+	gDebugAssetLibrary.clear();
+	gDebugAssetLibrarySector = 0xff;
+	gDebugAssetLibraryTileset = -1;
 	for (ImpactParticle& particle : gImpactParticles) particle.born = 0;
 	gInitialized = FALSE;
 }
@@ -6334,14 +6939,17 @@ void RenderOS0IngameUI()
 	{
 		if (SOLDIERTYPE* const selected = GetSelectedMan())
 		{
-			EnsureFieldShovel(selected);
+			EnsureDebugFieldTools(selected);
 			gFieldToolIssued = TRUE;
 		}
 	}
 	if (!gTutorialActive)
 	{
-		const BOOLEAN aiming = gCurrentUIMode == ACTION_MODE ||
-			gCurrentUIMode == CONFIRM_ACTION_MODE;
+		// JA2 temporarily reuses action modes for an item held by the mouse. That
+		// is an inventory drag, not aiming: keep every open spatial menu anchored.
+		const BOOLEAN aiming = !gpItemPointer &&
+			(gCurrentUIMode == ACTION_MODE ||
+			 gCurrentUIMode == CONFIRM_ACTION_MODE);
 		if (aiming && !gAimAutoCollapsed)
 		{
 			StopFeedbackEditing();
@@ -6482,6 +7090,10 @@ void OS0ExecuteCharacterQuickAction(SOLDIERTYPE* soldier,
 	if (action == OS0CharacterQuickAction::ICON_LIBRARY)
 	{
 		CloseContextMenu();
+		gDebugLibraryMode = DebugLibraryMode::ASSETS;
+		if (gDebugAssetLibrarySector != gWorldSector.AsByte() ||
+			gDebugAssetLibraryTileset != static_cast<INT16>(giCurrentTilesetID))
+			RebuildDebugAssetLibrary();
 		gGodLibraryVisible = TRUE;
 		PositionBagRegions();
 		SetBagRegionsEnabled(TRUE);
@@ -6652,6 +7264,7 @@ void OS0HoverWorldObject(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 
 	if (target)
 	{
+		gHoverDebugDetail.clear();
 		gHoverTitle = target->name;
 		gHoverDetail = gpItemPointer ?
 			ST::format("{} -> {} / CHOOSE SLOT",
@@ -6663,6 +7276,7 @@ void OS0HoverWorldObject(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 	else if (pool && pool->iItemIndex >= 0 &&
 		static_cast<size_t>(pool->iItemIndex) < gWorldItems.size())
 	{
+		gHoverDebugDetail.clear();
 		WORLDITEM const& worldItem = GetWorldItem(pool->iItemIndex);
 		gHoverTitle = worldItem.o.usItem != NOTHING ?
 			GCM->getItem(worldItem.o.usItem)->getName() : "GROUND ITEMS";
@@ -6671,13 +7285,32 @@ void OS0HoverWorldObject(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 	}
 	else
 	{
-		gHoverTitle = DescribeWorldAsset(gridNo, level, tileIndex).displayName;
-		gHoverDetail = ST::format("{}  LMB EXECUTE  MMB CYCLE",
-			CursorActionLabel(gCursorAction));
+		SalvageProfile const salvage = DescribeWorldAsset(gridNo, level, tileIndex);
+		AssetCatalogRecord const record = ResolveAssetRecord(gridNo, level, tileIndex);
+		AssetMaterial const material = ResolveAssetMaterial(gridNo, level,
+			tileIndex, record);
+		FieldToolKind const required = RequiredFieldTool(gridNo, level, tileIndex);
+		STRUCTURE const* const structure = WorldStructureAt(gridNo, level, tileIndex);
+		GridNo const durabilityGrid = structure ? structure->sGridNo : gridNo;
+		const UINT16 canonical = CanonicalAssetTileIndex(gridNo, level, tileIndex);
+		const INT16 maximum = AssetDurabilityMaximum(material);
+		const INT16 current = CurrentAssetDurability(durabilityGrid, canonical,
+			material);
+		gHoverTitle = salvage.displayName;
+		gHoverDetail = ST::format("{} / {} / {}x{} / HP {}/{}",
+			gAssetCategoryNames[static_cast<size_t>(record.category)],
+			gAssetMaterialNames[static_cast<size_t>(material)],
+			record.width, record.height, current, maximum);
+		const ST::string yield = salvage.salvageable ?
+			ST::format(" / +{} {}", salvage.amount,
+				ResourceName(salvage.resource)) : ST::string(" / FIXED");
+		gHoverDebugDetail = ST::format("{} {}{}",
+			FieldToolName(required), HasFieldTool(GetSelectedMan(), required) ?
+				"READY" : "MISSING", yield);
 	}
 
-	constexpr INT16 width = 270;
-	constexpr INT16 height = 72;
+	constexpr INT16 width = 310;
+	constexpr INT16 height = 82;
 	const INT16 proposedX = screenX + 16 + width <= gsVIEWPORT_END_X ?
 		screenX + 16 : screenX - width - 10;
 	const INT16 proposedY = screenY + 18 + height <= gsVIEWPORT_WINDOW_END_Y ?
@@ -6808,9 +7441,11 @@ void OS0OpenContextMenu(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 			SalvageProfile const salvage = DescribeWorldAsset(gridNo, level, tileIndex);
 			if (salvage.salvageable)
 			{
-				const BOOLEAN tool = HasDiggingTool(selected);
+				const FieldToolKind required = RequiredFieldTool(gridNo, level,
+					tileIndex);
+				const BOOLEAN tool = HasFieldTool(selected, required);
 				AddContextEntry(ContextAction::SALVAGE,
-					!tool ? "DISMANTLE / NEED FIELD TOOL" :
+					!tool ? ST::format("NEED {}", FieldToolName(required)) :
 					ST::format("DISMANTLE / +{} {}", salvage.amount,
 						ResourceName(salvage.resource)),
 					CanSalvageWorldAsset(selected, gridNo, level, tileIndex));
@@ -7303,17 +7938,7 @@ BOOLEAN OS0NotifyWorldAssetHit(GridNo gridNo, STRUCTURE* structure, UINT8 impact
 	// walls and map-critical geometry retain the original JA2 behaviour.
 	SalvageProfile const profile = DescribeWorldAsset(gridNo, 0, tileIndex);
 	if (!profile.salvageable) return FALSE;
-	INT16 maximum = 90;
-	switch (material)
-	{
-		case AssetMaterial::WOOD:
-		case AssetMaterial::ORGANIC: maximum = 70; break;
-		case AssetMaterial::STONE: maximum = 160; break;
-		case AssetMaterial::METAL: maximum = 210; break;
-		case AssetMaterial::SAND:
-		case AssetMaterial::EARTH: maximum = 110; break;
-		default: break;
-	}
+	const INT16 maximum = AssetDurabilityMaximum(material);
 	auto state = std::find_if(gAssetDamage.begin(), gAssetDamage.end(),
 		[&](AssetDamageState const& value)
 		{

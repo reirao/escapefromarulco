@@ -1,7 +1,7 @@
 # Feature wiring audit
 
 This matrix compares the public prototype claims with the actual runtime path in
-the source. It was last verified for `v0.5.4-alpha`.
+the source. It was last verified for `v0.5.5-alpha`.
 
 | Feature | Runtime status | Wiring / persistence |
 | --- | --- | --- |
@@ -21,6 +21,10 @@ the source. It was last verified for `v0.5.4-alpha`.
 | Long-hold graphical merc menu | Verified | JA2's original 3x3 movement frame remains active and a second frame invokes character, inventory, stealth, weapon, reload and icon-library actions. |
 | AI run-to-cover command | Verified | Uses JA2's cover evaluator, a peaceful-sector geometry fallback, engine pathing and a prone/crouch arrival stance. |
 | God icon atlas | Verified | Loads 24 symbols from JA2 STI resources and feeds the selected symbol back into the extended command menu. |
+| Star-menu asset library | Verified | Scans the live sector, deduplicates real structure/object tile sprites, filters all/uncatalogued/debris records, focuses instances and opens the persistent catalog editor. |
+| Debris tool profiles | Verified | Hover and catalog cards expose category, resolved material, footprint, durability, yield and the required shovel/crowbar/cutters/toolkit/cutting tool. Debug startup issues the save-compatible test tools. |
+| Animation-following gear UI | Verified | Equipment, pocket and item-transfer symbols anchor to JA2's interpolated soldier screen position instead of snapping with `GridNo`; item-pointer mode no longer triggers aim auto-collapse. |
+| Embedded map/minimap management | Verified | The movable computer reads `StrategicMap`/`SectorInfo` directly for control, operators, enemies and militia, while the tactical minimap is blitted from JA2's real radar asset. |
 | Asset catalog | Verified | Records tileset/base-tile key, inferred footprint, custom name/category/material/role/size and buildable metadata to a user TSV; local data overrides the bundled catalog. |
 | Material/physics profile | Verified as an early gameplay model | Engine structure data determines mass, friction, restitution, integrity and carrying capacity. This is not a general rigid-body simulation. |
 | Structure carry/reposition | Verified for eligible single-tile structures | Material mass, strength and wounds determine eligibility and whether the merc lifts or drags. The real tile sprite follows above or behind the actor, placement stays transactional through JA2 collision checks, and successful handling trains persistent strength sub-points. |

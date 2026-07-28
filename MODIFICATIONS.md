@@ -171,3 +171,25 @@ The code is experimental and does not represent an official JA2 Stracciatella re
 - Added a registry-backed object-to-actor transfer surface. A carried item exposes
   `TAKE IN HANDS`, `PUT IN PACK` and `DROP HERE`; occupied gear is swapped safely and
   anything that cannot be stored becomes a real world item instead of being deleted.
+
+## v0.5.5-alpha live asset library and animation-linked gear
+
+- Turned the long-hold star action into a movable God-mode hub. Its default Asset
+  Library scans the loaded sector, deduplicates real structure/object tiles and keeps
+  the existing 24-symbol JA2 atlas as a second tab.
+- Asset cards render the source tile sprite and expose occurrence count, catalog
+  state, inferred category/material, measured footprint, salvage yield and required
+  tool. Left click centers the real instance; right click enters the persistent editor.
+- Added material-specific salvage requirements for shovel, crowbar, wire cutters,
+  toolkit and cutting tool. The alpha test operator receives save-compatible vanilla
+  tools; the temporary shovel remains explicitly identified as a crowbar proxy.
+- Debris hover now reports resolved material, footprint, current/maximum durability,
+  recovery yield and tool readiness instead of the generic `DEBRIS` label.
+- Equipment, pockets and object-to-character transfer symbols now follow JA2's
+  interpolated animation position rather than snapping when `GridNo` changes.
+- Removed rectangular frames from the live character equipment and pocket views;
+  actual item and JA2 action symbols remain as the interaction surfaces.
+- Native item-pointer mode no longer masquerades as aiming, so dragging an item does
+  not collapse or relocate open OS0 windows.
+- The embedded Arulco view now reads live enemy and militia totals from `SectorInfo`
+  alongside the real tactical radar asset and existing team/control data.

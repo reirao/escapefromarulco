@@ -575,7 +575,7 @@ void PopupMovementMenu(UI_EVENT* const ev)
 		UNTRAP_DOOR_IMAGES, LOCKPICK_DOOR_IMAGES, BOOT_DOOR_IMAGES
 	}};
 	MakeButtonMove(OS0_LIBRARY_ICON, godImages[OS0GetGodMenuIcon() % godImages.size()],
-		os0x + 40, y, ev, "GOD MODE / JA2 ICON LIBRARY", false);
+		os0x + 40, y, ev, "GOD MODE / ASSET LIBRARY + JA2 ICONS", false);
 	MakeButtonMove(OS0_STEALTH_ICON, SNEAK_IMAGES, os0x, y + 20, ev,
 		s->bStealthMode ? "STEALTH / OFF" : "STEALTH / ON",
 		is_vehicle || is_robot);

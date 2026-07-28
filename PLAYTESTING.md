@@ -22,8 +22,9 @@ playtest in its own folder and point the launcher to the original game directory
 2. Move the field-computer window, close it and reopen it from the computer icon.
 3. Hold the right mouse button over two different owned mercs. Verify the correct merc
    is selected and both graphical JA2 button frames appear.
-4. Open the God icon library from the second frame, select several symbols and verify
-   the selected symbol becomes the God/library button on the next long-hold.
+4. Click the star in the second frame. Verify the movable Asset Library opens first,
+   `ACTION ICONS` exposes the old symbol atlas, and a selected symbol becomes the
+   star/library button on the next long-hold.
 5. Use stealth, weapon mode and reload from the extended frame.
 6. Right-click a sandbag, door, container, stone field and large scenery object. Use
    `GOD / CATALOG ASSET`, give it a name and verify category/material/role and footprint.
@@ -89,6 +90,16 @@ playtest in its own folder and point the launcher to the original game directory
 38. Click the small computer symbol, drag its single OS window, and exercise `BASE`,
     `ARULCO`, `TEAM` and `REPORT`. Trigger the exit-sector dialog and verify no fixed
     legacy minimap appears; the real sector radar stays inside the movable OS window.
+39. Open the star Asset Library and cycle `ALL`, `UNCATALOGUED` and `DEBRIS / SALVAGE`.
+    Verify each card uses the real tile sprite and shows count, material, size and tool.
+40. Left-click an asset card to center its map instance. Right-click it, save a custom
+    classification and verify the library returns with the card marked `DB`.
+41. Hover wood, stone, organic, sand and metal debris. Verify the immediate inspector
+    shows durability, yield and the correct debug tool with `READY` or `MISSING`.
+42. Walk while equipment and pockets are expanded. Symbols must follow the animation
+    continuously without jumping once per tile and without rectangular slot frames.
+43. Begin dragging an item while the character UI, star library or computer is open.
+    No window may close, move or auto-collapse merely because the item cursor exists.
 
 ## Writing a useful report
 
