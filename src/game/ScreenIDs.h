@@ -1,0 +1,44 @@
+/*
+ * Escape from Arulco modification notice:
+ * Modified from JA2 Stracciatella, 2026-07-24 through 2026-07-28.
+ * See /MODIFICATIONS.md and the SFI source-code license agreement.
+ */
+
+#ifndef __SCREEN_IDS
+#define __SCREEN_IDS
+
+enum ScreenID
+{
+	EDIT_SCREEN,
+	ERROR_SCREEN = 3,
+	INIT_SCREEN,
+	GAME_SCREEN,
+//	6 was ANIEDIT_SCREEN, now removed
+	PALEDIT_SCREEN = 7,
+	DEBUG_SCREEN,
+	MAP_SCREEN,
+	LAPTOP_SCREEN,
+	LOADSAVE_SCREEN,
+	MAPUTILITY_SCREEN,
+	FADE_SCREEN,
+	MSG_BOX_SCREEN,
+	MAINMENU_SCREEN,
+	AUTORESOLVE_SCREEN,
+	SAVE_LOAD_SCREEN,
+	OPTIONS_SCREEN,
+	SHOPKEEPER_SCREEN,
+	SEX_SCREEN,
+	GAME_INIT_OPTIONS_SCREEN,
+	DEMO_EXIT_SCREEN,
+	INTRO_SCREEN,
+	CREDIT_SCREEN,
+	QUEST_DEBUG_SCREEN,
+	OS0_CREATOR_SCREEN,
+	MAX_SCREENS,
+
+	NO_PENDING_SCREEN = 0xFFFF
+};
+
+template<ScreenID> ScreenID HandleScreen();
+
+#endif

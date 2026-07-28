@@ -1,0 +1,36 @@
+name: Crash report
+description: Report a crash, freeze or unexpected process exit.
+title: "[Crash] "
+labels: ["bug", "crash", "playtest"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Run `COLLECT_LAST_CRASH.cmd` before restarting the game and attach its output.
+  - type: textarea
+    id: last_actions
+    attributes:
+      label: Last actions before the crash
+      description: Include the selected merc, object and exact input.
+    validations:
+      required: true
+  - type: input
+    id: frequency
+    attributes:
+      label: Can you reproduce it?
+      placeholder: Always / sometimes / not yet
+  - type: textarea
+    id: files
+    attributes:
+      label: Collected reports
+      description: Attach ja2-last-session.log, feedback TXT and emergency save when available.
+    validations:
+      required: true
+  - type: checkboxes
+    id: legal
+    attributes:
+      label: Original game data
+      options:
+        - label: I did not attach original JA2 SLF archives or other copyrighted game data.
+          required: true
+

@@ -1,0 +1,152 @@
+{
+    "demarcationStrings": [
+        "   ", // indentation
+        "-----------------------------------------------------------" // segment divider
+    ],
+    "booleanStrings": [
+        "^N^o",
+        "~N~o",
+        "^Y^e^s",
+        "~Y~e~s",
+        "None of the following is true: %s",
+        "One of the following is true: %s"
+    ],
+    "segmentHeaderStrings": [
+        "Chance of success: %s",
+        "Modified by:",
+        "Bonuses:",
+        "Penalties:",
+        "Detection Level vs. Trap Level:"
+    ],
+    "effectiveStatStrings": [
+        "Effective Agility: %s",
+        "Effective Dexterity: %s",
+        "Effective Strength: %s",
+        "Effective Leadership: %s",
+        "Effective Wisdom: %s",
+        "Effective Exp. Level: %s",
+        "Effective Marksmanship: %s",
+        "Effective Explosives: %s",
+        "Effective Mechanical: %s",
+        "Effective Medical: %s"
+    ],
+    "skillPossessionStrings": [ // enumerated equally to gzMercSkillText
+        "",
+        "%s Lock Picking Skill: %s",
+        "%s Hand To Hand Skill: %s",
+        "%s Electronics Skill: %s",
+        "%s Night Ops Skill: %s",
+        "%s Throwing Skill: %s",
+        "%s Teaching Skill: %s",
+        "%s Heavy Weapons Skill: %s",
+        "%s Auto Weapons Skill: %s",
+        "%s Stealthy Skill: %s",
+        "%s Ambidexterity Skill: %s",
+        "%s Thief Skill: %s",
+        "%s Martial Arts Skill: %s",
+        "%s Knifing Skill: %s",
+        "%s On Roof Skill: %s",
+        "%s Camouflage Skill: %s",
+        ""
+    ],
+    "personalityTraitStrings": [
+        "Doesn't have any personality traits",
+        "%s Heat Intolerance: %s",
+        "%s Neurotic Personality: %s",
+        "%s Claustrophobia: %s",
+        "%s Swimming Ability: %s",
+        "%s Insectophobia: %s",
+        "%s Forgetfulness: %s",
+        "%s Psychotic Personality: %s"
+    ],
+    "toolModifierStrings": [
+        "Locksmith Kit Status: %s",
+        "Crowbar: %s"
+    ],
+    "statusStrings": [
+        "|?|?|?",
+        "???",
+        "~N~/~A",
+        "~u~n~u~s~a~b~l~e",
+        "~i~m~p~o~s~s~i~b~l~e",
+        "untrapped"
+    ],
+    "lockStrings": [
+        "Lock Difficulty: %s",
+        "Electronic Lock: %s",
+        "Lock Damage: %s",
+        "Smash Difficulty: %s"
+    ],
+    "vitalSignStrings": [
+        "Health: %s",
+        "Fatigue: %s",
+        "Morale: %s",
+        "In Shock: %s",
+        "Severe Bleeding: %s",
+        "First Aid: %s"
+    ],
+    "rangeStrings": [
+        "%s to %s",
+        " (effectively ^1 to %s)",
+        " (effectively ^1)"
+    ],
+    "trapStrings": [
+        "Perception: %s",
+        "Passive: %s vs. %s",
+        "|A|c|t|i|v|e: %s vs. %s",
+        "If Detecting |A|c|t|i|v|e|l|y: ^+^1 to %s",
+        "Explosive: ",
+        "Electronic: ",
+        "Electronic Trap: %s",
+        "Trap Level: %s"
+    ],
+    "attemptStrings": [
+        "Attempts Made: %s out of %s needed to reveal the odds.",
+        "Mandatory Attempts: ~+~2"
+    ],
+    "commentStrings": [
+        "Zero explosive skill.",
+        "Zero medical skill.",
+        "Zero mechanical skill.",
+        ". Effectively ~0~% (under the 30% minimum).",
+        ". Effectively ^9^9^%.",
+        ". Make more attempts to determine the odds.",
+        "No applicable tool.",
+        "The tool is unusable.",
+        "Can't be less than %s.",
+        "Can't be more than %s."
+    ],
+    "possessiveStrings": [
+        "Doesn't Have",
+        "Has",
+        "Has Expert"
+    ],
+    "drugStrings": [
+        "Adrenaline booster: %s",
+        "Alcohol: %s",
+        "",
+        "Regeneration booster: %s"
+    ],
+    "inventoryStrings": [
+        "Overburdened: %s"
+    ],
+    "locationStrings": [
+        "Underground: %s",
+        "Town Loyalty: %s",
+        "%s's Town Attachment: %s"
+    ],
+    "dialogueStrings": [
+        "Approach Effectiveness: %s",
+        "1st Time Friendly Approach: %s",
+        "1st Time Direct Approach: %s",
+        "1st Time Threatening Approach: %s",
+        "%s's Opinion Of %s: %s",
+        "Gun Deadliness: %s",
+        "Approach Skill: %s",
+        "%s's Approach Susceptibility: %s",
+        "Price Mod From Weapon Sales Skill: %s",
+        "%s's Fast Draw vs. %s's: %s vs. %s",
+        "Leadership: %s",
+        "%s's Effective Exp. Level: %s"
+    ]
+}

@@ -1,0 +1,30 @@
+_bin
+_sandbox_build
+build
+cmake-build-*
+dependencies
+.DS_Store
+.vagrant
+releases
+TAGS
+.cproject
+.project
+.idea
+.vs
+.vscode
+.clangd
+.clang-tidy
+.zed
+/compile_commands.json
+/*/CMakeUserPresets.json
+
+# Local playtest/runtime output
+*.exe
+*.dll
+*.zip
+*.sav
+*.log
+reports/
+
+# Never commit original Jagged Alliance 2 data archives
+*.slf

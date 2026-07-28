@@ -1,0 +1,24 @@
+name: Idea or design feedback
+description: Suggest a control, interaction, inventory, crafting or world-system improvement.
+title: "[Idea] "
+labels: ["enhancement", "playtest"]
+body:
+  - type: textarea
+    id: current
+    attributes:
+      label: Current experience
+      description: What feels unclear, slow or limiting now?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe how the interaction should work from the player's perspective.
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Example or reference
+

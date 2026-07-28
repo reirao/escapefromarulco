@@ -1,0 +1,46 @@
+$schema: http://json-schema.org/draft-04/schema#
+type: object
+title: I.M.P.
+description: This defines IMP specific settings for the game.
+properties:
+  activation_codes:
+    type: array
+    title: Activation codes
+    description: A list of I.M.P. homepage activation codes that can be used to enter IMP. They are case-sensitive.
+    items:
+      type: string
+  starting_level:
+    $ref: types/uint8.schema.yaml
+    title: Starting level
+    description: The starting level of a created IMP merc.
+  inventory:
+    type: array
+    title: Inventory
+    description: The inventory of a created IMP merc.
+    items:
+      type: object
+      title: Item condition set
+      description: Data for when, where and what item to create.
+      properties:
+        items:
+          title: List of the items to grant
+          type: array
+          items:
+            $ref: types/id.schema.yaml
+        slot:
+          $ref: types/inv-slot.schema.yaml
+          title: Inventory slot
+          description: An optional slot to create the items in.
+        conditions:
+          title: Granting conditions
+          description: Optional pairs of greater-or-equal conditions to evaluate whether the I.M.P. should get the items.
+          type: array
+          items:
+            anyOf:
+              - $ref: types/uint8.schema.yaml
+              - type: string
+    required:
+    - items
+required:
+- activation_codes
+- inventory

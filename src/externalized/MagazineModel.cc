@@ -1,0 +1,139 @@
+#include "MagazineModel.h"
+
+#include "AmmoTypeModel.h"
+#include "CalibreModel.h"
+#include "Exceptions.h"
+#include "ItemModel.h"
+#include "TranslatableString.h"
+#include <utility>
+
+MagazineModel::MagazineModel(uint16_t itemIndex_,
+				ST::string&& internalName_,
+				ST::string&& shortName_,
+				ST::string&& name_,
+				ST::string&& description_,
+				ST::string&& bobbyRaysName_,
+				ST::string&& bobbyRaysDescription_,
+				uint32_t itemClass_,
+				const CalibreModel *calibre_,
+				uint16_t capacity_,
+				const AmmoTypeModel *ammoType_,
+				bool dontUseAsDefaultMagazine_
+)
+	:ItemModel(itemIndex_, std::move(internalName_), itemClass_, 0, INVALIDCURS),
+	calibre(calibre_), capacity(capacity_), ammoType(ammoType_),
+	dontUseAsDefaultMagazine(dontUseAsDefaultMagazine_)
+{
+	this->shortName = std::move(shortName_);
+	this->name = std::move(name_);
+	this->description = std::move(description_);
+	this->bobbyRaysName = std::move(bobbyRaysName_);
+	this->bobbyRaysDescription = std::move(bobbyRaysDescription_);
+}
+
+
+JsonValue MagazineModel::serialize() const
+{
+	JsonObject obj;
+	obj.set("itemIndex",            itemIndex);
+	obj.set("internalName",         internalName);
+	obj.set("calibre",              calibre->internalName);
+	obj.set("capacity",             capacity);
+	obj.set("ammoType",             ammoType->getInternalName());
+
+	obj.set("inventoryGraphics",      inventoryGraphics.serialize());
+	obj.set("tileGraphic",      tileGraphic.serialize());
+	obj.set("ubWeight",             getWeight());
+	obj.set("ubPerPocket",          getPerPocket());
+	obj.set("usPrice",              getPrice());
+	obj.set("ubCoolness",           getCoolness());
+
+	if(isInBigGunList())
+	{
+		obj.set("standardReplacement", standardReplacement);
+	}
+
+	serializeFlags(obj);
+
+	if(dontUseAsDefaultMagazine)
+	{
+		obj.set("dontUseAsDefaultMagazine", dontUseAsDefaultMagazine);
+	}
+
+	return obj.toValue();
+}
+
+std::unique_ptr<MagazineModel> MagazineModel::deserialize(
+	const JsonValue &json,
+	const Containers::Named<uint16_t, CalibreModel>& calibres,
+	const Containers::Named<uint16_t, AmmoTypeModel>& ammoTypes,
+	TranslatableString::Loader& stringLoader)
+{
+	auto obj = json.toObject();
+	ItemModel::InitData const initData{ obj, stringLoader };
+	int itemIndex                 = obj.GetInt("itemIndex");
+	ST::string internalName       = obj.GetString("internalName");
+	auto failContext = ST::format("failed to deserialize {}(\"{}\")", "Magazine", internalName);
+
+	const CalibreModel* calibre = nullptr;
+	try {
+		calibre = calibres.byName(obj.GetString("calibre"));
+	} catch (const NotFoundError& e) {
+		throw NotFoundError(ST::format("{}: {}", failContext, e.what()));
+	}
+	uint32_t itemClass            = (calibre->index != CalibreModel::NOAMMO) ? IC_AMMO : IC_NONE;
+	uint16_t capacity             = obj.GetInt("capacity");
+	const AmmoTypeModel* ammoType = nullptr;
+	try {
+		ammoType = ammoTypes.byName(obj.GetString("ammoType"));
+	} catch (const NotFoundError& e) {
+		throw NotFoundError(ST::format("{}: {}", failContext, e.what()));
+	}
+	bool dontUseAsDefaultMagazine = obj.getOptionalBool("dontUseAsDefaultMagazine");
+	auto shortName = ItemModel::deserializeShortName(initData);
+	auto name = ItemModel::deserializeName(initData);
+	auto description = ItemModel::deserializeDescription(initData);
+	auto bobbyRaysName = ItemModel::deserializeShortName(initData);
+	auto bobbyRaysDescription = ItemModel::deserializeDescription(initData);
+
+	MagazineModel *mag = new MagazineModel(
+		itemIndex,
+		std::move(internalName),
+		std::move(shortName),
+		std::move(name),
+		std::move(description),
+		std::move(bobbyRaysName),
+		std::move(bobbyRaysDescription),
+		itemClass,
+		calibre,
+		capacity,
+		ammoType,
+		dontUseAsDefaultMagazine
+	);
+
+	mag->fFlags = ItemModel::deserializeFlags(obj);
+
+	const auto inventoryGraphics = InventoryGraphicsModel::deserialize(obj["inventoryGraphics"]);
+	const auto tileGraphic = TilesetTileIndexModel::deserialize(obj["tileGraphic"]);
+
+	mag->inventoryGraphics  = inventoryGraphics;
+	mag->tileGraphic = tileGraphic;
+	mag->ubWeight         = obj.GetInt("ubWeight");
+	mag->ubPerPocket      = obj.GetInt("ubPerPocket");
+	mag->usPrice          = obj.GetInt("usPrice");
+	mag->ubCoolness       = obj.GetInt("ubCoolness");
+
+	ST::string replacement = obj.getOptionalString("standardReplacement");
+	if (!replacement.empty())
+	{
+		mag->standardReplacement = replacement;
+	}
+
+	return std::unique_ptr<MagazineModel>(mag);
+}
+
+
+const ST::string & MagazineModel::getStandardReplacement() const
+{
+	return standardReplacement;
+}

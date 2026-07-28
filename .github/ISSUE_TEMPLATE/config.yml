@@ -1,0 +1,6 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Playtesting guide
+    url: https://github.com/reirao/escapefromarulco/blob/main/PLAYTESTING.md
+    about: Read the test checklist and feedback instructions first.
+
