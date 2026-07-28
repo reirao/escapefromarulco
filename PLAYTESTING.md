@@ -35,7 +35,8 @@ playtest in its own folder and point the launcher to the original game directory
 13. Double-click timber, stone, scrap and soil; verify the `SECT` stockpile increases.
 14. Dismantle a wooden door, fence or furniture object and loot its material output.
 15. Salvage stone/debris and right-click nearby grass or dirt to use `DIG`.
-16. Build all three upgrades in `SECT`; verify the workshop/depot bonuses affect yields.
+16. Build all three upgrades in `SECT`; verify the workshop/depot bonuses affect yields,
+    then click the built Field Shelter and verify the current team recovers.
 17. Carry a movable container and place it on another valid tile.
 18. Aim while panels are open and verify that they do not obstruct the shot.
 19. Save, reload and verify stockpile, upgrades, changed terrain and removed structures.
@@ -47,6 +48,8 @@ playtest in its own folder and point the launcher to the original game directory
     the destination remains separately marked.
 23. Shoot catalogued wood, stone and metal salvage/resource assets. Verify coloured
     impact chips, eventual destruction and material loot; ordinary walls must remain.
+24. Open a fresh container once by double-click and a second fresh container through
+    right-click `OPEN CONTENTS`; both paths must seed and display loot exactly once.
 
 ## Writing a useful report
 

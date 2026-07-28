@@ -1355,16 +1355,6 @@ void GetRTMousePositionInput(UIEventKind* const puiNewEvent)
 void TacticalViewPortTouchCallbackRT(MOUSE_REGION* region, UINT32 reason) {
 	static GridNo gLastUpGridNo = NOWHERE;
 	static SOLDIERTYPE* gLastDownUIFullTarget = NULL;
-	if (reason & MSYS_CALLBACK_REASON_MOVE) {
-		GridNo hoverGrid = guiCurrentCursorGridNo;
-		INT16 interactiveGrid = NOWHERE;
-		LEVELNODE* const node = GetCurInteractiveTileGridNo(&interactiveGrid);
-		if (node && interactiveGrid >= 0 && interactiveGrid < WORLD_MAX) {
-			hoverGrid = interactiveGrid;
-		}
-		OS0HoverWorldObject(gUIFullTarget, hoverGrid, gsInterfaceLevel,
-			node ? node->usIndex : NO_TILE, gusMouseXPos, gusMouseYPos);
-	}
 
 	if (reason & MSYS_CALLBACK_REASON_WHEEL_UP) {
 		OS0AdjustWorldZoom(1);

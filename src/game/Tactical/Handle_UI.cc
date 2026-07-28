@@ -59,6 +59,7 @@
 #include "Campaign_Types.h"
 #include "Queen_Command.h"
 #include "Options_Screen.h"
+#include "OS0_IngameUI.h"
 #include "SaveLoadScreen.h"
 #include "Spread_Burst.h"
 #include "AI.h"
@@ -637,6 +638,7 @@ void TacticalViewPortMovementCallback(MOUSE_REGION* region, UINT32 reason) {
 	}
 	// Update cursor state
 	if (reason & MSYS_CALLBACK_REASON_LOST_MOUSE) {
+		OS0ClearWorldHover();
 		gUIFingersDown = 0;
 		if (!IsPointerOnTacticalTouchUI()) {
 			if (gCurrentUIMode == PAN_MODE) {
@@ -650,6 +652,15 @@ void TacticalViewPortMovementCallback(MOUSE_REGION* region, UINT32 reason) {
 		}
 	} else if (reason & (MSYS_CALLBACK_REASON_MOVE | MSYS_CALLBACK_REASON_GAIN_MOUSE)) {
 		UpdateCurrentCursorTarget();
+		GridNo hoverGrid = guiCurrentCursorGridNo;
+		INT16 interactiveGrid = NOWHERE;
+		LEVELNODE* const node = GetCurInteractiveTileGridNo(&interactiveGrid);
+		if (node && interactiveGrid >= 0 && interactiveGrid < WORLD_MAX) {
+			hoverGrid = interactiveGrid;
+		}
+		OS0HoverWorldObject(gUIFullTarget, hoverGrid, gsInterfaceLevel,
+			node ? node->usIndex : NO_TILE,
+			region->MouseXPos, region->MouseYPos);
 	}
 }
 

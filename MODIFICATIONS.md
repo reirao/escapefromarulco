@@ -87,3 +87,15 @@ The code is experimental and does not represent an official JA2 Stracciatella re
 - Weapon impacts emit small material-coloured chips. Explicitly catalogued salvage
   and resource assets gain conservative gunfire durability and drop their material
   when destroyed; map-critical structures keep vanilla behavior.
+
+## v0.5.1-alpha wiring audit
+
+- Moved object-hover handling from the viewport button callback to JA2's actual
+  viewport movement callback and clear hover state when the pointer leaves the world.
+- Routed double-click, context-menu and persistent action-panel container opening
+  through the same seeding and inventory initialization path.
+- Removed a potential use-after-free in structure impacts by assigning OS0 resource
+  durability before vanilla structure damage can remove the target.
+- Made the Field Shelter's advertised recovery role functional.
+- Added `FEATURE_WIRING.md`, including explicit boundaries for metadata-only
+  blueprints, surface digging, early physics, JA2 1.13 and multiplayer.

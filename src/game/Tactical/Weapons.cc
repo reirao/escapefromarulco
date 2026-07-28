@@ -1636,9 +1636,15 @@ void StructureHit(BULLET* const pBullet, const UINT16 usStructureID, const INT32
 	// Get Structure pointer and damage it!
 	if ( usStructureID != INVALID_STRUCTURE_ID )
 	{
-		DamageStructure(pStructure, iImpact, STRUCTURE_DAMAGE_GUNFIRE, sGridNo, sXPos, sYPos, attacker);
-		OS0NotifyWorldAssetHit(sGridNo, pStructure,
-			static_cast<UINT8>(std::clamp<INT32>(iImpact, 1, 255)));
+		// OS//0 owns gunfire durability for explicitly salvageable/resource
+		// assets. Query it before vanilla damage can remove the structure and
+		// invalidate pStructure; map-critical geometry remains vanilla-owned.
+		if (!OS0NotifyWorldAssetHit(sGridNo, pStructure,
+			static_cast<UINT8>(std::clamp<INT32>(iImpact, 1, 255))))
+		{
+			DamageStructure(pStructure, iImpact, STRUCTURE_DAMAGE_GUNFIRE,
+				sGridNo, sXPos, sYPos, attacker);
+		}
 	}
 
 	switch(  GCM->getWeapon( usWeaponIndex )->ubWeaponClass )

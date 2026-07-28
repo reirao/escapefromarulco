@@ -470,7 +470,7 @@ namespace
 	constexpr UINT32 OS0_UPGRADE_DEPOT = 0x40000000u;
 	constexpr UINT8 OS0_CONTAINER_MARKER = 0xE0;
 	constexpr std::array<SectorUpgrade, 3> gSectorUpgrades{{
-		{ "FIELD SHELTER", "RECOVERY NODE", 8, 4, 0, 4, OS0_UPGRADE_SHELTER },
+		{ "FIELD SHELTER", "CLICK TO RECOVER TEAM", 8, 4, 0, 4, OS0_UPGRADE_SHELTER },
 		{ "SALVAGE WORKSHOP", "+1 SALVAGE YIELD", 4, 4, 8, 0, OS0_UPGRADE_WORKSHOP },
 		{ "SECURE DEPOT", "+1 CONTAINER MATERIAL", 6, 3, 6, 2, OS0_UPGRADE_DEPOT }
 	}};
@@ -616,6 +616,33 @@ namespace
 		RecordFeedbackEvent(ST::format("SECTOR UPGRADE {} {}",
 			gWorldSector.AsShortString(), upgrade.name));
 		return TRUE;
+	}
+
+	BOOLEAN RecoverTeamAtFieldShelter()
+	{
+		if (!HasUpgrade(gSectorUpgrades[0])) return FALSE;
+		BOOLEAN recovered = FALSE;
+		for (INT32 id = gTacticalStatus.Team[OUR_TEAM].bFirstID;
+			id <= gTacticalStatus.Team[OUR_TEAM].bLastID; ++id)
+		{
+			SOLDIERTYPE& soldier = GetMan(id);
+			if (!soldier.bActive || soldier.bLife <= 0 ||
+				soldier.sSector != gWorldSector || soldier.fBetweenSectors) continue;
+			soldier.bLife = soldier.bLifeMax;
+			soldier.bBleeding = 0;
+			soldier.bBreathMax = 100;
+			soldier.bBreath = 100;
+			soldier.sBreathRed = 0;
+			soldier.fMercCollapsedFlag = FALSE;
+			recovered = TRUE;
+		}
+		if (recovered)
+		{
+			fInterfacePanelDirty = DIRTYLEVEL2;
+			RecordFeedbackEvent(ST::format("FIELD SHELTER RECOVERY {}",
+				gWorldSector.AsShortString()));
+		}
+		return recovered;
 	}
 
 	const char* ContextActionName(ContextAction action)
@@ -2274,7 +2301,10 @@ namespace
 	{
 		if (!(reason & MSYS_CALLBACK_REASON_POINTER_UP)) return;
 		const size_t index = static_cast<size_t>(region->GetUserData<0>());
-		if (BuildSectorUpgrade(index))
+		const BOOLEAN changed = index == 0 && index < gSectorUpgrades.size() &&
+			HasUpgrade(gSectorUpgrades[index]) ?
+			RecoverTeamAtFieldShelter() : BuildSectorUpgrade(index);
+		if (changed)
 		{
 			fInterfacePanelDirty = DIRTYLEVEL2;
 			SetRenderFlags(RENDER_FLAG_FULL);
@@ -2521,9 +2551,16 @@ namespace
 				}
 				else
 				{
-					gContentsMode = ContentsMode::WORLD;
-					gLootVisible = IsInspectedWorldAssetNear();
-					gFloatingPanels[static_cast<size_t>(FloatingPanelId::OBJECT_INVENTORY)].visible = TRUE;
+					// Right-click, the persistent action panel and double-click
+					// must all use the same open path.  Merely exposing the panel
+					// skipped deterministic container seeding and made this entry
+					// appear empty while double-clicking the same crate worked.
+					const GridNo gridNo = gContextGridNo;
+					const UINT8 level = gContextLevel;
+					const UINT16 tileIndex = gContextTileIndex;
+					CloseContextMenu();
+					OS0OpenWorldContainer(gridNo, level, tileIndex);
+					return;
 				}
 				break;
 			case ContextAction::BUILD:
@@ -3449,7 +3486,8 @@ namespace
 			SetFontForeground(built ? FONT_MCOLOR_RED :
 				ready ? FONT_WHITE : FONT_MCOLOR_DKGRAY);
 			MPrint(panel.x + 13, y + 4,
-				ST::format("{} {}", built ? "[BUILT]" : "[BUILD]", upgrade.name));
+				ST::format("{} {}", built && i == 0 ? "[REST]" :
+					built ? "[BUILT]" : "[BUILD]", upgrade.name));
 			SetFontForeground(FONT_MCOLOR_LTGRAY);
 			MPrint(panel.x + 13, y + 14,
 				built ? upgrade.benefit : ST::format("W{} S{} R{} E{} / {}",
@@ -5079,6 +5117,16 @@ void OS0HoverWorldObject(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 	SetRenderFlags(RENDER_FLAG_FULL);
 }
 
+void OS0ClearWorldHover()
+{
+	if (gHoverVisible) SetRenderFlags(RENDER_FLAG_FULL);
+	gHoverVisible = FALSE;
+	gHoverCursorSoldier = nullptr;
+	gHoverCursorGridNo = NOWHERE;
+	gHoverCursorLevel = 0;
+	gHoverCursorTileIndex = NO_TILE;
+}
+
 void OS0OpenContextMenu(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 	UINT16 tileIndex, INT16 screenX, INT16 screenY)
 {
@@ -5619,12 +5667,12 @@ void OS0TalkingPanelClosed()
 }
 
 
-void OS0NotifyWorldAssetHit(GridNo gridNo, STRUCTURE* structure, UINT8 impact)
+BOOLEAN OS0NotifyWorldAssetHit(GridNo gridNo, STRUCTURE* structure, UINT8 impact)
 {
-	if (!gInitialized || !structure || gridNo < 0 || gridNo >= WORLD_MAX) return;
+	if (!gInitialized || !structure || gridNo < 0 || gridNo >= WORLD_MAX) return FALSE;
 	STRUCTURE* const base = FindBaseStructure(structure);
 	LEVELNODE* const node = base ? FindLevelNodeBasedOnStructure(base) : nullptr;
-	if (!base || !node || node->usIndex >= NUMBEROFTILES) return;
+	if (!base || !node || node->usIndex >= NUMBEROFTILES) return FALSE;
 	const UINT16 tileIndex = node->usIndex;
 	AssetMaterial material = InferAssetMaterial(base);
 	if (AssetCatalogRecord const* const catalog = FindAssetCatalogRecordConst(
@@ -5651,7 +5699,7 @@ void OS0NotifyWorldAssetHit(GridNo gridNo, STRUCTURE* structure, UINT8 impact)
 	// only to assets that are explicitly salvageable/resource-like, so ordinary
 	// walls and map-critical geometry retain the original JA2 behaviour.
 	SalvageProfile const profile = DescribeWorldAsset(gridNo, 0, tileIndex);
-	if (!profile.salvageable) return;
+	if (!profile.salvageable) return FALSE;
 	INT16 maximum = 90;
 	switch (material)
 	{
@@ -5677,7 +5725,7 @@ void OS0NotifyWorldAssetHit(GridNo gridNo, STRUCTURE* structure, UINT8 impact)
 		std::max<UINT8>(1, impact / 3));
 	RecordFeedbackEvent(ST::format("ASSET HIT grid {} tile {} hp {}/{}",
 		base->sGridNo, tileIndex, std::max<INT16>(0, state->remaining), maximum));
-	if (state->remaining > 0) return;
+	if (state->remaining > 0) return TRUE;
 
 	const GridNo baseGrid = base->sGridNo;
 	{
@@ -5693,4 +5741,5 @@ void OS0NotifyWorldAssetHit(GridNo gridNo, STRUCTURE* structure, UINT8 impact)
 	RecordFeedbackEvent(ST::format("ASSET DESTROYED grid {} / +{} {}",
 		baseGrid, std::max<UINT8>(1, profile.amount),
 		ResourceName(profile.resource)));
+	return TRUE;
 }

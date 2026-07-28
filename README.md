@@ -43,6 +43,8 @@ the original JA2 game data. Windows x64 and an existing JA2 installation are req
 - Built-in playtest feedback reports
 
 This is a systems prototype, not yet a balanced campaign.
+The exact implementation status and current boundaries are recorded in
+[FEATURE_WIRING.md](FEATURE_WIRING.md).
 
 ## Controls and feedback
 

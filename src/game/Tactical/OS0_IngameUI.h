@@ -26,6 +26,7 @@ void OS0OpenContextMenu(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 	UINT16 tileIndex, INT16 screenX, INT16 screenY);
 void OS0HoverWorldObject(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 	UINT16 tileIndex, INT16 screenX, INT16 screenY);
+void OS0ClearWorldHover();
 void OS0CycleCursorAction(SOLDIERTYPE* target, GridNo gridNo, UINT8 level, UINT16 tileIndex);
 void OS0CancelCursorAction();
 BOOLEAN OS0HandleCursorAction(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
@@ -42,4 +43,4 @@ void OS0TalkingPanelClosed();
 void OS0ExecuteCharacterQuickAction(SOLDIERTYPE* soldier,
 	OS0CharacterQuickAction action);
 UINT8 OS0GetGodMenuIcon();
-void OS0NotifyWorldAssetHit(GridNo gridNo, STRUCTURE* structure, UINT8 impact);
+BOOLEAN OS0NotifyWorldAssetHit(GridNo gridNo, STRUCTURE* structure, UINT8 impact);
