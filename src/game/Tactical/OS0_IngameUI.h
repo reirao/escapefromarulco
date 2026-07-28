@@ -1,14 +1,18 @@
-/*
- * Escape from Arulco modification notice:
- * Modified from JA2 Stracciatella, 2026-07-24 through 2026-07-28.
- * See /MODIFICATIONS.md and the SFI source-code license agreement.
- */
-
 #pragma once
 
 #include "JA2Types.h"
 
 struct SOLDIERTYPE;
+
+enum class OS0CharacterQuickAction : UINT8
+{
+	CHARACTER,
+	INVENTORY,
+	ICON_LIBRARY,
+	STEALTH,
+	WEAPON_MODE,
+	RELOAD
+};
 
 void InitializeOS0IngameUI();
 void ShutdownOS0IngameUI();
@@ -34,3 +38,6 @@ void OS0MapDisplayToWorldScreen(UINT16* x, UINT16* y);
 void OS0MapWorldToDisplayScreen(INT16* x, INT16* y);
 void OS0PlaceTalkingPanel(INT16 panelWidth, INT16 panelHeight, INT16* x, INT16* y);
 void OS0TalkingPanelClosed();
+void OS0ExecuteCharacterQuickAction(SOLDIERTYPE* soldier,
+	OS0CharacterQuickAction action);
+UINT8 OS0GetGodMenuIcon();

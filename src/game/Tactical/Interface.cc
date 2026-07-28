@@ -1,7 +1,7 @@
 /*
  * Escape from Arulco modification notice:
- * Modified from JA2 Stracciatella, 2026-07-24 through 2026-07-28.
- * See /MODIFICATIONS.md and the SFI source-code license agreement.
+ * Modified from JA2 Stracciatella on 2026-07-28.
+ * See MODIFICATIONS.md and the SFI source-code license agreement.
  */
 
 #include "Animation_Control.h"
@@ -66,6 +66,7 @@
 #include <string_theory/format>
 #include <string_theory/string>
 
+#include <array>
 #include <stdexcept>
 
 
@@ -77,6 +78,7 @@
 
 #define BUTTON_PANEL_WIDTH					78
 #define BUTTON_PANEL_HEIGHT					76
+#define OS0_BUTTON_PANEL_WIDTH				(BUTTON_PANEL_WIDTH * 2)
 
 
 BOOLEAN	gfInMovementMenu = FALSE;
@@ -141,6 +143,7 @@ enum
 
 	TOOLKITACTIONC_IMAGES,
 	WIRECUTACTIONC_IMAGES,
+	UNTRAP_DOOR_IMAGES,
 
 	NUM_ICON_IMAGES
 };
@@ -169,6 +172,12 @@ enum
 	USE_CROWBAR_ICON,
 
 	CANCEL_ICON,
+	OS0_CHARACTER_ICON,
+	OS0_INVENTORY_ICON,
+	OS0_LIBRARY_ICON,
+	OS0_STEALTH_ICON,
+	OS0_WEAPON_MODE_ICON,
+	OS0_RELOAD_ICON,
 	NUM_ICONS
 };
 
@@ -229,6 +238,7 @@ void InitializeTacticalInterface()
 	iIconImages[USE_KEY_IMAGES] = UseLoadedButtonImage(iIconImages[OPEN_DOOR_IMAGES ], -1, 3, 4, 5, -1 );
 	iIconImages[USE_KEYRING_IMAGES] = UseLoadedButtonImage(iIconImages[OPEN_DOOR_IMAGES ], -1, 6, 7, 8, -1 );
 	iIconImages[EXPLOSIVE_DOOR_IMAGES] = UseLoadedButtonImage(iIconImages[OPEN_DOOR_IMAGES ], -1, 15, 16, 17, -1 );
+	iIconImages[UNTRAP_DOOR_IMAGES] = UseLoadedButtonImage(iIconImages[OPEN_DOOR_IMAGES ], -1, 18, 19, 20, -1 );
 
 	// Load interface panels
 	guiDEAD         = AddVideoObjectFromFile(INTERFACEDIR "/p_dead.sti");
@@ -449,9 +459,9 @@ void PopupMovementMenu(UI_EVENT* const ev)
 	if (giMenuAnchorY < 0) giMenuAnchorY = 0;
 
 	// Check for boundaries
-	if (giMenuAnchorX > SCREEN_WIDTH - BUTTON_PANEL_WIDTH)
+	if (giMenuAnchorX > SCREEN_WIDTH - OS0_BUTTON_PANEL_WIDTH)
 	{
-		giMenuAnchorX = SCREEN_WIDTH - BUTTON_PANEL_WIDTH;
+		giMenuAnchorX = SCREEN_WIDTH - OS0_BUTTON_PANEL_WIDTH;
 	}
 	if (giMenuAnchorY > gsVIEWPORT_WINDOW_END_Y - BUTTON_PANEL_HEIGHT)
 	{
@@ -546,6 +556,34 @@ void PopupMovementMenu(UI_EVENT* const ev)
 	MakeButtonMove(CRAWL_ICON, CRAWL_IMAGES, x + 40, y + 40, ev, pTacticalPopupButtonStrings[CRAWL_ICON],
 			!IsValidStance(s, ANIM_PRONE));
 
+	// Escape from Arulco keeps JA2's proven long-hold movement menu and grows it
+	// horizontally.  The second frame contains character-facing OS0 actions;
+	// object actions deliberately remain in the short-click context menu.
+	const INT32 os0x = x + BUTTON_PANEL_WIDTH;
+	MakeButtonMove(OS0_CHARACTER_ICON, LOOK_IMAGES, os0x, y, ev,
+		"CHARACTER / RPG SHEET", false);
+	MakeButtonMove(OS0_INVENTORY_ICON, HAND_IMAGES, os0x + 20, y, ev,
+		"CHARACTER INVENTORY", is_vehicle || is_uncontrolled_robot);
+
+	const std::array<UINT8, 24> godImages{{
+		RUN_IMAGES, WALK_IMAGES, SNEAK_IMAGES, CRAWL_IMAGES, LOOK_IMAGES,
+		CANCEL_IMAGES, HAND_IMAGES, TALK_IMAGES, TARGETACTIONC_IMAGES,
+		KNIFEACTIONC_IMAGES, AIDACTIONC_IMAGES, PUNCHACTIONC_IMAGES,
+		BOMBACTIONC_IMAGES, TOOLKITACTIONC_IMAGES, WIRECUTACTIONC_IMAGES,
+		CROWBAR_DOOR_IMAGES, USE_KEY_IMAGES, USE_KEYRING_IMAGES,
+		OPEN_DOOR_IMAGES, EXAMINE_DOOR_IMAGES, EXPLOSIVE_DOOR_IMAGES,
+		UNTRAP_DOOR_IMAGES, LOCKPICK_DOOR_IMAGES, BOOT_DOOR_IMAGES
+	}};
+	MakeButtonMove(OS0_LIBRARY_ICON, godImages[OS0GetGodMenuIcon() % godImages.size()],
+		os0x + 40, y, ev, "GOD MODE / JA2 ICON LIBRARY", false);
+	MakeButtonMove(OS0_STEALTH_ICON, SNEAK_IMAGES, os0x, y + 20, ev,
+		s->bStealthMode ? "STEALTH / OFF" : "STEALTH / ON",
+		is_vehicle || is_robot);
+	MakeButtonMove(OS0_WEAPON_MODE_ICON, action_image, os0x + 20, y + 20, ev,
+		"CYCLE WEAPON MODE", is_epc || disable_action);
+	MakeButtonMove(OS0_RELOAD_ICON, OPEN_DOOR_IMAGES, os0x + 40, y + 20, ev,
+		"RELOAD HELD WEAPON", is_epc || !GCM->getItem(s->inv[HANDPOS].usItem)->isGun());
+
 	gfInMovementMenu  = TRUE;
 	gfIgnoreScrolling = TRUE;
 }
@@ -564,6 +602,12 @@ void PopDownMovementMenu( )
 		RemoveButton( iActionIcons[ TALK_ICON  ] );
 		RemoveButton( iActionIcons[ HAND_ICON  ] );
 		RemoveButton( iActionIcons[ CANCEL_ICON  ] );
+		RemoveButton( iActionIcons[ OS0_CHARACTER_ICON ] );
+		RemoveButton( iActionIcons[ OS0_INVENTORY_ICON ] );
+		RemoveButton( iActionIcons[ OS0_LIBRARY_ICON ] );
+		RemoveButton( iActionIcons[ OS0_STEALTH_ICON ] );
+		RemoveButton( iActionIcons[ OS0_WEAPON_MODE_ICON ] );
+		RemoveButton( iActionIcons[ OS0_RELOAD_ICON ] );
 
 		// Turn off Ignore scrolling
 		gfIgnoreScrolling = FALSE;
@@ -585,6 +629,8 @@ void RenderMovementMenu( )
 	if ( gfInMovementMenu )
 	{
 		BltVideoObject(FRAME_BUFFER, guiBUTTONBORDER, 0, giMenuAnchorX, giMenuAnchorY);
+		BltVideoObject(FRAME_BUFFER, guiBUTTONBORDER, 0,
+			giMenuAnchorX + BUTTON_PANEL_WIDTH, giMenuAnchorY);
 
 		// Mark buttons dirty!
 		MarkAButtonDirty( iActionIcons[ WALK_ICON  ] );
@@ -596,8 +642,14 @@ void RenderMovementMenu( )
 		MarkAButtonDirty( iActionIcons[ TALK_ICON  ] );
 		MarkAButtonDirty( iActionIcons[ HAND_ICON  ] );
 		MarkAButtonDirty( iActionIcons[ CANCEL_ICON  ] );
+		MarkAButtonDirty( iActionIcons[ OS0_CHARACTER_ICON ] );
+		MarkAButtonDirty( iActionIcons[ OS0_INVENTORY_ICON ] );
+		MarkAButtonDirty( iActionIcons[ OS0_LIBRARY_ICON ] );
+		MarkAButtonDirty( iActionIcons[ OS0_STEALTH_ICON ] );
+		MarkAButtonDirty( iActionIcons[ OS0_WEAPON_MODE_ICON ] );
+		MarkAButtonDirty( iActionIcons[ OS0_RELOAD_ICON ] );
 
-		InvalidateRegion(giMenuAnchorX, giMenuAnchorY, giMenuAnchorX + BUTTON_PANEL_WIDTH,
+		InvalidateRegion(giMenuAnchorX, giMenuAnchorY, giMenuAnchorX + OS0_BUTTON_PANEL_WIDTH,
 					giMenuAnchorY + BUTTON_PANEL_HEIGHT);
 
 	}
@@ -656,6 +708,31 @@ static void BtnMovementCallback(GUI_BUTTON* btn, UINT32 reason)
 			// Signal end of event
 			EndMenuEvent( U_MOVEMENT_MENU );
 			pUIEvent->uiParams[1] = FALSE;
+			return;
+		}
+		else if (btn == iActionIcons[OS0_CHARACTER_ICON] ||
+			btn == iActionIcons[OS0_INVENTORY_ICON] ||
+			btn == iActionIcons[OS0_LIBRARY_ICON] ||
+			btn == iActionIcons[OS0_STEALTH_ICON] ||
+			btn == iActionIcons[OS0_WEAPON_MODE_ICON] ||
+			btn == iActionIcons[OS0_RELOAD_ICON])
+		{
+			OS0CharacterQuickAction action = OS0CharacterQuickAction::CHARACTER;
+			if (btn == iActionIcons[OS0_INVENTORY_ICON])
+				action = OS0CharacterQuickAction::INVENTORY;
+			else if (btn == iActionIcons[OS0_LIBRARY_ICON])
+				action = OS0CharacterQuickAction::ICON_LIBRARY;
+			else if (btn == iActionIcons[OS0_STEALTH_ICON])
+				action = OS0CharacterQuickAction::STEALTH;
+			else if (btn == iActionIcons[OS0_WEAPON_MODE_ICON])
+				action = OS0CharacterQuickAction::WEAPON_MODE;
+			else if (btn == iActionIcons[OS0_RELOAD_ICON])
+				action = OS0CharacterQuickAction::RELOAD;
+
+			SOLDIERTYPE* const soldier = GetSelectedMan();
+			EndMenuEvent(U_MOVEMENT_MENU);
+			pUIEvent->uiParams[1] = FALSE;
+			OS0ExecuteCharacterQuickAction(soldier, action);
 			return;
 		}
 		else

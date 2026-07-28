@@ -8,8 +8,8 @@ An experimental, non-commercial rework of *Jagged Alliance 2* built on
 
 ## Download and play
 
-1. Open the [v0.2.0-alpha release](https://github.com/reirao/escapefromarulco/releases/tag/v0.2.0-alpha).
-2. Download `Escape-from-Arulco-Playtest-v0.2.0-alpha.zip`.
+1. Open the [v0.3.0-alpha release](https://github.com/reirao/escapefromarulco/releases/tag/v0.3.0-alpha).
+2. Download `Escape-from-Arulco-Playtest-v0.3.0-alpha.zip`.
 3. Extract the complete ZIP into a writable folder.
 4. Run `START_PLAYTEST.cmd`.
 5. In the launcher, select your own legally installed JA2 or JA2 Gold directory.
@@ -26,6 +26,8 @@ the original JA2 game data. Windows x64 and an existing JA2 installation are req
 - Movable OS0 windows for character, context, tools, actions and object inventory
 - Character and container inventories with item drag and drop
 - Context-sensitive object, weapon, loot and stance actions
+- Extended graphical JA2 long-hold menu for character, inventory and combat actions
+- In-game God-mode atlas containing 24 reusable JA2 interface symbols
 - Movable world structures and early material/physics properties
 - Material-aware doors, furniture, fences, stone, debris and resource objects
 - Persistent container seeding with useful loot and recoverable materials
@@ -39,6 +41,8 @@ This is a systems prototype, not yet a balanced campaign.
 ## Controls and feedback
 
 - **Right click:** context menu for the object or terrain under the cursor
+- **Hold right click:** graphical character/movement menu; the second frame contains
+  character, inventory, icon library, stealth, weapon mode and reload
 - **Middle click:** cycle the current cursor action
 - **Double click:** open a character, container or world object
 - **SECT:** open the current sector stockpile and upgrade window

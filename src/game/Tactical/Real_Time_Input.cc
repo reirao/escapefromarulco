@@ -1,7 +1,7 @@
 /*
  * Escape from Arulco modification notice:
- * Modified from JA2 Stracciatella, 2026-07-24 through 2026-07-28.
- * See /MODIFICATIONS.md and the SFI source-code license agreement.
+ * Modified from JA2 Stracciatella on 2026-07-28.
+ * See MODIFICATIONS.md and the SFI source-code license agreement.
  */
 
 #include "Font_Control.h"
@@ -901,7 +901,11 @@ static void QueryRTRightButton(UIEventKind* const puiNewEvent)
 									guiUIFullTargetFlags & VISIBLE_MERC &&
 									!(guiUIFullTargetFlags & DEAD_MERC))
 								{
-									PopupAssignmentMenuInTactical();
+									// Escape from Arulco: the long-hold gesture owns one
+									// consistent graphical character command surface.
+									SelectSoldier(const_cast<SOLDIERTYPE*>(tgt),
+										SELSOLDIER_FROM_UI);
+									*puiNewEvent = U_MOVEMENT_MENU;
 									fClickHoldIntercepted = TRUE;
 								}
 								else if (GetSelectedMan() != NULL)

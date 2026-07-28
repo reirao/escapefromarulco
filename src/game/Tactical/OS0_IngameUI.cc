@@ -1,7 +1,7 @@
 /*
  * Escape from Arulco modification notice:
  * Modified from JA2 Stracciatella, 2026-07-24 through 2026-07-28.
- * See /MODIFICATIONS.md and the SFI source-code license agreement.
+ * See MODIFICATIONS.md and the SFI source-code license agreement.
  */
 
 #include "OS0_IngameUI.h"
@@ -86,6 +86,8 @@ namespace
 	constexpr INT16 FEEDBACK_PANEL_H = 220;
 	constexpr INT16 SECTOR_PANEL_W = 260;
 	constexpr INT16 SECTOR_PANEL_H = 154;
+	constexpr INT16 GOD_LIBRARY_W = 234;
+	constexpr INT16 GOD_LIBRARY_H = 112;
 	constexpr size_t PANEL_DOCK_COUNT = 7;
 
 	enum class ResourceKind : UINT8
@@ -273,6 +275,10 @@ namespace
 	BOOLEAN gWorldMoveSourceShaded = FALSE;
 	UINT8 gWorldZoom = 1;
 	UINT8 gCursorAction = 0;
+	BOOLEAN gGodLibraryVisible = FALSE;
+	UINT8 gGodMenuIcon = 0;
+	INT16 gGodLibraryX = 0;
+	INT16 gGodLibraryY = 0;
 	SGPVSurface* gWorldZoomBuffer = nullptr;
 	std::array<FloatingPanel, static_cast<size_t>(FloatingPanelId::COUNT)> gFloatingPanels{{
 		{ 8, 36, CONTEXT_PANEL_W, CONTEXT_PANEL_H, FALSE, FALSE, FALSE },
@@ -288,11 +294,17 @@ namespace
 	void OutlineBox(INT16 x, INT16 y, INT16 w, INT16 h, UINT16 colour);
 	void ContextActionCallback(MOUSE_REGION* region, UINT32 reason);
 	void OperationsActionCallback(MOUSE_REGION* region, UINT32 reason);
+	void GodIconCallback(MOUSE_REGION* region, UINT32 reason);
 	void RecordFeedbackEvent(const ST::string& event);
 	BOOLEAN TutorialKeyboardHook(InputAtom* event);
 
 	SGPVObject* gPortrait = nullptr;
 	SGPVSurface* gInspectorPreview = nullptr;
+	SGPVObject* gGodNewIcons = nullptr;
+	SGPVObject* gGodDoorIcons = nullptr;
+	SGPVObject* gGodButtonFrame = nullptr;
+	MOUSE_REGION gGodLibraryBlock;
+	std::array<MOUSE_REGION, 25> gGodIconRegions;
 	MOUSE_REGION gContextBlock;
 	ProfileID gPortraitProfile = NO_PROFILE;
 	MOUSE_REGION gBagBlock;
@@ -344,6 +356,13 @@ namespace
 
 	constexpr std::array<const char*, 5> gFeedbackCategories{{
 		"BUG", "CONTROLS", "VISUAL", "IDEA", "CRASH / STABILITY"
+	}};
+
+	constexpr std::array<const char*, 24> gGodIconNames{{
+		"RUN", "WALK", "CROUCH", "PRONE", "LOOK", "CANCEL",
+		"HAND / LOOT", "TALK", "TARGET", "KNIFE", "FIRST AID", "PUNCH",
+		"EXPLOSIVE", "TOOLKIT", "WIRE CUTTER", "CROWBAR", "KEY",
+		"KEYRING", "OPEN", "EXAMINE", "BREACH", "DISARM", "LOCKPICK", "BOOT"
 	}};
 
 	constexpr UINT8 RESOURCE_BITS = 5;
@@ -1358,6 +1377,9 @@ namespace
 		// Keep close control active as long as the panel is visible.
 		setVisible(gBagClose, gBagVisible);
 		setVisible(gContextBlock, gContextVisible);
+		setVisible(gGodLibraryBlock, gGodLibraryVisible);
+		for (MOUSE_REGION& r : gGodIconRegions)
+			setVisible(r, gGodLibraryVisible);
 		const BOOLEAN showContentInventory = gBagVisible && !gContextVisible;
 		const FloatingPanel& objectPanel =
 			gFloatingPanels[static_cast<size_t>(FloatingPanelId::OBJECT_INVENTORY)];
@@ -1507,6 +1529,21 @@ namespace
 			MoveRegion(gFloatingPanelGrabbers[i], panel.x, panel.y);
 			gFloatingPanelGrabbers[i].RegionBottomRightX = panel.x + panel.w;
 			MoveRegion(gFloatingPanelCloses[i], panel.x + panel.w - 16, panel.y + 1);
+		}
+		MoveRegion(gGodLibraryBlock, gGodLibraryX, gGodLibraryY);
+		gGodLibraryBlock.RegionBottomRightX = gGodLibraryX + GOD_LIBRARY_W;
+		gGodLibraryBlock.RegionBottomRightY = gGodLibraryY + GOD_LIBRARY_H;
+		for (size_t i = 0; i < gGodIconRegions.size(); ++i)
+		{
+			// 24 selectable symbols fill the first eight cells of each JA2
+			// 3x3 frame.  The final region occupies the last cell as CLOSE.
+			const size_t cell = i < 24 ?
+				(i / 8) * 9 + (i % 8) : 26;
+			const INT16 frame = static_cast<INT16>(cell / 9);
+			const INT16 local = static_cast<INT16>(cell % 9);
+			MoveRegion(gGodIconRegions[i],
+				gGodLibraryX + frame * 78 + 9 + (local % 3) * 20,
+				gGodLibraryY + 25 + (local / 3) * 20);
 		}
 		for (size_t i = 0; i < gPanelDockRegions.size(); ++i)
 		{
@@ -3539,6 +3576,75 @@ namespace
 				gusMouseXPos + 13, gusMouseYPos + 13);
 		}
 	}
+
+	void GodIconCallback(MOUSE_REGION* region, UINT32 reason)
+	{
+		if (!(reason & MSYS_CALLBACK_REASON_POINTER_UP) || !gGodLibraryVisible)
+			return;
+		const size_t index = static_cast<size_t>(region->GetUserData<0>());
+		if (index < gGodIconNames.size())
+		{
+			gGodMenuIcon = static_cast<UINT8>(index);
+			RecordFeedbackEvent(ST::format("GOD ICON {} / {}",
+				index, gGodIconNames[index]));
+		}
+		gGodLibraryVisible = FALSE;
+		SetBagRegionsEnabled(TRUE);
+		SetRenderFlags(RENDER_FLAG_FULL);
+	}
+
+	void DrawGodIconLibrary()
+	{
+		if (!gGodLibraryVisible || !gGodNewIcons || !gGodDoorIcons ||
+			!gGodButtonFrame) return;
+
+		const UINT16 red = Get16BPPColor(FROMRGB(205, 12, 12));
+		const UINT16 dark = Get16BPPColor(FROMRGB(4, 7, 7));
+		ColorFillVideoSurfaceArea(FRAME_BUFFER, gGodLibraryX, gGodLibraryY,
+			gGodLibraryX + GOD_LIBRARY_W - 1, gGodLibraryY + GOD_LIBRARY_H - 1,
+			dark);
+		OutlineBox(gGodLibraryX, gGodLibraryY, GOD_LIBRARY_W, GOD_LIBRARY_H, red);
+		SetFont(TINYFONT1);
+		SetFontBackground(FONT_MCOLOR_BLACK);
+		SetFontForeground(FONT_MCOLOR_RED);
+		MPrint(gGodLibraryX + 6, gGodLibraryY + 5,
+			"GOD MODE / JA2 ICON LIBRARY");
+
+		for (INT16 frame = 0; frame < 3; ++frame)
+			BltVideoObject(FRAME_BUFFER, gGodButtonFrame, 0,
+				gGodLibraryX + frame * 78, gGodLibraryY + 17);
+
+		for (size_t i = 0; i < gGodIconNames.size(); ++i)
+		{
+			const size_t cell = (i / 8) * 9 + (i % 8);
+			const INT16 frame = static_cast<INT16>(cell / 9);
+			const INT16 local = static_cast<INT16>(cell % 9);
+			const INT16 x = gGodLibraryX + frame * 78 + 9 + (local % 3) * 20;
+			const INT16 y = gGodLibraryY + 25 + (local / 3) * 20;
+			if (i < 15)
+				BltVideoObject(FRAME_BUFFER, gGodNewIcons,
+					static_cast<UINT16>(i * 3), x, y);
+			else
+			{
+				constexpr std::array<UINT16, 9> doorFrames{{
+					0, 3, 6, 9, 12, 15, 18, 21, 25
+				}};
+				BltVideoObject(FRAME_BUFFER, gGodDoorIcons,
+					doorFrames[i - 15], x, y);
+			}
+			if (i == gGodMenuIcon) OutlineBox(x - 1, y - 1, 20, 20, red);
+		}
+
+		// The original cancel glyph closes the atlas without changing selection.
+		BltVideoObject(FRAME_BUFFER, gGodNewIcons, 15,
+			gGodLibraryX + 2 * 78 + 49, gGodLibraryY + 65);
+		SetFontForeground(FONT_WHITE);
+		MPrint(gGodLibraryX + 7, gGodLibraryY + 98,
+			ST::format("SELECTED {} / {}", gGodMenuIcon,
+				gGodIconNames[gGodMenuIcon]).left(36));
+		InvalidateRegion(gGodLibraryX, gGodLibraryY,
+			gGodLibraryX + GOD_LIBRARY_W, gGodLibraryY + GOD_LIBRARY_H);
+	}
 }
 
 
@@ -3574,6 +3680,13 @@ void InitializeOS0IngameUI()
 	gLootY = gFloatingPanels[static_cast<size_t>(FloatingPanelId::OBJECT_INVENTORY)].y;
 	gOrbX = 8;
 	gOrbY = std::max<INT16>(0, gsVIEWPORT_END_Y - 34);
+	gGodLibraryX = std::max<INT16>(0,
+		(gsVIEWPORT_END_X - GOD_LIBRARY_W) / 2);
+	gGodLibraryY = std::max<INT16>(4,
+		(gsVIEWPORT_WINDOW_END_Y - GOD_LIBRARY_H) / 2);
+	gGodNewIcons = AddVideoObjectFromFile(INTERFACEDIR "/newicons3.sti");
+	gGodDoorIcons = AddVideoObjectFromFile(INTERFACEDIR "/door_op2.sti");
+	gGodButtonFrame = AddVideoObjectFromFile(INTERFACEDIR "/button_frame.sti");
 
 	MSYS_DefineRegion(&gBagBlock, 0, 0, PANE_W, BAG_H,
 		MSYS_PRIORITY_HIGH, CURSOR_NORMAL, MSYS_NO_CALLBACK, BagBlockCallback);
@@ -3583,6 +3696,16 @@ void InitializeOS0IngameUI()
 		MSYS_PRIORITY_HIGHEST, CURSOR_NORMAL, MSYS_NO_CALLBACK, BagCloseCallback);
 	MSYS_DefineRegion(&gContextBlock, 0, 0, 168, 200,
 		MSYS_PRIORITY_HIGH, CURSOR_NORMAL, MSYS_NO_CALLBACK, BagBlockCallback);
+	MSYS_DefineRegion(&gGodLibraryBlock, 0, 0, GOD_LIBRARY_W, GOD_LIBRARY_H,
+		MSYS_PRIORITY_HIGH, CURSOR_NORMAL, MSYS_NO_CALLBACK, BagBlockCallback);
+	for (size_t i = 0; i < gGodIconRegions.size(); ++i)
+	{
+		MSYS_DefineRegion(&gGodIconRegions[i], 0, 0, 20, 20,
+			MSYS_PRIORITY_HIGHEST, CURSOR_NORMAL, MSYS_NO_CALLBACK,
+			GodIconCallback);
+		gGodIconRegions[i].SetUserData<0>(i);
+		gGodIconRegions[i].Disable();
+	}
 	for (size_t i = 0; i < gContextRegions.size(); ++i)
 	{
 		MSYS_DefineRegion(&gContextRegions[i], 0, 0, 160, 17,
@@ -3712,6 +3835,8 @@ void ShutdownOS0IngameUI()
 	MSYS_RemoveRegion(&gBagGrabber);
 	MSYS_RemoveRegion(&gBagClose);
 	MSYS_RemoveRegion(&gContextBlock);
+	MSYS_RemoveRegion(&gGodLibraryBlock);
+	for (MOUSE_REGION& r : gGodIconRegions) MSYS_RemoveRegion(&r);
 	for (MOUSE_REGION& r : gContextRegions) MSYS_RemoveRegion(&r);
 	for (MOUSE_REGION& r : gFloatingPanelBlocks) MSYS_RemoveRegion(&r);
 	for (MOUSE_REGION& r : gFloatingPanelGrabbers) MSYS_RemoveRegion(&r);
@@ -3734,6 +3859,21 @@ void ShutdownOS0IngameUI()
 		DeleteVideoObject(gPortrait);
 		gPortrait = nullptr;
 		gPortraitProfile = NO_PROFILE;
+	}
+	if (gGodNewIcons)
+	{
+		DeleteVideoObject(gGodNewIcons);
+		gGodNewIcons = nullptr;
+	}
+	if (gGodDoorIcons)
+	{
+		DeleteVideoObject(gGodDoorIcons);
+		gGodDoorIcons = nullptr;
+	}
+	if (gGodButtonFrame)
+	{
+		DeleteVideoObject(gGodButtonFrame);
+		gGodButtonFrame = nullptr;
 	}
 	if (gWorldZoomBuffer)
 	{
@@ -3762,6 +3902,7 @@ void ShutdownOS0IngameUI()
 	gBagVisibleBeforeAim = FALSE;
 	gFieldToolIssued = FALSE;
 	gContentsMode = ContentsMode::SOLDIER;
+	gGodLibraryVisible = FALSE;
 	gInitialized = FALSE;
 }
 
@@ -3860,13 +4001,14 @@ void RenderOS0IngameUI()
 	DrawHoverInspector();
 	DrawContextMenu();
 	DrawFeedbackPanel();
+	DrawGodIconLibrary();
 
 	// The tactical renderer uses dirty rectangles. A full refresh while moving
 	// prevents the "hall of mirrors" trails visible in the previous prototype.
 	BOOLEAN floatingPanelDragging = FALSE;
 	for (FloatingPanel const& panel : gFloatingPanels)
 		floatingPanelDragging |= panel.dragging;
-	if (gContextVisible || gHoverVisible || gBagDragging || floatingPanelDragging ||
+	if (gContextVisible || gHoverVisible || gGodLibraryVisible || gBagDragging || floatingPanelDragging ||
 		gOrbDragging || gWorldMovePending ||
 		gWorldMoveWalking)
 		SetRenderFlags(RENDER_FLAG_FULL);
@@ -3897,6 +4039,63 @@ void OS0OpenCharacterPanel(SOLDIERTYPE* soldier)
 	gPanelInteractionGuardUntil = GetJA2Clock() + 140;
 	SetBagRegionsEnabled(TRUE);
 	SetRenderFlags(RENDER_FLAG_FULL);
+}
+
+
+void OS0ExecuteCharacterQuickAction(SOLDIERTYPE* soldier,
+	OS0CharacterQuickAction action)
+{
+	if (action == OS0CharacterQuickAction::ICON_LIBRARY)
+	{
+		CloseContextMenu();
+		gGodLibraryVisible = TRUE;
+		PositionBagRegions();
+		SetBagRegionsEnabled(TRUE);
+		SetRenderFlags(RENDER_FLAG_FULL);
+		return;
+	}
+	if (!soldier || soldier->bTeam != OUR_TEAM) return;
+
+	switch (action)
+	{
+		case OS0CharacterQuickAction::CHARACTER:
+			CloseContextMenu();
+			gInspectedSoldier = soldier;
+			gInventorySoldier = soldier;
+			gInspectedGridNo = NOWHERE;
+			gContentsMode = ContentsMode::SOLDIER;
+			gMode = ComputerMode::INFO;
+			gFloatingPanels[static_cast<size_t>(FloatingPanelId::CONTEXT)].visible = TRUE;
+			gFloatingPanels[static_cast<size_t>(FloatingPanelId::ACTIONS)].visible = TRUE;
+			RefreshPanelActions();
+			break;
+		case OS0CharacterQuickAction::INVENTORY:
+			OS0OpenCharacterPanel(soldier);
+			return;
+		case OS0CharacterQuickAction::STEALTH:
+			soldier->bStealthMode = !soldier->bStealthMode;
+			break;
+		case OS0CharacterQuickAction::WEAPON_MODE:
+			if (soldier->inv[HANDPOS].usItem != NOTHING &&
+				GCM->getItem(soldier->inv[HANDPOS].usItem)->isGun())
+				ChangeWeaponMode(soldier);
+			break;
+		case OS0CharacterQuickAction::RELOAD:
+			if (soldier->inv[HANDPOS].usItem != NOTHING &&
+				GCM->getItem(soldier->inv[HANDPOS].usItem)->isGun())
+				AutoReload(soldier);
+			break;
+		case OS0CharacterQuickAction::ICON_LIBRARY:
+			break;
+	}
+	SetBagRegionsEnabled(TRUE);
+	SetRenderFlags(RENDER_FLAG_FULL);
+}
+
+
+UINT8 OS0GetGodMenuIcon()
+{
+	return gGodMenuIcon;
 }
 
 BOOLEAN OS0SelectWorldObject(SOLDIERTYPE* target, GridNo gridNo,

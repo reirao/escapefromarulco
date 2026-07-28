@@ -1,7 +1,7 @@
 /*
  * Escape from Arulco modification notice:
- * Modified from JA2 Stracciatella, 2026-07-24 through 2026-07-28.
- * See /MODIFICATIONS.md and the SFI source-code license agreement.
+ * Modified from JA2 Stracciatella on 2026-07-28.
+ * See MODIFICATIONS.md and the SFI source-code license agreement.
  */
 
 #include "Handle_Items.h"
@@ -621,11 +621,10 @@ static void QueryTBRightButton(UIEventKind* const puiNewEvent)
 									const SOLDIERTYPE* const tgt = gUIFullTarget;
 									if (tgt != NULL && gpItemPointer == NULL && !(tgt->uiStatusFlags & SOLDIER_VEHICLE))
 									{
-										//if (tgt->bAssignment >= ON_DUTY)
-										{
-											PopupAssignmentMenuInTactical();
-											fClickHoldIntercepted = TRUE;
-										}
+										SelectSoldier(const_cast<SOLDIERTYPE*>(tgt),
+											SELSOLDIER_FROM_UI);
+										*puiNewEvent = U_MOVEMENT_MENU;
+										fClickHoldIntercepted = TRUE;
 									}
 								}
 

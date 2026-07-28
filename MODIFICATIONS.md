@@ -46,3 +46,14 @@ The code is experimental and does not represent an official JA2 Stracciatella re
 - Double-clicking a material in object inventory deposits it into the current sector.
 - The new `SECT` panel builds a Field Shelter, Salvage Workshop and Secure Depot. Stockpile
   counts and completed upgrades are stored in the sector information saved by JA2.
+
+## v0.3.0-alpha graphical command surface
+
+- Replaced the tactical assignment popup on merc right-button long-hold with one
+  consistent, graphical character command surface based on JA2's original 3x3 menu.
+- The original movement, stance, look, talk, hand and action buttons remain intact.
+- A second in-game frame adds character sheet, inventory, stealth, weapon mode,
+  reload and God-mode icon-library actions.
+- Long-holding over another owned merc now selects that merc before opening the menu.
+- Added an in-game atlas of the 24 reusable action and door symbols contained in
+  JA2's `newicons3.sti` and `door_op2.sti`; the selected symbol becomes the God button.
