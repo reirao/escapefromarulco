@@ -655,11 +655,15 @@ void TacticalViewPortMovementCallback(MOUSE_REGION* region, UINT32 reason) {
 		GridNo hoverGrid = guiCurrentCursorGridNo;
 		INT16 interactiveGrid = NOWHERE;
 		LEVELNODE* const node = GetCurInteractiveTileGridNo(&interactiveGrid);
+		UINT16 hoverTile = node ? node->usIndex : NO_TILE;
 		if (node && interactiveGrid >= 0 && interactiveGrid < WORLD_MAX) {
 			hoverGrid = interactiveGrid;
+		} else {
+			FindOS0WorldAssetAtScreen(&hoverGrid, gsInterfaceLevel, &hoverTile,
+				region->MouseXPos, region->MouseYPos);
 		}
 		OS0HoverWorldObject(gUIFullTarget, hoverGrid, gsInterfaceLevel,
-			node ? node->usIndex : NO_TILE,
+			hoverTile,
 			region->MouseXPos, region->MouseYPos);
 	}
 }

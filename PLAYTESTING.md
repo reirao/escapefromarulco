@@ -10,6 +10,9 @@ useful than a general statement that something did not work.
 - The ZIP from the latest GitHub release, fully extracted
 - Windowed mode recommended
 
+The packaged launcher includes its own FLTK and image-codec DLLs. Windows, the GPU
+driver and MSYS2 are not expected to provide `libfltk-1.4.dll` or related files.
+
 Never copy the playtest files over the original JA2 installation. Keep the extracted
 playtest in its own folder and point the launcher to the original game directory.
 
@@ -58,6 +61,9 @@ playtest in its own folder and point the launcher to the original game directory
     sectors, then select and center an operator from the team list without leaving play.
 28. At 2x zoom, scroll to all four map limits and verify the true edge is visible and
     world interaction remains aligned with the cursor.
+29. Hover and click across the full visible silhouettes of a large wreck, tree, debris
+    heap and multi-tile structure. The same object must remain identified on every
+    opaque section; transparent gaps should continue to select the world behind it.
 
 ## Writing a useful report
 

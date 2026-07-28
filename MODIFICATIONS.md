@@ -132,3 +132,9 @@ The code is experimental and does not represent an official JA2 Stracciatella re
   view showing condition, stack count, ammunition and installed attachments.
 - Zoom cropping now follows the map edge reached by JA2's camera, allowing the actual
   left, right, top and bottom boundaries to become visible at 2x zoom.
+- Added opaque-pixel scenery hit-testing across neighbouring object and structure
+  layers. Large wrecks, debris, trees and multi-cell props can now be targeted on the
+  visible part of their sprite instead of only on their hidden anchor cell.
+- Corrected the Windows playtest manifest: the dynamically linked launcher requires
+  FLTK, PNG, JPEG and zlib runtime DLLs. They are now bundled beside the executable;
+  they are not Windows or graphics-driver components.

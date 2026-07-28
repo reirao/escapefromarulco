@@ -1355,6 +1355,18 @@ void GetRTMousePositionInput(UIEventKind* const puiNewEvent)
 void TacticalViewPortTouchCallbackRT(MOUSE_REGION* region, UINT32 reason) {
 	static GridNo gLastUpGridNo = NOWHERE;
 	static SOLDIERTYPE* gLastDownUIFullTarget = NULL;
+	auto resolveOS0WorldTarget = [](GridNo& grid)
+	{
+		INT16 interactiveGrid = NOWHERE;
+		LEVELNODE* const node = GetCurInteractiveTileGridNo(&interactiveGrid);
+		UINT16 tile = node ? node->usIndex : NO_TILE;
+		if (node && interactiveGrid >= 0 && interactiveGrid < WORLD_MAX)
+			grid = interactiveGrid;
+		else
+			FindOS0WorldAssetAtScreen(&grid, gsInterfaceLevel, &tile,
+				gusMouseXPos, gusMouseYPos);
+		return tile;
+	};
 
 	if (reason & MSYS_CALLBACK_REASON_WHEEL_UP) {
 		OS0AdjustWorldZoom(1);
@@ -1376,13 +1388,8 @@ void TacticalViewPortTouchCallbackRT(MOUSE_REGION* region, UINT32 reason) {
 		if (gUIFullTarget) OS0OpenCharacterPanel(gUIFullTarget);
 		else {
 			GridNo containerGrid = guiCurrentCursorGridNo;
-			INT16 interactiveGrid = NOWHERE;
-			LEVELNODE* const node = GetCurInteractiveTileGridNo(&interactiveGrid);
-			if (node && interactiveGrid >= 0 && interactiveGrid < WORLD_MAX) {
-				containerGrid = interactiveGrid;
-			}
-			OS0ActivateWorldObject(containerGrid, gsInterfaceLevel,
-				node ? node->usIndex : NO_TILE);
+			const UINT16 tile = resolveOS0WorldTarget(containerGrid);
+			OS0ActivateWorldObject(containerGrid, gsInterfaceLevel, tile);
 		}
 		return;
 	}
@@ -1392,38 +1399,26 @@ void TacticalViewPortTouchCallbackRT(MOUSE_REGION* region, UINT32 reason) {
 	}
 	if (reason & MSYS_CALLBACK_REASON_LBUTTON_UP) {
 		GridNo environmentGrid = guiCurrentCursorGridNo;
-		INT16 interactiveGrid = NOWHERE;
-		LEVELNODE* const node = GetCurInteractiveTileGridNo(&interactiveGrid);
-		if (node && interactiveGrid >= 0 && interactiveGrid < WORLD_MAX) {
-			environmentGrid = interactiveGrid;
-		}
+		const UINT16 tile = resolveOS0WorldTarget(environmentGrid);
 		if (OS0HandleCursorAction(gUIFullTarget, environmentGrid, gsInterfaceLevel,
-			node ? node->usIndex : NO_TILE)) {
+			tile)) {
 			return;
 		}
 		// Selection updates the inspector, but MOVE mode remains owned by JA2.
 		// This keeps ordinary walking possible across interactive scenery.
 		OS0SelectWorldObject(gUIFullTarget, environmentGrid, gsInterfaceLevel,
-			node ? node->usIndex : NO_TILE);
+			tile);
 	}
 	if (reason & MSYS_CALLBACK_REASON_RBUTTON_UP) {
 		GridNo contextGrid = guiCurrentCursorGridNo;
-		INT16 interactiveGrid = NOWHERE;
-		LEVELNODE* const node = GetCurInteractiveTileGridNo(&interactiveGrid);
-		if (node && interactiveGrid >= 0 && interactiveGrid < WORLD_MAX) {
-			contextGrid = interactiveGrid;
-		}
+		const UINT16 tile = resolveOS0WorldTarget(contextGrid);
 		OS0OpenContextMenu(gUIFullTarget, contextGrid, gsInterfaceLevel,
-			node ? node->usIndex : NO_TILE, gusMouseXPos, gusMouseYPos);
+			tile, gusMouseXPos, gusMouseYPos);
 		fRightButtonDown = FALSE;
 		return;
 	} else if (reason & MSYS_CALLBACK_REASON_MBUTTON_UP) {
 		GridNo actionGrid = guiCurrentCursorGridNo;
-		INT16 interactiveGrid = NOWHERE;
-		LEVELNODE* const node = GetCurInteractiveTileGridNo(&interactiveGrid);
-		if (node && interactiveGrid >= 0 && interactiveGrid < WORLD_MAX) {
-			actionGrid = interactiveGrid;
-		}
+		const UINT16 tile = resolveOS0WorldTarget(actionGrid);
 		if (_KeyDown(SHIFT)) {
 			OS0CancelCursorAction();
 			if (SOLDIERTYPE* const selected = GetSelectedMan()) {
@@ -1431,7 +1426,7 @@ void TacticalViewPortTouchCallbackRT(MOUSE_REGION* region, UINT32 reason) {
 			}
 		} else {
 			OS0CycleCursorAction(gUIFullTarget, actionGrid, gsInterfaceLevel,
-				node ? node->usIndex : NO_TILE);
+				tile);
 		}
 		fMiddleButtonDown = FALSE;
 		return;

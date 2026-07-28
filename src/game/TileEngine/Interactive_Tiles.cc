@@ -610,6 +610,82 @@ BOOLEAN CheckVideoObjectScreenCoordinateInData(HVOBJECT hSrcVObject, UINT16 usIn
 }
 
 
+BOOLEAN FindOS0WorldAssetAtScreen(GridNo* gridNo, UINT8 level,
+	UINT16* tileIndex, INT16 screenX, INT16 screenY)
+{
+	if (!gridNo || !tileIndex || *gridNo < 0 || *gridNo >= WORLD_MAX) return FALSE;
+	OS0MapDisplayToWorldScreen(&screenX, &screenY);
+	const INT16 hintX = static_cast<INT16>(*gridNo % WORLD_COLS);
+	const INT16 hintY = static_cast<INT16>(*gridNo / WORLD_COLS);
+	GridNo bestGrid = NOWHERE;
+	UINT16 bestTile = NO_TILE;
+	INT32 bestScore = INT32_MIN;
+
+	auto scanLayer = [&](LEVELNODE const* node, GridNo candidateGrid,
+		INT16 cellX, INT16 cellY, INT32 layerScore)
+	{
+		for (; node; node = node->pNext)
+		{
+			if (node->usIndex >= NUMBEROFTILES ||
+				node->uiFlags & (LEVELNODE_ITEM | LEVELNODE_HIDDEN |
+					LEVELNODE_ROTTINGCORPSE | LEVELNODE_USEABSOLUTEPOS)) continue;
+			TILE_ELEMENT const& tile = gTileDatabase[node->usIndex];
+			if (!tile.hTileSurface && !(node->uiFlags & LEVELNODE_CACHEDANITILE))
+				continue;
+			SGPRect rect;
+			GetLevelNodeScreenRect(*node, rect, cellX, cellY, candidateGrid);
+			if (!IsPointInScreenRect(screenX, screenY, rect)) continue;
+			if (!RefinePointCollisionOnStruct(screenX, screenY,
+				rect.iLeft, rect.iBottom, *node)) continue;
+
+			const INT32 area = std::max<INT32>(1,
+				(rect.iRight - rect.iLeft) * (rect.iBottom - rect.iTop));
+			const INT32 score = layerScore * 1000000 - area;
+			if (score <= bestScore) continue;
+			bestScore = score;
+			bestGrid = candidateGrid;
+			bestTile = node->usIndex;
+			if (node->pStructureData)
+			{
+				STRUCTURE* const base = FindBaseStructure(node->pStructureData);
+				if (base && base->sGridNo >= 0 && base->sGridNo < WORLD_MAX)
+				{
+					bestGrid = base->sGridNo;
+					if (LEVELNODE* const baseNode = FindLevelNodeBasedOnStructure(base))
+						bestTile = baseNode->usIndex;
+				}
+			}
+		}
+	};
+
+	// Large props can cover several neighbouring cells. Six cells reaches the
+	// widest vanilla wreck/tree sprites while keeping per-mouse-move work bounded.
+	constexpr INT16 radius = 6;
+	for (INT16 y = std::max<INT16>(0, hintY - radius);
+		y <= std::min<INT16>(WORLD_ROWS - 1, hintY + radius); ++y)
+	{
+		for (INT16 x = std::max<INT16>(0, hintX - radius);
+			x <= std::min<INT16>(WORLD_COLS - 1, hintX + radius); ++x)
+		{
+			const GridNo candidate = y * WORLD_COLS + x;
+			INT16 cellX;
+			INT16 cellY;
+			ConvertGridNoToCellXY(candidate, &cellX, &cellY);
+			MAP_ELEMENT const& map = gpWorldLevelData[candidate];
+			scanLayer(map.pObjectHead, candidate, cellX, cellY, 1);
+			if (level == 0)
+				scanLayer(map.pStructHead, candidate, cellX, cellY, 2);
+			else
+				scanLayer(map.pOnRoofHead, candidate, cellX, cellY, 2);
+		}
+	}
+	if (bestGrid == NOWHERE || bestTile >= NUMBEROFTILES) return FALSE;
+	*gridNo = bestGrid;
+	*tileIndex = bestTile;
+	return TRUE;
+}
+
+
 BOOLEAN ShouldCheckForMouseDetections( )
 {
 	BOOLEAN fOK = FALSE;

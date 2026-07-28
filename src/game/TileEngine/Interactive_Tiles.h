@@ -32,4 +32,10 @@ LEVELNODE *ConditionalGetCurInteractiveTileGridNoAndStructure( INT16 *psGridNo, 
 
 BOOLEAN CheckVideoObjectScreenCoordinateInData(HVOBJECT hSrcVObject, UINT16 usIndex, INT32 iTestX, INT32 iTestY);
 
+// Pixel-accurate OS0 scenery picking. Unlike JA2's original interactive-tile
+// search this also accepts ordinary object/structure sprites that extend beyond
+// the grid cell underneath the pointer.
+BOOLEAN FindOS0WorldAssetAtScreen(GridNo* gridNo, UINT8 level,
+	UINT16* tileIndex, INT16 screenX, INT16 screenY);
+
 #endif
