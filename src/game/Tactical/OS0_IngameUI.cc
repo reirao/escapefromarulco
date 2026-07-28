@@ -8,6 +8,7 @@
 
 #include "Animation_Control.h"
 #include "ArmourModel.h"
+#include "Campaign_Types.h"
 #include "Cursors.h"
 #include "Directories.h"
 #include "Dialogue_Control.h"
@@ -83,7 +84,18 @@ namespace
 	constexpr INT16 ACTIONS_PANEL_H = 174;
 	constexpr INT16 FEEDBACK_PANEL_W = 390;
 	constexpr INT16 FEEDBACK_PANEL_H = 220;
-	constexpr size_t PANEL_DOCK_COUNT = 6;
+	constexpr INT16 SECTOR_PANEL_W = 260;
+	constexpr INT16 SECTOR_PANEL_H = 154;
+	constexpr size_t PANEL_DOCK_COUNT = 7;
+
+	enum class ResourceKind : UINT8
+	{
+		TIMBER,
+		STONE,
+		SCRAP,
+		SOIL,
+		COUNT
+	};
 
 	enum class ComputerMode
 	{
@@ -119,7 +131,8 @@ namespace
 		EQUIP_ITEM,
 		MOVE_ITEM,
 		PICK_UP,
-		DIG
+		DIG,
+		SALVAGE
 	};
 
 	struct ContextEntry
@@ -135,8 +148,28 @@ namespace
 		TOOLS,
 		ACTIONS,
 		OBJECT_INVENTORY,
+		SECTOR,
 		FEEDBACK,
 		COUNT
+	};
+
+	struct SalvageProfile
+	{
+		ST::string displayName;
+		ResourceKind resource;
+		UINT8 amount;
+		BOOLEAN salvageable;
+	};
+
+	struct SectorUpgrade
+	{
+		const char* name;
+		const char* benefit;
+		UINT8 timber;
+		UINT8 stone;
+		UINT8 scrap;
+		UINT8 soil;
+		UINT32 flag;
 	};
 
 	struct FloatingPanel
@@ -246,6 +279,7 @@ namespace
 		{ 8, 154, TOOLS_PANEL_W, TOOLS_PANEL_H, TRUE, FALSE, FALSE },
 		{ 438, 36, ACTIONS_PANEL_W, ACTIONS_PANEL_H, FALSE, FALSE, FALSE },
 		{ 88, 118, PANE_W, BAG_H, FALSE, FALSE, FALSE },
+		{ 190, 72, SECTOR_PANEL_W, SECTOR_PANEL_H, FALSE, FALSE, FALSE },
 		{ 120, 70, FEEDBACK_PANEL_W, FEEDBACK_PANEL_H, FALSE, FALSE, FALSE }
 	}};
 	std::array<ContextEntry, 8> gPanelActionEntries;
@@ -254,6 +288,7 @@ namespace
 	void OutlineBox(INT16 x, INT16 y, INT16 w, INT16 h, UINT16 colour);
 	void ContextActionCallback(MOUSE_REGION* region, UINT32 reason);
 	void OperationsActionCallback(MOUSE_REGION* region, UINT32 reason);
+	void RecordFeedbackEvent(const ST::string& event);
 	BOOLEAN TutorialKeyboardHook(InputAtom* event);
 
 	SGPVObject* gPortrait = nullptr;
@@ -270,6 +305,7 @@ namespace
 	std::array<MOUSE_REGION, 10> gToolRegions;
 	std::array<MOUSE_REGION, 8> gActionPanelRegions;
 	std::array<MOUSE_REGION, 4> gFeedbackRegions;
+	std::array<MOUSE_REGION, 3> gSectorUpgradeRegions;
 	std::array<MOUSE_REGION, NUM_INV_SLOTS> gSlotRegions;
 	std::array<MOUSE_REGION, NUM_INV_SLOTS> gObjectSlotRegions;
 	MOUSE_REGION gOrbRegion;
@@ -308,6 +344,20 @@ namespace
 
 	constexpr std::array<const char*, 5> gFeedbackCategories{{
 		"BUG", "CONTROLS", "VISUAL", "IDEA", "CRASH / STABILITY"
+	}};
+
+	constexpr UINT8 RESOURCE_BITS = 5;
+	constexpr UINT32 RESOURCE_VALUE_MASK = (1u << RESOURCE_BITS) - 1u;
+	constexpr std::array<UINT8, static_cast<size_t>(ResourceKind::COUNT)>
+		gResourceShifts{{ 8, 13, 18, 23 }};
+	constexpr UINT32 OS0_UPGRADE_SHELTER = 0x10000000u;
+	constexpr UINT32 OS0_UPGRADE_WORKSHOP = 0x20000000u;
+	constexpr UINT32 OS0_UPGRADE_DEPOT = 0x40000000u;
+	constexpr UINT8 OS0_CONTAINER_MARKER = 0xE0;
+	constexpr std::array<SectorUpgrade, 3> gSectorUpgrades{{
+		{ "FIELD SHELTER", "RECOVERY NODE", 8, 4, 0, 4, OS0_UPGRADE_SHELTER },
+		{ "SALVAGE WORKSHOP", "+1 SALVAGE YIELD", 4, 4, 8, 0, OS0_UPGRADE_WORKSHOP },
+		{ "SECURE DEPOT", "+1 CONTAINER MATERIAL", 6, 3, 6, 2, OS0_UPGRADE_DEPOT }
 	}};
 
 	constexpr std::array<const char*, 10> gTutorialStatNames{{
@@ -352,6 +402,107 @@ namespace
 			(soldier->bLife < OKLIFE || soldier->uiStatusFlags & SOLDIER_DEAD);
 	}
 
+	UINT32& CurrentSectorFacilities()
+	{
+		return SectorInfo[gWorldSector.AsByte()].uiFacilitiesFlags;
+	}
+
+	UINT16 ResourceItem(ResourceKind kind)
+	{
+		switch (kind)
+		{
+			case ResourceKind::TIMBER: return OS0_TIMBER;
+			case ResourceKind::STONE:  return OS0_STONE;
+			case ResourceKind::SCRAP:  return OS0_SCRAP;
+			case ResourceKind::SOIL:   return OS0_SOIL;
+			case ResourceKind::COUNT:  break;
+		}
+		return NOTHING;
+	}
+
+	const char* ResourceName(ResourceKind kind)
+	{
+		switch (kind)
+		{
+			case ResourceKind::TIMBER: return "TIMBER";
+			case ResourceKind::STONE:  return "STONE";
+			case ResourceKind::SCRAP:  return "SCRAP";
+			case ResourceKind::SOIL:   return "SOIL";
+			case ResourceKind::COUNT:  break;
+		}
+		return "MATERIAL";
+	}
+
+	BOOLEAN IsResourceItem(UINT16 item)
+	{
+		return item == OS0_TIMBER || item == OS0_STONE ||
+			item == OS0_SCRAP || item == OS0_SOIL;
+	}
+
+	ResourceKind ResourceFromItem(UINT16 item)
+	{
+		if (item == OS0_TIMBER) return ResourceKind::TIMBER;
+		if (item == OS0_STONE) return ResourceKind::STONE;
+		if (item == OS0_SCRAP) return ResourceKind::SCRAP;
+		return ResourceKind::SOIL;
+	}
+
+	UINT8 SectorResource(ResourceKind kind)
+	{
+		const UINT8 shift = gResourceShifts[static_cast<size_t>(kind)];
+		return static_cast<UINT8>((CurrentSectorFacilities() >> shift) &
+			RESOURCE_VALUE_MASK);
+	}
+
+	void SetSectorResource(ResourceKind kind, UINT8 value)
+	{
+		const UINT8 shift = gResourceShifts[static_cast<size_t>(kind)];
+		const UINT32 mask = RESOURCE_VALUE_MASK << shift;
+		UINT32& facilities = CurrentSectorFacilities();
+		facilities = (facilities & ~mask) |
+			((static_cast<UINT32>(std::min<UINT8>(value,
+				static_cast<UINT8>(RESOURCE_VALUE_MASK)))) << shift);
+	}
+
+	void AddSectorResource(ResourceKind kind, UINT8 amount)
+	{
+		SetSectorResource(kind, static_cast<UINT8>(std::min<UINT16>(
+			RESOURCE_VALUE_MASK, SectorResource(kind) + amount)));
+	}
+
+	BOOLEAN HasUpgrade(SectorUpgrade const& upgrade)
+	{
+		return (CurrentSectorFacilities() & upgrade.flag) != 0;
+	}
+
+	BOOLEAN CanBuildUpgrade(SectorUpgrade const& upgrade)
+	{
+		return !HasUpgrade(upgrade) &&
+			SectorResource(ResourceKind::TIMBER) >= upgrade.timber &&
+			SectorResource(ResourceKind::STONE) >= upgrade.stone &&
+			SectorResource(ResourceKind::SCRAP) >= upgrade.scrap &&
+			SectorResource(ResourceKind::SOIL) >= upgrade.soil;
+	}
+
+	BOOLEAN BuildSectorUpgrade(size_t index)
+	{
+		if (index >= gSectorUpgrades.size()) return FALSE;
+		SectorUpgrade const& upgrade = gSectorUpgrades[index];
+		if (!CanBuildUpgrade(upgrade)) return FALSE;
+		SetSectorResource(ResourceKind::TIMBER,
+			SectorResource(ResourceKind::TIMBER) - upgrade.timber);
+		SetSectorResource(ResourceKind::STONE,
+			SectorResource(ResourceKind::STONE) - upgrade.stone);
+		SetSectorResource(ResourceKind::SCRAP,
+			SectorResource(ResourceKind::SCRAP) - upgrade.scrap);
+		SetSectorResource(ResourceKind::SOIL,
+			SectorResource(ResourceKind::SOIL) - upgrade.soil);
+		CurrentSectorFacilities() |= upgrade.flag;
+		RecordFeedbackEvent(ST::format("SECTOR UPGRADE {} {}",
+			gWorldSector.AsShortString(), upgrade.name));
+		return TRUE;
+	}
+
 	const char* ContextActionName(ContextAction action)
 	{
 		switch (action)
@@ -375,6 +526,7 @@ namespace
 			case ContextAction::MOVE_ITEM: return "MOVE_ITEM";
 			case ContextAction::PICK_UP: return "PICK_UP";
 			case ContextAction::DIG: return "DIG";
+			case ContextAction::SALVAGE: return "SALVAGE";
 		}
 		return "UNKNOWN";
 	}
@@ -772,6 +924,164 @@ namespace
 		}
 	}
 
+	SalvageProfile DescribeWorldAsset(GridNo gridNo, UINT8 level, UINT16 tileIndex)
+	{
+		SalvageProfile result{ "WORLD ASSET / FIXED", ResourceKind::SCRAP, 0, FALSE };
+		STRUCTURE const* const structure = WorldStructureAt(gridNo, level, tileIndex);
+		if (!structure)
+		{
+			if (tileIndex >= NUMBEROFTILES) return result;
+			switch (GetTileType(tileIndex))
+			{
+				case DEBRISROCKS:
+					return { "LOOSE STONE DEPOSIT", ResourceKind::STONE, 2, TRUE };
+				case DEBRISWOOD:
+					return { "WOOD DEBRIS", ResourceKind::TIMBER, 2, TRUE };
+				case DEBRISWEEDS:
+				case DEBRISGRASS:
+				case DEBRISSAND:
+					return { "ORGANIC GROUND DEBRIS", ResourceKind::SOIL, 1, TRUE };
+				case DEBRISMISC:
+				case DEBRIS2MISC:
+				case FIRSTEXPLDEBRIS:
+				case SECONDEXPLDEBRIS:
+					return { "BROKEN SCRAP DEBRIS", ResourceKind::SCRAP, 2, TRUE };
+				default:
+					return result;
+			}
+		}
+
+		WORLD_PHYSICS_PROFILE const physics = GetWorldPhysicsProfile(structure);
+		ST::string const material = physics.materialName;
+		ResourceKind resource = ResourceKind::SCRAP;
+		if (material == "WOOD" || material == "FURNITURE" ||
+			material == "ORGANIC") resource = ResourceKind::TIMBER;
+		else if (material == "STONE" || material == "CERAMIC" ||
+			material == "SAND") resource = ResourceKind::STONE;
+		const UINT8 amount = static_cast<UINT8>(std::clamp<INT32>(
+			static_cast<INT32>(physics.massKg / 20.0f) + 1, 1, 8));
+		const char* adjective = resource == ResourceKind::TIMBER ? "WOODEN" :
+			resource == ResourceKind::STONE ? "STONE" : "METAL";
+
+		if (structure->fFlags & STRUCTURE_ANYDOOR)
+			return { ST::format("{} DOOR", adjective), resource, amount, TRUE };
+		if (structure->fFlags & STRUCTURE_TREE)
+			return { "TREE / TIMBER SOURCE", ResourceKind::TIMBER, amount, TRUE };
+		if (structure->fFlags & STRUCTURE_ANYFENCE)
+			return { ST::format("{} FENCE", adjective), resource, amount, TRUE };
+		if (structure->fFlags & STRUCTURE_OPENABLE)
+			return { ST::format("{} CONTAINER", adjective), resource, amount, TRUE };
+		if (structure->fFlags & (STRUCTURE_WALLSTUFF | STRUCTURE_ROOF |
+			STRUCTURE_SWITCH | STRUCTURE_VEHICLE | STRUCTURE_LIGHTSOURCE))
+			return { ST::format("{} STRUCTURE / FIXED", adjective), resource, 0, FALSE };
+		if (structure->fFlags & STRUCTURE_BASE_TILE &&
+			structure->pDBStructureRef &&
+			structure->pDBStructureRef->pDBStructure->ubNumberOfTiles == 1)
+			return { ST::format("{} RESOURCE OBJECT", adjective), resource, amount, TRUE };
+		return { ST::format("{} WORLD STRUCTURE", adjective), resource, 0, FALSE };
+	}
+
+	void AddResourceItemToPool(GridNo gridNo, UINT8 level, ResourceKind kind,
+		UINT8 amount)
+	{
+		if (amount == 0 || kind == ResourceKind::COUNT) return;
+		OBJECTTYPE resource{};
+		CreateItems(ResourceItem(kind), 100,
+			std::min<UINT8>(amount, MAX_OBJECTS_PER_SLOT), &resource);
+		AddItemToPool(gridNo, &resource, HIDDEN_IN_OBJECT, level, 0, -1);
+	}
+
+	BOOLEAN IsContainerSeedMarker(WORLDITEM const& item)
+	{
+		return item.fExists && item.o.usItem == ACTION_ITEM &&
+			item.o.bActionValue == 0 && item.o.ubTolerance == OS0_CONTAINER_MARKER;
+	}
+
+	void EnsureContainerLoot(GridNo gridNo, UINT8 level, UINT16 tileIndex)
+	{
+		STRUCTURE const* const structure = WorldStructureAt(gridNo, level, tileIndex);
+		if (!structure || !(structure->fFlags & STRUCTURE_OPENABLE) ||
+			structure->fFlags & STRUCTURE_ANYDOOR) return;
+
+		BOOLEAN marked = FALSE;
+		BOOLEAN ordinaryLoot = FALSE;
+		for (ITEM_POOL* item = GetItemPool(gridNo, level); item; item = item->pNext)
+		{
+			if (item->iItemIndex < 0 ||
+				static_cast<size_t>(item->iItemIndex) >= gWorldItems.size()) continue;
+			WORLDITEM const& worldItem = GetWorldItem(item->iItemIndex);
+			if (IsContainerSeedMarker(worldItem)) marked = TRUE;
+			else if (worldItem.fExists && worldItem.o.usItem != NOTHING &&
+				worldItem.o.usItem != OWNERSHIP && worldItem.o.usItem != ACTION_ITEM)
+				ordinaryLoot = TRUE;
+		}
+		if (marked) return;
+
+		const UINT32 hash = static_cast<UINT32>(gridNo) * 2654435761u ^
+			static_cast<UINT32>(tileIndex) * 2246822519u ^
+			static_cast<UINT32>(gWorldSector.AsByte()) * 3266489917u;
+		SalvageProfile const asset = DescribeWorldAsset(gridNo, level, tileIndex);
+		UINT8 primary = static_cast<UINT8>(1 + hash % 3);
+		if (CurrentSectorFacilities() & OS0_UPGRADE_DEPOT) ++primary;
+		AddResourceItemToPool(gridNo, level, asset.resource, primary);
+		AddResourceItemToPool(gridNo, level,
+			(hash & 1) ? ResourceKind::SCRAP : ResourceKind::SOIL,
+			static_cast<UINT8>(1 + (hash >> 4) % 2));
+
+		if (!ordinaryLoot || (hash % 3) == 0)
+		{
+			constexpr std::array<UINT16, 8> useful{{
+				CANTEEN, FIRSTAIDKIT, ALCOHOL, BREAK_LIGHT,
+				WIRECUTTERS, TOOLKIT, CROWBAR, LOCKSMITHKIT
+			}};
+			OBJECTTYPE object{};
+			CreateItem(useful[(hash >> 8) % useful.size()],
+				static_cast<INT8>(45 + (hash >> 12) % 51), &object);
+			AddItemToPool(gridNo, &object, HIDDEN_IN_OBJECT, level, 0, -1);
+		}
+
+		OBJECTTYPE marker{};
+		CreateItem(ACTION_ITEM, 100, &marker);
+		marker.bActionValue = 0;
+		marker.ubTolerance = OS0_CONTAINER_MARKER;
+		AddItemToPool(gridNo, &marker, HIDDEN_ITEM, level, 0, -1);
+		RecordFeedbackEvent(ST::format("CONTAINER SEEDED grid {} tile {}",
+			gridNo, tileIndex));
+	}
+
+	BOOLEAN StoreResourceWorldItem(INT32 itemIndex)
+	{
+		if (itemIndex < 0 || static_cast<size_t>(itemIndex) >= gWorldItems.size())
+			return FALSE;
+		WORLDITEM& worldItem = GetWorldItem(itemIndex);
+		if (!worldItem.fExists || !IsResourceItem(worldItem.o.usItem)) return FALSE;
+		ResourceKind const kind = ResourceFromItem(worldItem.o.usItem);
+		const UINT8 amount = worldItem.o.ubNumberOfObjects;
+		if (amount == 0 || SectorResource(kind) + amount > RESOURCE_VALUE_MASK)
+			return FALSE;
+		AddSectorResource(kind, amount);
+		RemoveItemFromPool(worldItem);
+		RecordFeedbackEvent(ST::format("STOCKPILE +{} {}", amount,
+			ResourceName(kind)));
+		return TRUE;
+	}
+
+	BOOLEAN StoreResourceInventoryItem(SOLDIERTYPE* soldier, INT8 slot)
+	{
+		if (!soldier || slot < 0 || slot >= NUM_INV_SLOTS ||
+			!IsResourceItem(soldier->inv[slot].usItem)) return FALSE;
+		OBJECTTYPE& object = soldier->inv[slot];
+		ResourceKind const kind = ResourceFromItem(object.usItem);
+		const UINT8 amount = object.ubNumberOfObjects;
+		if (amount == 0 || SectorResource(kind) + amount > RESOURCE_VALUE_MASK)
+			return FALSE;
+		AddSectorResource(kind, amount);
+		DeleteObj(&object);
+		RecordFeedbackEvent(ST::format("STOCKPILE +{} {} FROM PACK", amount,
+			ResourceName(kind)));
+		return TRUE;
+	}
+
 	BOOLEAN HasDiggingTool(SOLDIERTYPE const* soldier)
 	{
 		// Vanilla has no shovel item ID. CROWBAR is the save-compatible field-tool
@@ -795,6 +1105,63 @@ namespace
 		TerrainTypeDefines const terrain = GetTerrainType(gridNo);
 		return terrain == FLAT_GROUND || terrain == DIRT_ROAD ||
 			terrain == LOW_GRASS || terrain == HIGH_GRASS;
+	}
+
+	BOOLEAN CanSalvageWorldAsset(SOLDIERTYPE const* soldier, GridNo gridNo,
+		UINT8 level, UINT16 tileIndex)
+	{
+		if (!soldier || !HasDiggingTool(soldier) || level != 0 ||
+			gridNo < 0 || gridNo >= WORLD_MAX ||
+			PythSpacesAway(soldier->sGridNo, gridNo) > 2 ||
+			tileIndex >= NUMBEROFTILES) return FALSE;
+		return DescribeWorldAsset(gridNo, level, tileIndex).salvageable;
+	}
+
+	BOOLEAN SalvageWorldAsset(SOLDIERTYPE* soldier, GridNo gridNo,
+		UINT8 level, UINT16 tileIndex)
+	{
+		if (!CanSalvageWorldAsset(soldier, gridNo, level, tileIndex)) return FALSE;
+		SalvageProfile profile = DescribeWorldAsset(gridNo, level, tileIndex);
+		GridNo dropGrid = gridNo;
+		BOOLEAN removed = FALSE;
+		ApplyMapChangesToMapTempFile recordChange;
+		if (STRUCTURE* const structure = WorldStructureAt(gridNo, level, tileIndex))
+		{
+			STRUCTURE* const base = FindBaseStructure(structure);
+			if (!base) return FALSE;
+			dropGrid = base->sGridNo;
+			LEVELNODE* const node = FindLevelNodeBasedOnStructure(base);
+			if (!node) return FALSE;
+			RemoveStructFromLevelNode(dropGrid, node);
+			removed = TRUE;
+		}
+		else
+		{
+			removed = RemoveObject(gridNo, tileIndex);
+		}
+		if (!removed) return FALSE;
+
+		UINT8 amount = profile.amount;
+		if (CurrentSectorFacilities() & OS0_UPGRADE_WORKSHOP)
+			amount = std::min<UINT8>(MAX_OBJECTS_PER_SLOT,
+				static_cast<UINT8>(amount + 1));
+		AddResourceItemToPool(dropGrid, level, profile.resource, amount);
+		DeductPoints(soldier, 10, 180);
+		RecompileLocalMovementCosts(dropGrid);
+		InvalidateWorldRedundency();
+		gLootGridNo = dropGrid;
+		gLootLevel = level;
+		gLootTileIndex = NO_TILE;
+		gInspectedGridNo = dropGrid;
+		gInspectedLevel = level;
+		gInspectedTileIndex = NO_TILE;
+		gContextTitle = ST::format("SALVAGE / {}", ResourceName(profile.resource));
+		gContentsMode = ContentsMode::WORLD;
+		gLootVisible = TRUE;
+		gFloatingPanels[static_cast<size_t>(FloatingPanelId::OBJECT_INVENTORY)].visible = TRUE;
+		RecordFeedbackEvent(ST::format("SALVAGE {} +{} {} grid {}",
+			profile.displayName, amount, ResourceName(profile.resource), dropGrid));
+		return TRUE;
 	}
 
 	BOOLEAN DigTerrainAt(SOLDIERTYPE* soldier, GridNo gridNo, UINT16 tileIndex)
@@ -841,12 +1208,22 @@ namespace
 		}
 		if (!changed) return FALSE;
 
+		ResourceKind const yield = oldType == FIRSTTEXTURE ?
+			ResourceKind::STONE : ResourceKind::SOIL;
+		AddResourceItemToPool(gridNo, 0, yield,
+			static_cast<UINT8>(1 + (gridNo % 2)));
 		DeductPoints(soldier, 8, 120);
 		RecompileLocalMovementCosts(gridNo);
 		InvalidateWorldRedundency();
 		SetRenderFlags(RENDER_FLAG_FULL);
 		RecordFeedbackEvent(ST::format("DIG SUCCESS grid {} old tile {}",
 			gridNo, oldIndex));
+		gLootGridNo = gridNo;
+		gLootLevel = 0;
+		gLootTileIndex = NO_TILE;
+		gContentsMode = ContentsMode::WORLD;
+		gLootVisible = TRUE;
+		gFloatingPanels[static_cast<size_t>(FloatingPanelId::OBJECT_INVENTORY)].visible = TRUE;
 		return TRUE;
 	}
 
@@ -913,6 +1290,18 @@ namespace
 					movable ? "CARRY / REPOSITION" : "CARRY / TOO HEAVY",
 					movable);
 				AddPanelAction(ContextAction::BUILD, "TOOLS / REQUIREMENTS");
+			}
+			SalvageProfile const salvage = DescribeWorldAsset(gInspectedGridNo,
+				gInspectedLevel, gInspectedTileIndex);
+			if (salvage.salvageable)
+			{
+				const BOOLEAN tool = HasDiggingTool(selected);
+				AddPanelAction(ContextAction::SALVAGE,
+					!tool ? "DISMANTLE / NEED FIELD TOOL" :
+					ST::format("DISMANTLE / +{} {}", salvage.amount,
+						ResourceName(salvage.resource)),
+					CanSalvageWorldAsset(selected, gInspectedGridNo,
+						gInspectedLevel, gInspectedTileIndex));
 			}
 		}
 		if (hasTerrain && (!hasAsset || !WorldStructureAt(gInspectedGridNo,
@@ -1001,6 +1390,10 @@ namespace
 				!gTutorialActive && i < gPanelActionEntryCount);
 		for (MOUSE_REGION& r : gFeedbackRegions)
 			setVisible(r, feedbackPanel.visible && !gContextVisible);
+		const FloatingPanel& sectorPanel =
+			gFloatingPanels[static_cast<size_t>(FloatingPanelId::SECTOR)];
+		for (MOUSE_REGION& r : gSectorUpgradeRegions)
+			setVisible(r, sectorPanel.visible && !gContextVisible && !gTutorialActive);
 		for (size_t i = 0; i < gContextRegions.size(); ++i)
 		{
 			if (enabled && gContextVisible && i < gContextEntryCount)
@@ -1142,6 +1535,11 @@ namespace
 			feedback.y + feedback.h - 28);
 		MoveRegion(gFeedbackRegions[3], feedback.x + 8,
 			feedback.y + feedback.h - 28);
+		const FloatingPanel& sector =
+			gFloatingPanels[static_cast<size_t>(FloatingPanelId::SECTOR)];
+		for (size_t i = 0; i < gSectorUpgradeRegions.size(); ++i)
+			MoveRegion(gSectorUpgradeRegions[i], sector.x + 8,
+				sector.y + 56 + static_cast<INT16>(i) * 29);
 		if (gContextVisible) PositionContextRegions();
 	}
 
@@ -1316,6 +1714,17 @@ namespace
 		SetRenderFlags(RENDER_FLAG_FULL);
 	}
 
+	void SectorUpgradeCallback(MOUSE_REGION* region, UINT32 reason)
+	{
+		if (!(reason & MSYS_CALLBACK_REASON_POINTER_UP)) return;
+		const size_t index = static_cast<size_t>(region->GetUserData<0>());
+		if (BuildSectorUpgrade(index))
+		{
+			fInterfacePanelDirty = DIRTYLEVEL2;
+			SetRenderFlags(RENDER_FLAG_FULL);
+		}
+	}
+
 	void ApplyCursorTool(UINT8 action)
 	{
 		gCursorAction = action;
@@ -1437,7 +1846,10 @@ namespace
 		AddContextEntry(ContextAction::DETAILS, "DETAILS / ATTACHMENTS");
 		if (own)
 		{
-			AddContextEntry(ContextAction::EQUIP_ITEM, "EQUIP / USE");
+			if (IsResourceItem(soldier->inv[slot].usItem))
+				AddContextEntry(ContextAction::PICK_UP, "DEPOSIT IN SECTOR STOCKPILE");
+			else
+				AddContextEntry(ContextAction::EQUIP_ITEM, "EQUIP / USE");
 			AddContextEntry(ContextAction::MOVE_ITEM, "MOVE / DRAG");
 			if (item->getItemClass() == IC_GUN)
 			{
@@ -1489,9 +1901,11 @@ namespace
 		gContextTitle = item->getName();
 		const BOOLEAN near = IsInspectedWorldAssetNear();
 		AddContextEntry(ContextAction::DETAILS, "DETAILS / ATTACHMENTS");
+		const BOOLEAN resource = IsResourceItem(worldItem.o.usItem);
 		AddContextEntry(ContextAction::PICK_UP,
-			near ? "PACK / PICK UP" : "APPROACH & PICK UP");
-		AddContextEntry(ContextAction::EQUIP_ITEM, "EQUIP", near);
+			resource ? "DEPOSIT IN SECTOR STOCKPILE" :
+				(near ? "PACK / PICK UP" : "APPROACH & PICK UP"), near);
+		if (!resource) AddContextEntry(ContextAction::EQUIP_ITEM, "EQUIP", near);
 		AddContextEntry(ContextAction::MOVE_ITEM, "MOVE / DRAG", near);
 		if (item->getItemClass() == IC_GUN)
 		{
@@ -1557,7 +1971,7 @@ namespace
 				}
 				break;
 			case ContextAction::BUILD:
-				gFloatingPanels[static_cast<size_t>(FloatingPanelId::TOOLS)].visible = TRUE;
+				gFloatingPanels[static_cast<size_t>(FloatingPanelId::SECTOR)].visible = TRUE;
 				gMode = ComputerMode::BUILD;
 				break;
 			case ContextAction::CARRY:
@@ -1736,6 +2150,8 @@ namespace
 				if (gContextSoldier && gContextInventorySlot != NO_SLOT &&
 					CanAccessSoldierContents(gContextSoldier))
 				{
+					if (StoreResourceInventoryItem(gContextSoldier,
+						gContextInventorySlot)) break;
 					OBJECTTYPE object{};
 					GetObjFrom(&gContextSoldier->inv[gContextInventorySlot], 0, &object);
 					if (object.usItem != NOTHING)
@@ -1757,6 +2173,11 @@ namespace
 						WORLDITEM const& worldItem = GetWorldItem(itemIndex);
 						if (worldItem.fExists && worldItem.o.usItem != NOTHING)
 						{
+							if (IsResourceItem(worldItem.o.usItem))
+							{
+								StoreResourceWorldItem(itemIndex);
+								break;
+							}
 							// Let JA2 own approach path, animation, AP cost, traps and
 							// inventory overflow. OS//0 only selects the exact object.
 							SoldierPickupItem(selected, itemIndex, gContextGridNo,
@@ -1774,6 +2195,13 @@ namespace
 					gInspectedLevel = 0;
 					gInspectedTileIndex = NO_TILE;
 					CaptureInspectorPreview(gInspectedGridNo, 0);
+					RefreshPanelActions();
+				}
+				break;
+			case ContextAction::SALVAGE:
+				if (selected && SalvageWorldAsset(selected, gContextGridNo,
+					gContextLevel, gContextTileIndex))
+				{
 					RefreshPanelActions();
 				}
 				break;
@@ -1878,8 +2306,11 @@ namespace
 			WORLDITEM& worldItem = GetWorldItem(itemIndex);
 			if (!worldItem.fExists || worldItem.o.usItem == NOTHING) return;
 
-			SoldierPickupItem(selected, itemIndex, gLootGridNo,
-				ITEM_IGNORE_Z_LEVEL);
+			if (IsResourceItem(worldItem.o.usItem))
+				StoreResourceWorldItem(itemIndex);
+			else
+				SoldierPickupItem(selected, itemIndex, gLootGridNo,
+					ITEM_IGNORE_Z_LEVEL);
 			fInterfacePanelDirty = DIRTYLEVEL2;
 			SetRenderFlags(RENDER_FLAG_FULL);
 			return;
@@ -2220,7 +2651,7 @@ namespace
 		if (!gAimAutoCollapsed)
 		{
 			const std::array<const char*, PANEL_DOCK_COUNT> labels{{
-				"CHAR", "CTX", "TOOL", "ACT", "OBJ", "FB"
+				"CHAR", "CTX", "TOOL", "ACT", "OBJ", "SECT", "FB"
 			}};
 			const INT16 startX = PanelDockStartX();
 			const UINT16 red = Get16BPPColor(FROMRGB(118, 0, 0));
@@ -2407,6 +2838,50 @@ namespace
 				ST::format("[>] {}", gPanelActionEntries[i].label).left(30));
 		}
 		SetBagRegionsEnabled(TRUE);
+		InvalidateRegion(panel.x, panel.y, panel.x + panel.w, panel.y + panel.h);
+	}
+
+	void DrawSectorPanel()
+	{
+		FloatingPanel const& panel =
+			gFloatingPanels[static_cast<size_t>(FloatingPanelId::SECTOR)];
+		if (!panel.visible) return;
+		DrawFloatingPanelShell(panel,
+			ST::format("SECTOR / {}", gWorldSector.AsShortString()));
+		const UINT16 red = Get16BPPColor(FROMRGB(118, 0, 0));
+		SetFont(TINYFONT1);
+		SetFontBackground(FONT_MCOLOR_BLACK);
+		SetFontForeground(FONT_MCOLOR_RED);
+		MPrint(panel.x + 8, panel.y + 24, "STOCKPILE");
+		SetFontForeground(FONT_WHITE);
+		MPrint(panel.x + 70, panel.y + 24,
+			ST::format("W{} S{} R{} E{}",
+				SectorResource(ResourceKind::TIMBER),
+				SectorResource(ResourceKind::STONE),
+				SectorResource(ResourceKind::SCRAP),
+				SectorResource(ResourceKind::SOIL)));
+		SetFontForeground(FONT_MCOLOR_LTGRAY);
+		MPrint(panel.x + 8, panel.y + 39,
+			"DOUBLE-CLICK MATERIAL TO DEPOSIT");
+
+		for (size_t i = 0; i < gSectorUpgrades.size(); ++i)
+		{
+			SectorUpgrade const& upgrade = gSectorUpgrades[i];
+			const INT16 y = panel.y + 55 + static_cast<INT16>(i) * 29;
+			const BOOLEAN built = HasUpgrade(upgrade);
+			const BOOLEAN ready = CanBuildUpgrade(upgrade);
+			OutlineBox(panel.x + 8, y, panel.w - 16, 26,
+				ready ? Get16BPPColor(FROMRGB(205, 12, 12)) : red);
+			SetFontForeground(built ? FONT_MCOLOR_RED :
+				ready ? FONT_WHITE : FONT_MCOLOR_DKGRAY);
+			MPrint(panel.x + 13, y + 4,
+				ST::format("{} {}", built ? "[BUILT]" : "[BUILD]", upgrade.name));
+			SetFontForeground(FONT_MCOLOR_LTGRAY);
+			MPrint(panel.x + 13, y + 14,
+				built ? upgrade.benefit : ST::format("W{} S{} R{} E{} / {}",
+					upgrade.timber, upgrade.stone, upgrade.scrap, upgrade.soil,
+					upgrade.benefit));
+		}
 		InvalidateRegion(panel.x, panel.y, panel.x + panel.w, panel.y + panel.h);
 	}
 
@@ -3088,6 +3563,9 @@ void InitializeOS0IngameUI()
 	gFloatingPanels[static_cast<size_t>(FloatingPanelId::OBJECT_INVENTORY)] =
 		{ centerX, std::max<INT16>(8, centerY - 40), PANE_W, BAG_H,
 			FALSE, FALSE, FALSE };
+	gFloatingPanels[static_cast<size_t>(FloatingPanelId::SECTOR)] =
+		{ std::max<INT16>(0, (gsVIEWPORT_END_X - SECTOR_PANEL_W) / 2), 24,
+			SECTOR_PANEL_W, SECTOR_PANEL_H, FALSE, FALSE, FALSE };
 	gFloatingPanels[static_cast<size_t>(FloatingPanelId::FEEDBACK)] =
 		{ std::max<INT16>(0, (gsVIEWPORT_END_X - FEEDBACK_PANEL_W) / 2),
 			std::max<INT16>(8, (gsVIEWPORT_END_Y - FEEDBACK_PANEL_H) / 2),
@@ -3158,6 +3636,14 @@ void InitializeOS0IngameUI()
 			FeedbackCallback);
 		gFeedbackRegions[i].SetUserData<0>(i);
 		gFeedbackRegions[i].Disable();
+	}
+	for (size_t i = 0; i < gSectorUpgradeRegions.size(); ++i)
+	{
+		MSYS_DefineRegion(&gSectorUpgradeRegions[i], 0, 0,
+			SECTOR_PANEL_W - 16, 26, MSYS_PRIORITY_HIGHEST, CURSOR_NORMAL,
+			MSYS_NO_CALLBACK, SectorUpgradeCallback);
+		gSectorUpgradeRegions[i].SetUserData<0>(i);
+		gSectorUpgradeRegions[i].Disable();
 	}
 	for (size_t i = 0; i < gSlots.size(); ++i)
 	{
@@ -3234,6 +3720,7 @@ void ShutdownOS0IngameUI()
 	for (MOUSE_REGION& r : gToolRegions) MSYS_RemoveRegion(&r);
 	for (MOUSE_REGION& r : gActionPanelRegions) MSYS_RemoveRegion(&r);
 	for (MOUSE_REGION& r : gFeedbackRegions) MSYS_RemoveRegion(&r);
+	for (MOUSE_REGION& r : gSectorUpgradeRegions) MSYS_RemoveRegion(&r);
 	for (MOUSE_REGION& r : gSlotRegions) MSYS_RemoveRegion(&r);
 	for (MOUSE_REGION& r : gObjectSlotRegions) MSYS_RemoveRegion(&r);
 	MSYS_RemoveRegion(&gOrbRegion);
@@ -3356,6 +3843,7 @@ void RenderOS0IngameUI()
 		DrawContextPanel();
 		DrawToolsPanel();
 		DrawActionsPanel();
+		DrawSectorPanel();
 		const FloatingPanel& objectPanel =
 			gFloatingPanels[static_cast<size_t>(FloatingPanelId::OBJECT_INVENTORY)];
 		if (objectPanel.visible)
@@ -3442,13 +3930,8 @@ BOOLEAN OS0SelectWorldObject(SOLDIERTYPE* target, GridNo gridNo,
 	const BOOLEAN hasItems = GetItemPool(gridNo, level) != nullptr;
 	const BOOLEAN hasAsset = tileIndex < NUMBEROFTILES;
 	if (!hasItems && !hasAsset) return FALSE;
-	STRUCTURE const* const selectedStructure = hasAsset ?
-		WorldStructureAt(gridNo, level, tileIndex) : nullptr;
-	gContextTitle = !selectedStructure ? (hasItems ? "GROUND ITEMS" : "WORLD ASSET") :
-		selectedStructure->fFlags & STRUCTURE_OPENABLE ? "CONTAINER" :
-		selectedStructure->fFlags & STRUCTURE_TREE ? "TREE / RESOURCE" :
-		selectedStructure->fFlags & STRUCTURE_ANYFENCE ? "FENCE" :
-		selectedStructure->fFlags & STRUCTURE_ANYDOOR ? "DOOR" : "WORLD ASSET";
+	gContextTitle = hasAsset ? DescribeWorldAsset(gridNo, level, tileIndex).displayName :
+		(hasItems ? "GROUND ITEMS" : "WORLD ASSET");
 	const BOOLEAN sameWorldSelection =
 		gInspectedSoldier == nullptr &&
 		gInspectedGridNo == gridNo &&
@@ -3514,18 +3997,7 @@ void OS0HoverWorldObject(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 	}
 	else
 	{
-		STRUCTURE const* const structure = FindStructure(gridNo,
-			STRUCTURE_TYPE_DEFINED);
-		if (structure && structure->fFlags & STRUCTURE_OPENABLE)
-			gHoverTitle = "CONTAINER / WORLD ASSET";
-		else if (structure && structure->fFlags & STRUCTURE_TREE)
-			gHoverTitle = "TREE / RESOURCE";
-		else if (structure && structure->fFlags & STRUCTURE_ANYFENCE)
-			gHoverTitle = "FENCE / WORLD ASSET";
-		else if (structure && structure->fFlags & STRUCTURE_ANYDOOR)
-			gHoverTitle = "DOOR / WORLD ASSET";
-		else
-			gHoverTitle = "WORLD ASSET";
+		gHoverTitle = DescribeWorldAsset(gridNo, level, tileIndex).displayName;
 		gHoverDetail = "LMB SELECT  RMB ACTIONS  DOUBLE OPEN";
 	}
 
@@ -3618,11 +4090,8 @@ void OS0OpenContextMenu(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 		gContextWorldItemIndex = pool ? pool->iItemIndex : -1;
 		STRUCTURE const* const structure = hasAsset ?
 			WorldStructureAt(gridNo, level, tileIndex) : nullptr;
-		gContextTitle = !structure ? (hasItems ? "GROUND ITEMS" : "WORLD ASSET") :
-			structure->fFlags & STRUCTURE_OPENABLE ? "CONTAINER" :
-			structure->fFlags & STRUCTURE_TREE ? "TREE / RESOURCE" :
-			structure->fFlags & STRUCTURE_ANYFENCE ? "FENCE" :
-			structure->fFlags & STRUCTURE_ANYDOOR ? "DOOR" : "WORLD ASSET";
+		gContextTitle = hasAsset ? DescribeWorldAsset(gridNo, level, tileIndex).displayName :
+			(hasItems ? "GROUND ITEMS" : "WORLD ASSET");
 		const BOOLEAN near = IsInspectedWorldAssetNear();
 		AddContextEntry(ContextAction::INSPECT, "INSPECT / INFO");
 		if (hasItems || (structure && structure->fFlags & STRUCTURE_OPENABLE &&
@@ -3637,6 +4106,19 @@ void OS0OpenContextMenu(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 				near && IsInspectedWorldAssetMovable());
 			AddContextEntry(ContextAction::BUILD,
 				"BUILD / SALVAGE REQUIREMENTS");
+		}
+		if (hasAsset)
+		{
+			SalvageProfile const salvage = DescribeWorldAsset(gridNo, level, tileIndex);
+			if (salvage.salvageable)
+			{
+				const BOOLEAN tool = HasDiggingTool(selected);
+				AddContextEntry(ContextAction::SALVAGE,
+					!tool ? "DISMANTLE / NEED FIELD TOOL" :
+					ST::format("DISMANTLE / +{} {}", salvage.amount,
+						ResourceName(salvage.resource)),
+					CanSalvageWorldAsset(selected, gridNo, level, tileIndex));
+			}
 		}
 		if (level == 0 && gpWorldLevelData[gridNo].pLandHead && !structure)
 		{
@@ -3837,6 +4319,9 @@ void OS0OpenWorldContainer(GridNo gridNo, UINT8 level, UINT16 tileIndex)
 	if (GetJA2Clock() < gPanelInteractionGuardUntil) return;
 	tileIndex = ResolveWorldTileIndex(gridNo, level, tileIndex);
 	CloseContextMenu();
+	gContextTitle = tileIndex < NUMBEROFTILES ?
+		DescribeWorldAsset(gridNo, level, tileIndex).displayName : "GROUND ITEMS";
+	EnsureContainerLoot(gridNo, level, tileIndex);
 	gLootGridNo = gridNo;
 	gLootLevel = level;
 	gLootTileIndex = tileIndex;

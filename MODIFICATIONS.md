@@ -18,6 +18,11 @@ Strategy First source-code license agreement.
 - Added early terrain digging with persistent land/object map changes.
 - Added in-game playtest feedback reports with contextual event and engine logs.
 - Disabled or bypassed obsolete laptop/IMP paths used by the original game flow.
+- Added deterministic first-open container loot without world-item locator flashes.
+- Added distinct timber, stone, scrap and topsoil item models in unused item slots.
+- Classified interactive world assets by structure flags and physical material.
+- Added persistent dismantling, harvesting and material-producing terrain actions.
+- Added save-compatible per-sector stockpiles and three buildable sector upgrades.
 
 The code is experimental and does not represent an official JA2 Stracciatella release.
 
@@ -28,3 +33,16 @@ The code is experimental and does not represent an official JA2 Stracciatella re
 - Made diagnostic event capture exception-safe so logging cannot terminate gameplay.
 - Moved draggable-window coordinate and hit-region synchronization to one update per
   rendered frame, eliminating raw mouse-event/render races and reducing drag artifacts.
+
+## v0.2.0-alpha resource loop
+
+- Wooden and metal doors, fences, furniture, containers, stone deposits and debris now
+  receive distinct inspector names and material-aware actions.
+- Nearby salvageable assets can be dismantled with the field tool. The world structure
+  is removed through the engine map-change system and produces physical material stacks.
+- Digging produces topsoil or stone instead of only changing the ground graphic.
+- Containers are seeded once with deterministic materials plus useful or damaged gear;
+  an invisible savegame marker prevents repeated refilling after they are emptied.
+- Double-clicking a material in object inventory deposits it into the current sector.
+- The new `SECT` panel builds a Field Shelter, Salvage Workshop and Secure Depot. Stockpile
+  counts and completed upgrades are stored in the sector information saved by JA2.

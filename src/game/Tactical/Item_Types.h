@@ -1,3 +1,9 @@
+/*
+ * Escape from Arulco modification notice:
+ * Modified from JA2 Stracciatella on 2026-07-28.
+ * See /MODIFICATIONS.md and the SFI source-code license agreement.
+ */
+
 #ifndef ITEM_TYPES_H
 #define ITEM_TYPES_H
 
@@ -585,12 +591,12 @@ enum ITEMDEFINE
 	SILVER,
 	GOLD,
 	GAS_CAN,
-	__ITEM_328, // UNUSED_26,
-	__ITEM_329, // UNUSED_27,
-	__ITEM_330, // UNUSED_28,
+	OS0_TIMBER,
+	OS0_STONE,
+	OS0_SCRAP,
 
-	__ITEM_331, // UNUSED_29,
-	__ITEM_332, // UNUSED_30,
+	__ITEM_331, // M14COPY in weapons.json
+	OS0_SOIL,
 	__ITEM_333, // UNUSED_31,
 	__ITEM_334, // UNUSED_32,
 	__ITEM_335, // UNUSED_33,

@@ -19,11 +19,14 @@ playtest in its own folder and point the launcher to the original game directory
 2. Move every OS0 window, close it and reopen it from the bottom dock.
 3. Equip, swap and drop items using drag and drop.
 4. Right-click weapons and exercise every enabled weapon action.
-5. Open and loot a container; verify that opening does not instantly close it.
-6. Carry a movable container and place it on another valid tile.
-7. Right-click nearby grass or dirt and use `DIG`.
-8. Aim while panels are open and verify that they do not obstruct the shot.
-9. Save, reload and revisit changed terrain or moved objects.
+5. Open several containers; verify each contains material plus useful or damaged gear.
+6. Double-click timber, stone, scrap and soil; verify the `SECT` stockpile increases.
+7. Dismantle a wooden door, fence or furniture object and loot its material output.
+8. Salvage stone/debris and right-click nearby grass or dirt to use `DIG`.
+9. Build all three upgrades in `SECT`; verify the workshop/depot bonuses affect yields.
+10. Carry a movable container and place it on another valid tile.
+11. Aim while panels are open and verify that they do not obstruct the shot.
+12. Save, reload and verify stockpile, upgrades, changed terrain and removed structures.
 
 ## Writing a useful report
 
@@ -47,4 +50,3 @@ If an emergency save exists, attach that as well when GitHub accepts the file ty
 
 Reports include gameplay metadata and logs, but no original JA2 archives, passwords
 or personal documents.
-
