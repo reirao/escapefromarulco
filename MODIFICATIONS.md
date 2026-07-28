@@ -21,3 +21,10 @@ Strategy First source-code license agreement.
 
 The code is experimental and does not represent an official JA2 Stracciatella release.
 
+## v0.1.1-alpha hotfix
+
+- Removed an unsupported String Theory alignment specifier that crashed on the first
+  recorded context action with `Unexpected character in format string`.
+- Made diagnostic event capture exception-safe so logging cannot terminate gameplay.
+- Moved draggable-window coordinate and hit-region synchronization to one update per
+  rendered frame, eliminating raw mouse-event/render races and reducing drag artifacts.

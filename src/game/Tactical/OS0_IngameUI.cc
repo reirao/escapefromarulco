@@ -381,8 +381,16 @@ namespace
 
 	void RecordFeedbackEvent(const ST::string& event)
 	{
-		gFeedbackEvents[gFeedbackEventNext] = ST::format("{:>8}ms  {}",
-			GetJA2Clock(), event);
+		try
+		{
+			gFeedbackEvents[gFeedbackEventNext] = ST::format("{}ms  {}",
+				GetJA2Clock(), event);
+		}
+		catch (...)
+		{
+			// Diagnostics must never be capable of terminating gameplay.
+			gFeedbackEvents[gFeedbackEventNext] = event;
+		}
 		gFeedbackEventNext = (gFeedbackEventNext + 1) % gFeedbackEvents.size();
 		gFeedbackEventCount = std::min(gFeedbackEventCount + 1,
 			gFeedbackEvents.size());
@@ -1137,12 +1145,59 @@ namespace
 		if (gContextVisible) PositionContextRegions();
 	}
 
+	BOOLEAN UpdateWindowDragging()
+	{
+		BOOLEAN moved = FALSE;
+		if (gBagDragging)
+		{
+			const INT16 x = std::clamp<INT16>(gusMouseXPos - gDragOffsetX, 0,
+				std::max<INT16>(0, gsVIEWPORT_END_X - PANE_W));
+			const INT16 y = std::clamp<INT16>(gusMouseYPos - gDragOffsetY, 0,
+				std::max<INT16>(0, gsVIEWPORT_END_Y - BAG_H));
+			moved = x != gBagX || y != gBagY;
+			gBagX = x;
+			gBagY = y;
+		}
+		for (FloatingPanel& panel : gFloatingPanels)
+		{
+			if (!panel.dragging) continue;
+			const INT16 x = std::clamp<INT16>(gusMouseXPos - gDragOffsetX, 0,
+				std::max<INT16>(0, gsVIEWPORT_END_X - panel.w));
+			const INT16 y = std::clamp<INT16>(gusMouseYPos - gDragOffsetY, 0,
+				std::max<INT16>(0, gsVIEWPORT_END_Y - panel.h));
+			moved |= x != panel.x || y != panel.y;
+			panel.x = x;
+			panel.y = y;
+		}
+		if (gOrbDragging)
+		{
+			const INT16 x = std::clamp<INT16>(gusMouseXPos - gDragOffsetX, 0,
+				std::max<INT16>(0, gsVIEWPORT_END_X - 28));
+			const INT16 y = std::clamp<INT16>(gusMouseYPos - gDragOffsetY, 0,
+				std::max<INT16>(0, gsVIEWPORT_END_Y - 28));
+			const BOOLEAN orbMoved = x != gOrbX || y != gOrbY;
+			gOrbMoved |= orbMoved;
+			moved |= orbMoved;
+			gOrbX = x;
+			gOrbY = y;
+		}
+		if (moved)
+		{
+			// Synchronize all hit regions exactly once per rendered frame. Updating
+			// them for every raw mouse event made regions and pixels race each other.
+			MoveRegion(gOrbRegion, gOrbX, gOrbY);
+			PositionBagRegions();
+			SetRenderFlags(RENDER_FLAG_FULL);
+		}
+		return moved;
+	}
+
 	void BagBlockCallback(MOUSE_REGION*, UINT32)
 	{
 		// Intentionally consumes clicks so they do not reach the tactical world.
 	}
 
-	void BagGrabberCallback(MOUSE_REGION* region, UINT32 reason)
+	void BagGrabberCallback(MOUSE_REGION*, UINT32 reason)
 	{
 		if (reason & MSYS_CALLBACK_REASON_POINTER_DWN)
 		{
@@ -1150,17 +1205,14 @@ namespace
 			gDragOffsetX = gusMouseXPos - gBagX;
 			gDragOffsetY = gusMouseYPos - gBagY;
 		}
-		if ((reason & MSYS_CALLBACK_REASON_MOVE) && gBagDragging &&
-			(region->ButtonState & MSYS_LEFT_BUTTON))
+		if (reason & MSYS_CALLBACK_REASON_POINTER_DWN)
+			SetRenderFlags(RENDER_FLAG_FULL);
+		if (reason & MSYS_CALLBACK_REASON_POINTER_UP)
 		{
-			gBagX = std::clamp<INT16>(gusMouseXPos - gDragOffsetX, 0,
-				std::max<INT16>(0, gsVIEWPORT_END_X - PANE_W));
-			gBagY = std::clamp<INT16>(gusMouseYPos - gDragOffsetY, 0,
-				std::max<INT16>(0, gsVIEWPORT_END_Y - BAG_H));
-			PositionBagRegions();
+			UpdateWindowDragging();
+			gBagDragging = FALSE;
 			SetRenderFlags(RENDER_FLAG_FULL);
 		}
-		if (reason & MSYS_CALLBACK_REASON_POINTER_UP) gBagDragging = FALSE;
 	}
 
 	void BagCloseCallback(MOUSE_REGION*, UINT32 reason)
@@ -1186,17 +1238,14 @@ namespace
 			gDragOffsetX = gusMouseXPos - panel.x;
 			gDragOffsetY = gusMouseYPos - panel.y;
 		}
-		if ((reason & MSYS_CALLBACK_REASON_MOVE) && panel.dragging &&
-			(region->ButtonState & MSYS_LEFT_BUTTON))
+		if (reason & MSYS_CALLBACK_REASON_POINTER_DWN)
+			SetRenderFlags(RENDER_FLAG_FULL);
+		if (reason & MSYS_CALLBACK_REASON_POINTER_UP)
 		{
-			panel.x = std::clamp<INT16>(gusMouseXPos - gDragOffsetX, 0,
-				std::max<INT16>(0, gsVIEWPORT_END_X - panel.w));
-			panel.y = std::clamp<INT16>(gusMouseYPos - gDragOffsetY, 0,
-				std::max<INT16>(0, gsVIEWPORT_END_Y - panel.h));
-			PositionBagRegions();
+			UpdateWindowDragging();
+			panel.dragging = FALSE;
 			SetRenderFlags(RENDER_FLAG_FULL);
 		}
-		if (reason & MSYS_CALLBACK_REASON_POINTER_UP) panel.dragging = FALSE;
 	}
 
 	void FloatingPanelCloseCallback(MOUSE_REGION* region, UINT32 reason)
@@ -2129,7 +2178,7 @@ namespace
 		SetRenderFlags(RENDER_FLAG_FULL);
 	}
 
-	void OrbCallback(MOUSE_REGION* region, UINT32 reason)
+	void OrbCallback(MOUSE_REGION*, UINT32 reason)
 	{
 		if (reason & MSYS_CALLBACK_REASON_POINTER_DWN)
 		{
@@ -2138,31 +2187,20 @@ namespace
 			gDragOffsetX = gusMouseXPos - gOrbX;
 			gDragOffsetY = gusMouseYPos - gOrbY;
 		}
-		if ((reason & MSYS_CALLBACK_REASON_MOVE) && gOrbDragging &&
-			(region->ButtonState & MSYS_LEFT_BUTTON))
+		if (reason & MSYS_CALLBACK_REASON_POINTER_DWN)
+			SetRenderFlags(RENDER_FLAG_FULL);
+		if (reason & MSYS_CALLBACK_REASON_POINTER_UP)
 		{
-			const INT16 oldX = gOrbX;
-			const INT16 oldY = gOrbY;
-			gOrbX = std::clamp<INT16>(gusMouseXPos - gDragOffsetX, 0,
-				std::max<INT16>(0, gsVIEWPORT_END_X - 28));
-			gOrbY = std::clamp<INT16>(gusMouseYPos - gDragOffsetY, 0,
-				std::max<INT16>(0, gsVIEWPORT_END_Y - 28));
-			gOrbMoved |= oldX != gOrbX || oldY != gOrbY;
-			MoveRegion(gOrbRegion, gOrbX, gOrbY);
-			PositionBagRegions();
+			UpdateWindowDragging();
+			gOrbDragging = FALSE;
+			if (!gOrbMoved)
+			{
+				gBagVisible = !gBagVisible;
+				if (gBagVisible) gPanelInteractionGuardUntil = 0;
+				SetBagRegionsEnabled(TRUE);
+			}
 			SetRenderFlags(RENDER_FLAG_FULL);
 		}
-	if (reason & MSYS_CALLBACK_REASON_POINTER_UP)
-	{
-		gOrbDragging = FALSE;
-		if (!gOrbMoved)
-		{
-			gBagVisible = !gBagVisible;
-			if (gBagVisible) gPanelInteractionGuardUntil = 0;
-			SetBagRegionsEnabled(TRUE);
-			SetRenderFlags(RENDER_FLAG_FULL);
-		}
-	}
 	}
 
 	void DrawOrb()
@@ -3244,6 +3282,7 @@ void ShutdownOS0IngameUI()
 void RenderOS0IngameUI()
 {
 	if (!gInitialized) InitializeOS0IngameUI();
+	UpdateWindowDragging();
 	if (!gTutorialActive && !gFieldToolIssued)
 	{
 		if (SOLDIERTYPE* const selected = GetSelectedMan())

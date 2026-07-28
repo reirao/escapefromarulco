@@ -8,8 +8,8 @@ An experimental, non-commercial rework of *Jagged Alliance 2* built on
 
 ## Download and play
 
-1. Open the [v0.1.0-alpha release](https://github.com/reirao/escapefromarulco/releases/tag/v0.1.0-alpha).
-2. Download `Escape-from-Arulco-Playtest-2026-07-28.zip`.
+1. Open the [v0.1.1-alpha release](https://github.com/reirao/escapefromarulco/releases/tag/v0.1.1-alpha).
+2. Download `Escape-from-Arulco-Playtest-v0.1.1-alpha.zip`.
 3. Extract the complete ZIP into a writable folder.
 4. Run `START_PLAYTEST.cmd`.
 5. In the launcher, select your own legally installed JA2 or JA2 Gold directory.
