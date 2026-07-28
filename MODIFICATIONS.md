@@ -99,3 +99,8 @@ The code is experimental and does not represent an official JA2 Stracciatella re
 - Made the Field Shelter's advertised recovery role functional.
 - Added `FEATURE_WIRING.md`, including explicit boundaries for metadata-only
   blueprints, surface digging, early physics, JA2 1.13 and multiplayer.
+- Rebuilt the OS0 presentation around the concept artwork: full-width eight-module
+  command bar, quiet corner branding, live system/event log, thin red-black field
+  panels and a deterministic wide/compact workspace layout.
+- The `TACTICAL` module now clears the workspace and cancels contextual tools, while
+  every other module continues to open the real wired character/gameplay window.
