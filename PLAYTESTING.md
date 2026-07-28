@@ -22,16 +22,23 @@ playtest in its own folder and point the launcher to the original game directory
 4. Open the God icon library from the second frame, select several symbols and verify
    the selected symbol becomes the God/library button on the next long-hold.
 5. Use stealth, weapon mode and reload from the extended frame.
-6. Equip, swap and drop items using drag and drop.
-7. Right-click weapons and exercise every enabled weapon action.
-8. Open several containers; verify each contains material plus useful or damaged gear.
-9. Double-click timber, stone, scrap and soil; verify the `SECT` stockpile increases.
-10. Dismantle a wooden door, fence or furniture object and loot its material output.
-11. Salvage stone/debris and right-click nearby grass or dirt to use `DIG`.
-12. Build all three upgrades in `SECT`; verify the workshop/depot bonuses affect yields.
-13. Carry a movable container and place it on another valid tile.
-14. Aim while panels are open and verify that they do not obstruct the shot.
-15. Save, reload and verify stockpile, upgrades, changed terrain and removed structures.
+6. Right-click a sandbag, door, container, stone field and large scenery object. Use
+   `GOD / CATALOG ASSET`, give it a name and verify category/material/role and footprint.
+7. Save, reopen the same object and verify its catalog entry persists. For a multi-tile
+   object, click another segment and verify it resolves to the same base entry.
+8. Mark an asset buildable and verify the action panel calls it a placeable blueprint.
+9. Inspect `%APPDATA%\JA2\AssetCatalog\os0-assets.tsv`; it should contain no graphics,
+   only shareable metadata.
+10. Equip, swap and drop items using drag and drop.
+11. Right-click weapons and exercise every enabled weapon action.
+12. Open several containers; verify each contains material plus useful or damaged gear.
+13. Double-click timber, stone, scrap and soil; verify the `SECT` stockpile increases.
+14. Dismantle a wooden door, fence or furniture object and loot its material output.
+15. Salvage stone/debris and right-click nearby grass or dirt to use `DIG`.
+16. Build all three upgrades in `SECT`; verify the workshop/depot bonuses affect yields.
+17. Carry a movable container and place it on another valid tile.
+18. Aim while panels are open and verify that they do not obstruct the shot.
+19. Save, reload and verify stockpile, upgrades, changed terrain and removed structures.
 
 ## Writing a useful report
 

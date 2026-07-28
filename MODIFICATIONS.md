@@ -57,3 +57,15 @@ The code is experimental and does not represent an official JA2 Stracciatella re
 - Long-holding over another owned merc now selects that merc before opening the menu.
 - Added an in-game atlas of the 24 reusable action and door symbols contained in
   JA2's `newicons3.sti` and `door_op2.sti`; the selected symbol becomes the God button.
+
+## v0.4.0-alpha community asset catalog
+
+- Added `GOD / CATALOG ASSET` to world-object context and action menus.
+- Assets are keyed by tileset plus canonical base-tile ID, so multi-tile scenery is
+  recorded once rather than once for every clicked segment.
+- The editor proposes category, material and the real structure footprint, then allows
+  the player to set a free name, category, material, role, width, height and whether
+  the asset is buildable/placeable.
+- Catalog entries immediately override generic inspector names and feed material,
+  resource type and footprint into salvage classification and blueprint labels.
+- The shareable database is stored at `%APPDATA%\JA2\AssetCatalog\os0-assets.tsv`.

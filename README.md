@@ -8,8 +8,8 @@ An experimental, non-commercial rework of *Jagged Alliance 2* built on
 
 ## Download and play
 
-1. Open the [v0.3.0-alpha release](https://github.com/reirao/escapefromarulco/releases/tag/v0.3.0-alpha).
-2. Download `Escape-from-Arulco-Playtest-v0.3.0-alpha.zip`.
+1. Open the [v0.4.0-alpha release](https://github.com/reirao/escapefromarulco/releases/tag/v0.4.0-alpha).
+2. Download `Escape-from-Arulco-Playtest-v0.4.0-alpha.zip`.
 3. Extract the complete ZIP into a writable folder.
 4. Run `START_PLAYTEST.cmd`.
 5. In the launcher, select your own legally installed JA2 or JA2 Gold directory.
@@ -28,6 +28,8 @@ the original JA2 game data. Windows x64 and an existing JA2 installation are req
 - Context-sensitive object, weapon, loot and stance actions
 - Extended graphical JA2 long-hold menu for character, inventory and combat actions
 - In-game God-mode atlas containing 24 reusable JA2 interface symbols
+- In-game asset catalog editor with custom names, categories, materials, roles and
+  measured multi-tile footprints
 - Movable world structures and early material/physics properties
 - Material-aware doors, furniture, fences, stone, debris and resource objects
 - Persistent container seeding with useful loot and recoverable materials
@@ -47,6 +49,11 @@ This is a systems prototype, not yet a balanced campaign.
 - **Double click:** open a character, container or world object
 - **SECT:** open the current sector stockpile and upgrade window
 - **FB:** open the feedback window, including during character creation
+- **GOD / CATALOG ASSET:** right-click a world asset and classify it for the shared
+  construction/resource database
+
+Asset classifications are written to `%APPDATA%\JA2\AssetCatalog\os0-assets.tsv`.
+This file can be shared between testers without distributing original JA2 graphics.
 
 In the feedback window, choose a category, describe the problem and press
 `SAVE REPORT`. Reports are saved to `%APPDATA%\JA2\Feedback` and include relevant
