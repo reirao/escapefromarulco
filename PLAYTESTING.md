@@ -39,6 +39,14 @@ playtest in its own folder and point the launcher to the original game directory
 17. Carry a movable container and place it on another valid tile.
 18. Aim while panels are open and verify that they do not obstruct the shot.
 19. Save, reload and verify stockpile, upgrades, changed terrain and removed structures.
+20. Hover empty ground, a container, movable scenery, a contact and a hostile. Verify
+    the cursor changes automatically; middle-click must cycle only valid actions.
+21. Right-click an owned merc and run `AI / RUN TO COVER + STANCE`. In combat it should
+    prefer threat-aware cover; in an empty test sector it should choose nearby geometry.
+22. Carry a catalogued portable asset. Verify its real sprite moves above the merc and
+    the destination remains separately marked.
+23. Shoot catalogued wood, stone and metal salvage/resource assets. Verify coloured
+    impact chips, eventual destruction and material loot; ordinary walls must remain.
 
 ## Writing a useful report
 

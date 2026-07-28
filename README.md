@@ -8,8 +8,8 @@ An experimental, non-commercial rework of *Jagged Alliance 2* built on
 
 ## Download and play
 
-1. Open the [v0.4.0-alpha release](https://github.com/reirao/escapefromarulco/releases/tag/v0.4.0-alpha).
-2. Download `Escape-from-Arulco-Playtest-v0.4.0-alpha.zip`.
+1. Open the [v0.5.0-alpha release](https://github.com/reirao/escapefromarulco/releases/tag/v0.5.0-alpha).
+2. Download `Escape-from-Arulco-Playtest-v0.5.0-alpha.zip`.
 3. Extract the complete ZIP into a writable folder.
 4. Run `START_PLAYTEST.cmd`.
 5. In the launcher, select your own legally installed JA2 or JA2 Gold directory.
@@ -26,11 +26,15 @@ the original JA2 game data. Windows x64 and an existing JA2 installation are req
 - Movable OS0 windows for character, context, tools, actions and object inventory
 - Character and container inventories with item drag and drop
 - Context-sensitive object, weapon, loot and stance actions
+- Hover-selected context cursors with middle-click cycling through valid actions
+- Player-issued AI command for running to cover and choosing prone/crouched stance
 - Extended graphical JA2 long-hold menu for character, inventory and combat actions
 - In-game God-mode atlas containing 24 reusable JA2 interface symbols
 - In-game asset catalog editor with custom names, categories, materials, roles and
   measured multi-tile footprints
 - Movable world structures and early material/physics properties
+- In-world carried asset sprites with movement bob and destination marker
+- Material-coloured impact chips and weapon damage for catalogued resource assets
 - Material-aware doors, furniture, fences, stone, debris and resource objects
 - Persistent container seeding with useful loot and recoverable materials
 - Dismantling and digging that produce timber, stone, scrap and topsoil

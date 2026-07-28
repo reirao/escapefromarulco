@@ -7,6 +7,7 @@
 #include "OS0_IngameUI.h"
 
 #include "Animation_Control.h"
+#include "AI.h"
 #include "ArmourModel.h"
 #include "Campaign_Types.h"
 #include "Cursors.h"
@@ -45,6 +46,7 @@
 #include "Soldier_Profile.h"
 #include "Soldier_Find.h"
 #include "Soldier_Control.h"
+#include "Soldier_Functions.h"
 #include "StrategicMap.h"
 #include "Structure.h"
 #include "Squads.h"
@@ -139,7 +141,8 @@ namespace
 		PICK_UP,
 		DIG,
 		SALVAGE,
-		CATALOG
+		CATALOG,
+		TAKE_COVER
 	};
 
 	enum class AssetCategory : UINT8
@@ -178,6 +181,22 @@ namespace
 		ContextAction action;
 		ST::string label;
 		BOOLEAN enabled;
+	};
+
+	struct ImpactParticle
+	{
+		GridNo gridNo;
+		INT8 velocityX;
+		INT8 velocityY;
+		UINT8 colourKind;
+		UINT32 born;
+	};
+
+	struct AssetDamageState
+	{
+		GridNo gridNo;
+		UINT16 tileIndex;
+		INT16 remaining;
 	};
 
 	enum class FloatingPanelId : UINT8
@@ -311,6 +330,15 @@ namespace
 	BOOLEAN gWorldMoveSourceShaded = FALSE;
 	UINT8 gWorldZoom = 1;
 	UINT8 gCursorAction = 0;
+	SOLDIERTYPE* gHoverCursorSoldier = nullptr;
+	GridNo gHoverCursorGridNo = NOWHERE;
+	UINT8 gHoverCursorLevel = 0;
+	UINT16 gHoverCursorTileIndex = NO_TILE;
+	SOLDIERTYPE* gCoverCommandSoldier = nullptr;
+	GridNo gCoverCommandDestination = NOWHERE;
+	std::array<ImpactParticle, 48> gImpactParticles{};
+	size_t gImpactParticleNext = 0;
+	std::vector<AssetDamageState> gAssetDamage;
 	BOOLEAN gGodLibraryVisible = FALSE;
 	BOOLEAN gAssetCatalogVisible = FALSE;
 	BOOLEAN gAssetCatalogNameEditing = FALSE;
@@ -615,6 +643,7 @@ namespace
 			case ContextAction::DIG: return "DIG";
 			case ContextAction::SALVAGE: return "SALVAGE";
 			case ContextAction::CATALOG: return "CATALOG";
+			case ContextAction::TAKE_COVER: return "TAKE_COVER";
 		}
 		return "UNKNOWN";
 	}
@@ -1610,6 +1639,102 @@ namespace
 		gLootVisible = TRUE;
 		gFloatingPanels[static_cast<size_t>(FloatingPanelId::OBJECT_INVENTORY)].visible = TRUE;
 		return TRUE;
+	}
+
+	INT8 NearbyCoverHeight(GridNo gridNo, UINT8 level)
+	{
+		INT8 height = 0;
+		for (UINT8 direction = 0; direction < NUM_WORLD_DIRECTIONS; ++direction)
+		{
+			const GridNo adjacent = NewGridNo(gridNo, DirectionInc(direction));
+			if (adjacent == gridNo || adjacent < 0 || adjacent >= WORLD_MAX) continue;
+			height = std::max<INT8>(height,
+				GetTallestStructureHeight(adjacent, level != 0));
+		}
+		return height;
+	}
+
+	GridNo FindFallbackNearbyCover(SOLDIERTYPE* soldier)
+	{
+		if (!soldier) return NOWHERE;
+		const INT16 originX = soldier->sGridNo % WORLD_COLS;
+		const INT16 originY = soldier->sGridNo / WORLD_COLS;
+		GridNo best = NOWHERE;
+		INT16 bestScore = 32000;
+		for (INT16 radius = 1; radius <= 8; ++radius)
+		{
+			for (INT16 dy = -radius; dy <= radius; ++dy)
+			{
+				for (INT16 dx = -radius; dx <= radius; ++dx)
+				{
+					if (std::max(std::abs(dx), std::abs(dy)) != radius) continue;
+					const INT16 x = originX + dx;
+					const INT16 y = originY + dy;
+					if (x < 0 || x >= WORLD_COLS || y < 0 || y >= WORLD_ROWS) continue;
+					const GridNo candidate = y * WORLD_COLS + x;
+					if (!NewOKDestination(soldier, candidate, TRUE, soldier->bLevel) ||
+						NearbyCoverHeight(candidate, soldier->bLevel) == 0) continue;
+					const INT16 path = PlotPath(soldier, candidate, NO_COPYROUTE,
+						NO_PLOT, RUNNING, 0);
+					if (path <= 0) continue;
+					const INT16 score = static_cast<INT16>(path * 4 -
+						NearbyCoverHeight(candidate, soldier->bLevel) * 3);
+					if (score < bestScore)
+					{
+						best = candidate;
+						bestScore = score;
+					}
+				}
+			}
+			if (best != NOWHERE) break;
+		}
+		return best;
+	}
+
+	BOOLEAN CommandRunToCover(SOLDIERTYPE* soldier)
+	{
+		if (!soldier || soldier->bTeam != OUR_TEAM || soldier->bLife < OKLIFE)
+			return FALSE;
+		INT32 improvement = 0;
+		GridNo destination = FindBestNearbyCover(soldier, MORALE_NORMAL,
+			&improvement);
+		if (destination == NOWHERE || destination == soldier->sGridNo)
+			destination = FindFallbackNearbyCover(soldier);
+		if (destination == NOWHERE || destination == soldier->sGridNo)
+		{
+			RecordFeedbackEvent("AI COVER / NO REACHABLE COVER");
+			return FALSE;
+		}
+		soldier->usUIMovementMode = RUNNING;
+		if (!EVENT_InternalGetNewSoldierPath(soldier, destination, RUNNING,
+			TRUE, TRUE)) return FALSE;
+		gCoverCommandSoldier = soldier;
+		gCoverCommandDestination = destination;
+		RecordFeedbackEvent(ST::format("AI COVER {} -> {}", soldier->name,
+			destination));
+		return TRUE;
+	}
+
+	void UpdateCoverCommand()
+	{
+		if (!gCoverCommandSoldier) return;
+		if (!gCoverCommandSoldier->bActive || gCoverCommandSoldier->bLife < OKLIFE)
+		{
+			gCoverCommandSoldier = nullptr;
+			gCoverCommandDestination = NOWHERE;
+			return;
+		}
+		if (gCoverCommandSoldier->sGridNo != gCoverCommandDestination) return;
+		const INT8 coverHeight = NearbyCoverHeight(gCoverCommandDestination,
+			gCoverCommandSoldier->bLevel);
+		const INT8 stance = coverHeight > 0 && coverHeight < 2 ?
+			ANIM_PRONE : ANIM_CROUCH;
+		if (IsValidStance(gCoverCommandSoldier, stance))
+			ChangeSoldierStance(gCoverCommandSoldier, stance);
+		RecordFeedbackEvent(ST::format("AI COVER ARRIVED / {}",
+			stance == ANIM_PRONE ? "PRONE" : "CROUCH"));
+		gCoverCommandSoldier = nullptr;
+		gCoverCommandDestination = NOWHERE;
 	}
 
 	void RefreshPanelActions()
@@ -2638,6 +2763,9 @@ namespace
 				break;
 			case ContextAction::CATALOG:
 				OpenAssetCatalog(gContextGridNo, gContextLevel, gContextTileIndex);
+				break;
+			case ContextAction::TAKE_COVER:
+				CommandRunToCover(subject);
 				break;
 		}
 		CloseContextMenu();
@@ -3942,37 +4070,65 @@ namespace
 		SetRenderFlags(RENDER_FLAG_FULL);
 	}
 
-	void DrawCarryGhost(INT16 x, INT16 y)
+	void DrawCarryGhost(INT16 x, INT16 y, BOOLEAN carried)
 	{
-		if (x < gsVIEWPORT_START_X + 15 || x > gsVIEWPORT_END_X - 15 ||
-			y < gsVIEWPORT_WINDOW_START_Y + 12 ||
-			y > gsVIEWPORT_WINDOW_END_Y - 12) return;
+		if (x < gsVIEWPORT_START_X || x > gsVIEWPORT_END_X ||
+			y < gsVIEWPORT_WINDOW_START_Y || y > gsVIEWPORT_WINDOW_END_Y) return;
+		const INT16 bob = static_cast<INT16>((GetJA2Clock() / 90) % 4);
+		if (gWorldMoveTileIndex < NUMBEROFTILES)
+		{
+			TILE_ELEMENT const& tile = gTileDatabase[gWorldMoveTileIndex];
+			if (tile.hTileSurface)
+			{
+				ETRLEObject const& frame =
+					tile.hTileSurface->SubregionProperties(tile.usRegionIndex);
+				const INT16 drawX = static_cast<INT16>(x - frame.usWidth / 2 -
+					frame.sOffsetX);
+				const INT16 drawY = static_cast<INT16>(y - frame.usHeight -
+					frame.sOffsetY + (carried ? -22 : 8) - bob);
+				BltVideoObject(FRAME_BUFFER, tile.hTileSurface, tile.usRegionIndex,
+					drawX, drawY);
+				const UINT16 red = Get16BPPColor(FROMRGB(205, 12, 12));
+				OutlineBox(x - 7, y - 4, 15, 8, red);
+				InvalidateRegion(std::max<INT16>(gsVIEWPORT_START_X, drawX - 2),
+					std::max<INT16>(gsVIEWPORT_WINDOW_START_Y, drawY - 2),
+					std::min<INT16>(gsVIEWPORT_END_X,
+						static_cast<INT16>(drawX + frame.usWidth + 2)),
+					std::min<INT16>(gsVIEWPORT_WINDOW_END_Y,
+						static_cast<INT16>(drawY + frame.usHeight + 2)));
+				return;
+			}
+		}
 		const UINT16 grey = Get16BPPColor(FROMRGB(112, 116, 116));
-		const UINT16 darkGrey = Get16BPPColor(FROMRGB(42, 46, 46));
-		ColorFillVideoSurfaceArea(FRAME_BUFFER, x - 12, y - 8, x + 12, y + 8,
-			darkGrey);
-		OutlineBox(x - 12, y - 8, 25, 17, grey);
-		ColorFillVideoSurfaceArea(FRAME_BUFFER, x - 9, y - 5, x + 9, y - 4,
-			grey);
-		ColorFillVideoSurfaceArea(FRAME_BUFFER, x - 9, y + 4, x + 9, y + 5,
-			grey);
-		ColorFillVideoSurfaceArea(FRAME_BUFFER, x - 1, y - 5, x + 1, y + 5,
-			grey);
-		InvalidateRegion(x - 14, y - 10, x + 14, y + 10);
+		OutlineBox(x - 12, y - 8 - bob, 25, 17, grey);
+		InvalidateRegion(x - 14, y - 12, x + 14, y + 10);
 	}
 
 	void DrawActionMenu()
 	{
 		if (gCursorAction != 2 && !gWorldMovePending && !gWorldMoveWalking) return;
 		if (gWorldMovePending)
-			DrawCarryGhost(gusMouseXPos, gusMouseYPos);
-		else if (gWorldMoveWalking && gWorldMoveDestination >= 0)
+			DrawCarryGhost(gusMouseXPos, gusMouseYPos, FALSE);
+		else if (gWorldMoveWalking && gWorldMoveCarrier)
 		{
 			INT16 x;
 			INT16 y;
-			GetGridNoScreenPos(gWorldMoveDestination, 0, &x, &y);
+			GetGridNoScreenPos(gWorldMoveCarrier->sGridNo,
+				gWorldMoveCarrier->bLevel, &x, &y);
 			OS0MapWorldToDisplayScreen(&x, &y);
-			DrawCarryGhost(x, y);
+			DrawCarryGhost(x, y, TRUE);
+			if (gWorldMoveDestination >= 0)
+			{
+				INT16 destinationX;
+				INT16 destinationY;
+				GetGridNoScreenPos(gWorldMoveDestination, 0,
+					&destinationX, &destinationY);
+				OS0MapWorldToDisplayScreen(&destinationX, &destinationY);
+				const UINT16 red = Get16BPPColor(FROMRGB(205, 12, 12));
+				OutlineBox(destinationX - 9, destinationY - 5, 19, 10, red);
+				InvalidateRegion(destinationX - 11, destinationY - 7,
+					destinationX + 11, destinationY + 7);
+			}
 		}
 		else
 		{
@@ -3984,6 +4140,52 @@ namespace
 			InvalidateRegion(gusMouseXPos - 13, gusMouseYPos - 13,
 				gusMouseXPos + 13, gusMouseYPos + 13);
 		}
+	}
+
+	void DrawImpactParticles()
+	{
+		const UINT32 now = GetJA2Clock();
+		BOOLEAN active = FALSE;
+		for (ImpactParticle& particle : gImpactParticles)
+		{
+			if (particle.born == 0) continue;
+			const UINT32 age = now - particle.born;
+			if (age > 720)
+			{
+				particle.born = 0;
+				continue;
+			}
+			active = TRUE;
+			INT16 x;
+			INT16 y;
+			GetGridNoScreenPos(particle.gridNo, 0, &x, &y);
+			OS0MapWorldToDisplayScreen(&x, &y);
+			x = static_cast<INT16>(x + particle.velocityX *
+				static_cast<INT32>(age) / 90);
+			y = static_cast<INT16>(y - 20 + particle.velocityY *
+				static_cast<INT32>(age) / 110 +
+				static_cast<INT32>(age * age) / 60000);
+			if (x < gsVIEWPORT_START_X || x >= gsVIEWPORT_END_X - 2 ||
+				y < gsVIEWPORT_WINDOW_START_Y || y >= gsVIEWPORT_WINDOW_END_Y - 2)
+				continue;
+			UINT16 colour = Get16BPPColor(FROMRGB(150, 145, 132));
+			switch (static_cast<AssetMaterial>(particle.colourKind))
+			{
+				case AssetMaterial::WOOD:
+				case AssetMaterial::ORGANIC:
+					colour = Get16BPPColor(FROMRGB(135, 86, 42)); break;
+				case AssetMaterial::STONE:
+				case AssetMaterial::SAND:
+				case AssetMaterial::EARTH:
+					colour = Get16BPPColor(FROMRGB(145, 137, 118)); break;
+				case AssetMaterial::METAL:
+					colour = Get16BPPColor(FROMRGB(235, 188, 62)); break;
+				default: break;
+			}
+			ColorFillVideoSurfaceArea(FRAME_BUFFER, x, y, x + 1, y + 1, colour);
+			InvalidateRegion(x - 1, y - 1, x + 3, y + 3);
+		}
+		if (active) SetRenderFlags(RENDER_FLAG_FULL);
 	}
 
 	void GodIconCallback(MOUSE_REGION* region, UINT32 reason)
@@ -4174,6 +4376,84 @@ namespace
 		MPrint(gAssetCatalogX + 207, gAssetCatalogY + 171, "SAVE TO DATABASE");
 		InvalidateRegion(gAssetCatalogX, gAssetCatalogY,
 			gAssetCatalogX + ASSET_CATALOG_W, gAssetCatalogY + ASSET_CATALOG_H);
+	}
+
+	size_t BuildContextCursorActions(SOLDIERTYPE* target, GridNo gridNo,
+		UINT8 level, UINT16 tileIndex, std::array<UINT8, 6>& available)
+	{
+		size_t count = 0;
+		auto add = [&](UINT8 action)
+		{
+			if (count >= available.size()) return;
+			for (size_t i = 0; i < count; ++i)
+				if (available[i] == action) return;
+			available[count++] = action;
+		};
+
+		SOLDIERTYPE* const selected = GetSelectedMan();
+		const BOOLEAN validGrid = gridNo >= 0 && gridNo < WORLD_MAX;
+		const BOOLEAN hasItems = validGrid && GetItemPool(gridNo, level) != nullptr;
+		const BOOLEAN hasAsset = validGrid && tileIndex < NUMBEROFTILES;
+		STRUCTURE const* const structure = hasAsset ?
+			WorldStructureAt(gridNo, level, tileIndex) : nullptr;
+		const BOOLEAN openable = structure &&
+			(structure->fFlags & STRUCTURE_OPENABLE) &&
+			!(structure->fFlags & STRUCTURE_ANYDOOR);
+		const BOOLEAN movable = hasAsset && IsWorldAssetMovableAt(gridNo,
+			level, tileIndex, selected);
+		const BOOLEAN armed = selected && selected->inv[HANDPOS].usItem != NOTHING &&
+			GCM->getItem(selected->inv[HANDPOS].usItem)->isWeapon();
+
+		if (target)
+		{
+			if (target->bTeam == OUR_TEAM)
+			{
+				add(1); // Own operator: character/inventory is the natural default.
+				add(3);
+			}
+			else
+			{
+				const BOOLEAN hostile = target->bTeam == ENEMY_TEAM ||
+					target->bTeam == CREATURE_TEAM;
+				if (hostile && armed) add(5);
+				if (!hostile) add(4);
+				add(3);
+				if (!hostile && armed) add(5);
+			}
+		}
+		else if (hasItems || openable)
+		{
+			add(1);
+			add(3);
+			if (movable) add(2);
+		}
+		else if (movable)
+		{
+			add(2);
+			add(3);
+			add(1);
+		}
+		else if (hasAsset)
+		{
+			add(3);
+			if (armed) add(5);
+		}
+		add(0); // Moving remains the universal way out of a contextual tool.
+		return count;
+	}
+
+	const char* CursorActionLabel(UINT8 action)
+	{
+		switch (action)
+		{
+			case 0: return "MOVE";
+			case 1: return "USE / LOOT";
+			case 2: return "CARRY";
+			case 3: return "INSPECT";
+			case 4: return "TALK";
+			case 5: return "ATTACK";
+		}
+		return "ACTION";
 	}
 }
 
@@ -4453,6 +4733,12 @@ void ShutdownOS0IngameUI()
 	gGodLibraryVisible = FALSE;
 	gAssetCatalogVisible = FALSE;
 	gAssetCatalogNameEditing = FALSE;
+	gHoverCursorSoldier = nullptr;
+	gHoverCursorGridNo = NOWHERE;
+	gCoverCommandSoldier = nullptr;
+	gCoverCommandDestination = NOWHERE;
+	gAssetDamage.clear();
+	for (ImpactParticle& particle : gImpactParticles) particle.born = 0;
 	gInitialized = FALSE;
 }
 
@@ -4507,6 +4793,7 @@ void RenderOS0IngameUI()
 		}
 	}
 	UpdateWorldMove();
+	UpdateCoverCommand();
 	if (gLootVisible && !IsInspectedWorldAssetNear())
 	{
 		gLootVisible = FALSE;
@@ -4550,6 +4837,7 @@ void RenderOS0IngameUI()
 		}
 	}
 	DrawWorldSelection();
+	DrawImpactParticles();
 	DrawOrb();
 	DrawActionMenu();
 	DrawHoverInspector();
@@ -4725,6 +5013,23 @@ void OS0HoverWorldObject(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 	UINT16 tileIndex, INT16 screenX, INT16 screenY)
 {
 	tileIndex = ResolveWorldTileIndex(gridNo, level, tileIndex);
+	const BOOLEAN cursorContextChanged = target != gHoverCursorSoldier ||
+		gridNo != gHoverCursorGridNo || level != gHoverCursorLevel ||
+		tileIndex != gHoverCursorTileIndex;
+	if (cursorContextChanged)
+	{
+		gHoverCursorSoldier = target;
+		gHoverCursorGridNo = gridNo;
+		gHoverCursorLevel = level;
+		gHoverCursorTileIndex = tileIndex;
+		if (!gWorldMovePending && !gWorldMoveWalking)
+		{
+			std::array<UINT8, 6> actions{};
+			if (BuildContextCursorActions(target, gridNo, level, tileIndex,
+				actions) > 0 && actions[0] != gCursorAction)
+				ApplyCursorTool(actions[0]);
+		}
+	}
 	const BOOLEAN validGrid = gridNo >= 0 && gridNo < WORLD_MAX;
 	ITEM_POOL* const pool = validGrid ? GetItemPool(gridNo, level) : nullptr;
 	const BOOLEAN hasAsset = validGrid && tileIndex < NUMBEROFTILES;
@@ -4738,7 +5043,8 @@ void OS0HoverWorldObject(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 	if (target)
 	{
 		gHoverTitle = target->name;
-		gHoverDetail = ST::format("HP {}/{}  {}  RMB ACTIONS",
+		gHoverDetail = ST::format("{}  HP {}/{}  {}  MMB CYCLE",
+			CursorActionLabel(gCursorAction),
 			target->bLife, target->bLifeMax,
 			target->bTeam == OUR_TEAM ? "OPERATOR" : "CONTACT");
 	}
@@ -4748,15 +5054,17 @@ void OS0HoverWorldObject(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 		WORLDITEM const& worldItem = GetWorldItem(pool->iItemIndex);
 		gHoverTitle = worldItem.o.usItem != NOTHING ?
 			GCM->getItem(worldItem.o.usItem)->getName() : "GROUND ITEMS";
-		gHoverDetail = "LOOT  LMB SELECT  RMB ACTIONS";
+		gHoverDetail = ST::format("{}  LMB EXECUTE  MMB CYCLE",
+			CursorActionLabel(gCursorAction));
 	}
 	else
 	{
 		gHoverTitle = DescribeWorldAsset(gridNo, level, tileIndex).displayName;
-		gHoverDetail = "LMB SELECT  RMB ACTIONS  DOUBLE OPEN";
+		gHoverDetail = ST::format("{}  LMB EXECUTE  MMB CYCLE",
+			CursorActionLabel(gCursorAction));
 	}
 
-	constexpr INT16 width = 194;
+	constexpr INT16 width = 230;
 	constexpr INT16 height = 37;
 	const INT16 proposedX = screenX + 16 + width <= gsVIEWPORT_END_X ?
 		screenX + 16 : screenX - width - 10;
@@ -4802,6 +5110,8 @@ void OS0OpenContextMenu(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 			CanAccessSoldierContents(target));
 		if (own)
 		{
+			AddContextEntry(ContextAction::TAKE_COVER,
+				"AI / RUN TO COVER + STANCE");
 			AddContextEntry(ContextAction::STAND, "STANCE / STAND");
 			AddContextEntry(ContextAction::CROUCH, "STANCE / CROUCH");
 			AddContextEntry(ContextAction::PRONE, "STANCE / PRONE");
@@ -4925,6 +5235,8 @@ void OS0OpenContextMenu(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 		gContextTitle = selected->name;
 		AddContextEntry(ContextAction::INSPECT, "INSPECT / INFO");
 		AddContextEntry(ContextAction::CONTENTS, "INVENTORY");
+		AddContextEntry(ContextAction::TAKE_COVER,
+			"AI / RUN TO COVER + STANCE");
 		AddContextEntry(ContextAction::STAND, "STANCE / STAND");
 		AddContextEntry(ContextAction::CROUCH, "STANCE / CROUCH");
 		AddContextEntry(ContextAction::PRONE, "STANCE / PRONE");
@@ -4960,27 +5272,9 @@ void OS0CycleCursorAction(SOLDIERTYPE* target, GridNo gridNo, UINT8 level, UINT1
 {
 	tileIndex = ResolveWorldTileIndex(gridNo, level, tileIndex);
 	std::array<UINT8, 6> available{};
-	size_t count = 0;
-	available[count++] = 0; // Movement is always a valid escape mode.
-
-	SOLDIERTYPE* const selected = GetSelectedMan();
-	const BOOLEAN validGrid = gridNo >= 0 && gridNo < WORLD_MAX;
-	const BOOLEAN hasItems = validGrid && GetItemPool(gridNo, level) != nullptr;
-	const BOOLEAN hasInteractive = validGrid && tileIndex < NUMBEROFTILES;
-	const BOOLEAN movable = IsWorldAssetMovableAt(gridNo, level, tileIndex,
-		selected);
-
-	if (hasItems || hasInteractive || (target && target->bTeam == OUR_TEAM))
-		available[count++] = 1; // Hand / use / loot.
-	if (movable) available[count++] = 2; // Carry environment object.
-	if (validGrid || target) available[count++] = 3; // Look.
-	if (target && target->bTeam != OUR_TEAM) available[count++] = 4; // Talk.
-	if (target && target->bTeam != OUR_TEAM && selected &&
-		selected->inv[HANDPOS].usItem != NOTHING &&
-		GCM->getItem(selected->inv[HANDPOS].usItem)->isWeapon())
-	{
-		available[count++] = 5; // Armed action.
-	}
+	const size_t count = BuildContextCursorActions(target, gridNo, level,
+		tileIndex, available);
+	if (count == 0) return;
 
 	size_t current = count;
 	for (size_t i = 0; i < count; ++i)
@@ -4991,23 +5285,8 @@ void OS0CycleCursorAction(SOLDIERTYPE* target, GridNo gridNo, UINT8 level, UINT1
 			break;
 		}
 	}
-	gCursorAction = available[current == count ? (count > 1 ? 1 : 0) :
-		(current + 1) % count];
-	switch (gCursorAction)
-	{
-		case 0: guiPendingOverrideEvent = A_CHANGE_TO_MOVE;       break;
-		case 1: guiPendingOverrideEvent = M_CHANGE_TO_HANDMODE;   break;
-		case 2:
-			// Environment carry mode deliberately reuses JA2's grab hand.
-			// OS0HandleCursorAction owns the click while this state is active.
-			guiPendingOverrideEvent = M_CHANGE_TO_HANDMODE;
-			break;
-		case 3: guiPendingOverrideEvent = LC_CHANGE_TO_LOOK;      break;
-		case 4: guiPendingOverrideEvent = T_CHANGE_TO_TALKING;    break;
-		case 5: guiPendingOverrideEvent = M_CHANGE_TO_ACTION;     break;
-	}
-	if (gCursorAction != 2) ClearWorldMoveState();
-	SetRenderFlags(RENDER_FLAG_FULL);
+	ApplyCursorTool(available[current == count ? 0 : (current + 1) % count]);
+	RecordFeedbackEvent(ST::format("CURSOR {}", CursorActionLabel(gCursorAction)));
 }
 
 void OS0CancelCursorAction()
@@ -5337,4 +5616,81 @@ void OS0TalkingPanelClosed()
 	SetBagRegionsEnabled(TRUE);
 	gOrbRegion.Enable();
 	SetRenderFlags(RENDER_FLAG_FULL);
+}
+
+
+void OS0NotifyWorldAssetHit(GridNo gridNo, STRUCTURE* structure, UINT8 impact)
+{
+	if (!gInitialized || !structure || gridNo < 0 || gridNo >= WORLD_MAX) return;
+	STRUCTURE* const base = FindBaseStructure(structure);
+	LEVELNODE* const node = base ? FindLevelNodeBasedOnStructure(base) : nullptr;
+	if (!base || !node || node->usIndex >= NUMBEROFTILES) return;
+	const UINT16 tileIndex = node->usIndex;
+	AssetMaterial material = InferAssetMaterial(base);
+	if (AssetCatalogRecord const* const catalog = FindAssetCatalogRecordConst(
+		static_cast<INT16>(giCurrentTilesetID),
+		CanonicalAssetTileIndex(base->sGridNo, 0, tileIndex)))
+	{
+		if (catalog->material != AssetMaterial::AUTO) material = catalog->material;
+	}
+
+	for (UINT8 i = 0; i < 6; ++i)
+	{
+		ImpactParticle& particle = gImpactParticles[gImpactParticleNext];
+		gImpactParticleNext = (gImpactParticleNext + 1) % gImpactParticles.size();
+		particle.gridNo = gridNo;
+		particle.velocityX = static_cast<INT8>(static_cast<INT16>((i * 5 +
+			gridNo) % 9) - 4);
+		particle.velocityY = static_cast<INT8>(-7 - (i % 4));
+		particle.colourKind = static_cast<UINT8>(material);
+		particle.born = std::max<UINT32>(1, GetJA2Clock());
+	}
+
+	// Vanilla gunfire only reports a material impact; it never consumes the
+	// structure HP used by explosions. OS//0 adds a conservative damage layer
+	// only to assets that are explicitly salvageable/resource-like, so ordinary
+	// walls and map-critical geometry retain the original JA2 behaviour.
+	SalvageProfile const profile = DescribeWorldAsset(gridNo, 0, tileIndex);
+	if (!profile.salvageable) return;
+	INT16 maximum = 90;
+	switch (material)
+	{
+		case AssetMaterial::WOOD:
+		case AssetMaterial::ORGANIC: maximum = 70; break;
+		case AssetMaterial::STONE: maximum = 160; break;
+		case AssetMaterial::METAL: maximum = 210; break;
+		case AssetMaterial::SAND:
+		case AssetMaterial::EARTH: maximum = 110; break;
+		default: break;
+	}
+	auto state = std::find_if(gAssetDamage.begin(), gAssetDamage.end(),
+		[&](AssetDamageState const& value)
+		{
+			return value.gridNo == base->sGridNo && value.tileIndex == tileIndex;
+		});
+	if (state == gAssetDamage.end())
+	{
+		gAssetDamage.push_back({ base->sGridNo, tileIndex, maximum });
+		state = gAssetDamage.end() - 1;
+	}
+	state->remaining = static_cast<INT16>(state->remaining -
+		std::max<UINT8>(1, impact / 3));
+	RecordFeedbackEvent(ST::format("ASSET HIT grid {} tile {} hp {}/{}",
+		base->sGridNo, tileIndex, std::max<INT16>(0, state->remaining), maximum));
+	if (state->remaining > 0) return;
+
+	const GridNo baseGrid = base->sGridNo;
+	{
+		ApplyMapChangesToMapTempFile recordChange;
+		RemoveStructFromLevelNode(baseGrid, node);
+	}
+	AddResourceItemToPool(baseGrid, 0, profile.resource,
+		std::max<UINT8>(1, profile.amount));
+	gAssetDamage.erase(state);
+	RecompileLocalMovementCosts(baseGrid);
+	InvalidateWorldRedundency();
+	SetRenderFlags(RENDER_FLAG_FULL);
+	RecordFeedbackEvent(ST::format("ASSET DESTROYED grid {} / +{} {}",
+		baseGrid, std::max<UINT8>(1, profile.amount),
+		ResourceName(profile.resource)));
 }

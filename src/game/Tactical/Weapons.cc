@@ -21,6 +21,7 @@
 #include "LOS.h"
 #include "RenderWorld.h"
 #include "OppList.h"
+#include "OS0_IngameUI.h"
 #include "Interface.h"
 #include "Message.h"
 #include "Campaign.h"
@@ -1636,6 +1637,8 @@ void StructureHit(BULLET* const pBullet, const UINT16 usStructureID, const INT32
 	if ( usStructureID != INVALID_STRUCTURE_ID )
 	{
 		DamageStructure(pStructure, iImpact, STRUCTURE_DAMAGE_GUNFIRE, sGridNo, sXPos, sYPos, attacker);
+		OS0NotifyWorldAssetHit(sGridNo, pStructure,
+			static_cast<UINT8>(std::clamp<INT32>(iImpact, 1, 255)));
 	}
 
 	switch(  GCM->getWeapon( usWeaponIndex )->ubWeaponClass )

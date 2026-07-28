@@ -72,3 +72,18 @@ The code is experimental and does not represent an official JA2 Stracciatella re
 - Feedback reports embed the complete catalog snapshot, and the report collector copies
   the raw TSV. Reviewed community records can be promoted into the version-controlled
   `assets/externalized/os0-assets.tsv`; local records load afterward as overrides.
+
+## v0.5.0-alpha contextual field interaction
+
+- Hover now selects the most useful cursor for the target: use/loot for containers,
+  carry for portable scenery, inspect for fixed assets, talk for contacts and attack
+  for armed hostile targets.
+- Middle click cycles only through actions that are valid for the current target.
+- Owned-merc context menus include `AI / RUN TO COVER + STANCE`. The command uses
+  JA2's threat-aware cover evaluator and a geometry fallback in peaceful sectors;
+  low cover ends prone and taller cover ends crouched.
+- Carried structures use their real in-game tile graphic. The graphic bobs over the
+  moving merc and a separate marker shows the destination.
+- Weapon impacts emit small material-coloured chips. Explicitly catalogued salvage
+  and resource assets gain conservative gunfire durability and drop their material
+  when destroyed; map-critical structures keep vanilla behavior.

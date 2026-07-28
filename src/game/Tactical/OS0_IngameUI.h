@@ -3,6 +3,7 @@
 #include "JA2Types.h"
 
 struct SOLDIERTYPE;
+struct STRUCTURE;
 
 enum class OS0CharacterQuickAction : UINT8
 {
@@ -41,3 +42,4 @@ void OS0TalkingPanelClosed();
 void OS0ExecuteCharacterQuickAction(SOLDIERTYPE* soldier,
 	OS0CharacterQuickAction action);
 UINT8 OS0GetGodMenuIcon();
+void OS0NotifyWorldAssetHit(GridNo gridNo, STRUCTURE* structure, UINT8 impact);
