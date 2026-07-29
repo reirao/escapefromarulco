@@ -671,6 +671,7 @@ void MSYS_DefineRegion(MOUSE_REGION* const r, UINT16 const tlx, UINT16 const tly
 	r->MovementCallback   = movecallback;
 	r->ButtonCallback     = buttoncallback;
 	r->FastHelpTimer      = 0;
+	r->FastHelpSourceText.clear();
 	r->FastHelpText.clear();
 	r->FastHelpRect       = nullptr;
 	r->next               = 0;
@@ -683,6 +684,7 @@ void MSYS_DefineRegion(MOUSE_REGION* const r, UINT16 const tlx, UINT16 const tly
 
 void MOUSE_REGION::ChangeCursor(UINT16 const crsr)
 {
+	if (Cursor == crsr) return;
 	Cursor = crsr;
 	if (crsr != MSYS_NO_CURSOR && uiFlags & MSYS_MOUSE_IN_AREA)
 	{
@@ -715,6 +717,29 @@ void MSYS_RemoveRegion(MOUSE_REGION* const r)
 }
 
 
+BOOLEAN MSYS_ReinsertRegion(MOUSE_REGION* const r)
+{
+	if (!r || !(r->uiFlags & MSYS_REGION_EXISTS)) return FALSE;
+
+	// MSYS_AddRegionToList first unlinks the region, then inserts it ahead of
+	// existing regions with the same priority.  Crucially, it does not touch
+	// callbacks, user data, enabled state or the region captured by a button
+	// press, so bringing a window forward cannot cancel an active drag.
+	MSYS_AddRegionToList(r);
+	gfRefreshUpdate = TRUE;
+	return TRUE;
+}
+
+
+BOOLEAN MSYS_SetRegionPriority(MOUSE_REGION* const r, INT8 priority)
+{
+	if (!r || !(r->uiFlags & MSYS_REGION_EXISTS)) return FALSE;
+	if (priority <= MSYS_PRIORITY_LOWEST) priority = MSYS_PRIORITY_LOWEST;
+	r->PriorityLevel = priority;
+	return MSYS_ReinsertRegion(r);
+}
+
+
 //=================================================================================================
 //	MSYS_SetCurrentCursor
 //
@@ -738,6 +763,11 @@ void RefreshMouseRegions( )
 
 void MOUSE_REGION::SetFastHelpText(const ST::string& str)
 {
+	// OS0's retained UI redraws visible panels frequently. Most labels are
+	// unchanged; rebuilding UTF-32 and freeing an active help background for the
+	// same text caused avoidable heap churn and visible tooltip flicker.
+	if (FastHelpSourceText == str) return;
+	FastHelpSourceText = str;
 	FastHelpText.clear();
 
 	if (!(uiFlags & MSYS_REGION_EXISTS)) return;

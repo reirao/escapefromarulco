@@ -81,6 +81,7 @@ struct MOUSE_REGION
 
 	//Fast help vars.
 	INT16            FastHelpTimer; // Countdown timer for FastHelp text
+	ST::string       FastHelpSourceText; // UTF-8 source; also avoids identical per-frame conversions
 	ST::utf32_buffer FastHelpText;  // Text string for the FastHelp (describes buttons if left there a while)
 	BACKGROUND_SAVE* FastHelpRect;
 
@@ -152,6 +153,17 @@ void MSYS_DefineRegion(MOUSE_REGION *region,UINT16 tlx,UINT16 tly,UINT16 brx,UIN
 					   UINT16 crsr,MOUSE_CALLBACK movecallback,MOUSE_CALLBACK buttoncallback);
 void MSYS_RemoveRegion(MOUSE_REGION *region);
 void RemoveRegions(std::span<MOUSE_REGION>);
+
+// Reinsert an existing region without resetting callbacks, help text, user data
+// or button state.  This is the supported way for layered UIs to change the
+// tie-break order of regions that share a priority: the most recently inserted
+// region wins.  The new order is used by the next pointer event; callers that
+// need an immediate hover/cursor transition may call RefreshMouseRegions().
+BOOLEAN MSYS_ReinsertRegion(MOUSE_REGION* region);
+
+// Change an existing region's priority and keep the global region list sorted.
+// Returns FALSE for null or no-longer-defined regions.
+BOOLEAN MSYS_SetRegionPriority(MOUSE_REGION* region, INT8 priority);
 
 /* Set one of the user data entries in a mouse region */
 #define MSYS_SetRegionUserData(region, index, data) ((region)->SetUserData<(index)>((data)))

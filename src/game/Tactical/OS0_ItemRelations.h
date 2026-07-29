@@ -1,6 +1,7 @@
 #pragma once
 
 #include "JA2Types.h"
+#include "OS0_UIAssetManager.h"
 
 #include <array>
 
@@ -20,7 +21,7 @@ struct ItemTransferIntentSpec
 {
 	ItemTransferIntent intent;
 	const char* label;
-	UINT16 iconFrame;
+	OS0UIIcon icon;
 	INT16 offsetX;
 	INT16 offsetY;
 };

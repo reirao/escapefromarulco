@@ -53,10 +53,16 @@ set(LOCAL_JA2_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/OS0_CoverOrderSystem.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/OS0_CreatorModel.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/OS0_DirectControl.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/OS0_InteractionMode.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/OS0_ItemRelations.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/OS0_MouseRegionZOrder.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/OS0_RealtimeEditor.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/OS0_RealtimeEditorUI.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/OS0_SectorEconomySystem.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/OS0_TacticalSession.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/OS0_UIAssetManager.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/OS0_UIRuntime.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/OS0_WindowManager.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/OS0_ViewportInput.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/OS0_WorldInteractionSystem.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/OS0_IngameUI.cc
@@ -96,6 +102,8 @@ if (WITH_UNITTESTS)
         ${LOCAL_JA2_SOURCES}
         ${CMAKE_CURRENT_SOURCE_DIR}/LoadSaveMercProfile_unittest.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/LoadSaveSoldierType_unittest.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/OS0_MouseRegionZOrder_unittest.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/OS0_InteractionMode_unittest.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/OS0_Systems_unittest.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/Weapons_unittest.cc
     )

@@ -104,6 +104,21 @@ playtest in its own folder and point the launcher to the original game directory
     continuously without jumping once per tile and without rectangular slot frames.
 43. Begin dragging an item while the character UI, star library or computer is open.
     No window may close, move or auto-collapse merely because the item cursor exists.
+44. Open `TERRAIN` from the command dock. Move the editor across other OS0 windows,
+    click and drag each header in both overlap orders, and verify the visible front
+    window always receives the click without jumping or losing the drag.
+45. In `TILES`, cycle category filters and place/remove one prop, wall and roof tile.
+    Change related variants and the native target layer; the preview, hover help and
+    actual placed asset must agree.
+46. Paint normal terrain and shoreline water with radius 0, 2 and 8, then switch to
+    smoothing. Low/deep water must say `PAINT ONLY` instead of queueing a failed
+    smooth command. Place road macros 0 and 31 away from the map edge.
+47. In `ITEMS`, change quantity and place a stack. In `NPCS`, place a generic actor
+    and a profile NPC in two facings. Save `live-editor.dat`, change the world, choose
+    `SYSTEM / LOAD MAP`, and verify items, actors, facing and squad survive the round trip.
+48. Finally press `EMPTY MAP` once and cancel by using another control; nothing should
+    change. Confirm it with two clicks on a second attempt. If creation or loading is
+    forced to fail, the previous map, squad, camera and ambient sound must recover.
 
 ## Writing a useful report
 

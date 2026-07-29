@@ -394,12 +394,16 @@ void PlaceRoadMacroAtGridNo( INT32 iMapIndex, INT32 iMacroID )
 {
 	INT32 i;
 	i = gsRoadMacroStartIndex[ iMacroID ];
-	while( gRoadMacros[ i ].sMacroID == iMacroID )
+	while (i < static_cast<INT32>(std::size(gRoadMacros)) &&
+		gRoadMacros[i].sMacroID == iMacroID)
 	{
-		AddToUndoList( iMapIndex + gRoadMacros[ i ].sOffset );
-		RemoveAllObjectsOfTypeRange( i, ROADPIECES, ROADPIECES );
+		INT32 const targetGridNo = iMapIndex + gRoadMacros[i].sOffset;
+		AddToUndoList(targetGridNo);
+		// i is an index into gRoadMacros, not a world grid number.  Using it
+		// here left stale road pieces behind and could erase an unrelated tile.
+		RemoveAllObjectsOfTypeRange(targetGridNo, ROADPIECES, ROADPIECES);
 		UINT16 usTileIndex = GetTileIndexFromTypeSubIndex(ROADPIECES, i + 1);
-		AddObjectToHead( iMapIndex + gRoadMacros[ i ].sOffset, usTileIndex );
+		AddObjectToHead(targetGridNo, usTileIndex);
 		i++;
 	}
 }

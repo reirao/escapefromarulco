@@ -40,6 +40,10 @@ BOOLEAN OS0HandleViewportPointerEvent(MOUSE_REGION*, UINT32 reason)
 	// Character creation is one modal OS//0 flow. Pointer input outside its own
 	// high-priority regions must not zoom, scroll or act on the tactical world.
 	if (OS0CreatorIsActive()) return TRUE;
+	// Mouse regions normally win before the viewport callback. The manager is
+	// the authoritative fallback for overlapping/moved windows and modals, so a
+	// stale region can no longer leak zoom or world actions through the UI.
+	if (OS0BlocksWorldInputAt(gusMouseXPos, gusMouseYPos)) return TRUE;
 	if (reason & MSYS_CALLBACK_REASON_WHEEL_UP)
 	{
 		OS0AdjustWorldZoom(1);

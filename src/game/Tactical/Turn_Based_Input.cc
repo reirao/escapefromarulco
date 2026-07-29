@@ -2135,7 +2135,8 @@ void GetKeyboardInput(UIEventKind* const puiNewEvent)
 		{
 			continue;
 		}
-		if ((InputEvent.usEvent == KEY_DOWN || InputEvent.usEvent == KEY_REPEAT) &&
+		if ((InputEvent.usEvent == KEY_DOWN || InputEvent.usEvent == KEY_REPEAT ||
+			InputEvent.usEvent == KEY_UP) &&
 			OS0HandleRealtimeControlKey(InputEvent.usParam, InputEvent.usKeyState))
 		{
 			continue;

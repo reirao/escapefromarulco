@@ -1,6 +1,9 @@
 #pragma once
 
 #include "JA2Types.h"
+#include "OS0_InteractionMode.h"
+#include "OS0_UIAssetManager.h"
+#include "OS0_WindowManager.h"
 
 #include <array>
 #include <cstddef>
@@ -44,15 +47,68 @@ enum class OS0UICommand : UINT8
 	COUNT
 };
 
-struct OS0UIRect
+enum class OS0UICommandIntent : UINT8
 {
-	INT16 x = 0;
-	INT16 y = 0;
-	INT16 w = 0;
-	INT16 h = 0;
-
-	BOOLEAN contains(INT16 pointX, INT16 pointY) const noexcept;
+	RETURN_TO_ACTIONS,
+	TOGGLE_EQUIPMENT,
+	OPEN_BEHAVIOR,
+	TOGGLE_NEARBY_SCAN,
+	TOGGLE_ENVIRONMENT,
+	OPEN_ASSET_LIBRARY,
+	TOGGLE_REALTIME_EDITOR,
+	TOGGLE_STRATEGY,
+	OPEN_ICON_LIBRARY
 };
+
+struct OS0UICommandDescriptor
+{
+	OS0UICommand command;
+	const char* label;
+	const char* tooltip;
+	OS0UIIcon icon;
+	OS0UICommandIntent intent;
+};
+
+enum class OS0UIWindow : UINT8
+{
+	SECTOR,
+	INSPECTOR,
+	TOOLBOX,
+	ENVIRONMENT,
+	REALTIME_EDITOR,
+	COUNT
+};
+
+struct OS0UIWindowDescriptor
+{
+	OS0UIWindow window;
+	const char* persistenceKey;
+	const char* title;
+	OS0UIIcon icon;
+	BOOLEAN defaultVisible;
+};
+
+// Stable IDs for the single window manager. Legacy panel/window enums remain as
+// semantic call-site types while both resolve to this one canonical state set.
+enum class OS0ManagedWindow : OS0WindowHandle
+{
+	INVENTORY,
+	CONTEXT,
+	LOOT,
+	EQUIPMENT,
+	STACK_SPLIT,
+	ASSET_LIBRARY,
+	ASSET_CATALOG,
+	ITEM_DETAILS,
+	SECTOR,
+	INSPECTOR,
+	TOOLBOX,
+	ENVIRONMENT,
+	REALTIME_EDITOR,
+	COUNT
+};
+
+using OS0UIWindowState = OS0WindowState;
 
 class OS0UILayout
 {
@@ -94,13 +150,34 @@ public:
 	void hide(OS0UIPanel panel) noexcept;
 	void toggle(OS0UIPanel panel) noexcept;
 	void hideTransientWorldPanels() noexcept;
+	OS0UIWindowState& panel(OS0UIPanel panel) noexcept;
+	OS0UIWindowState const& panel(OS0UIPanel panel) const noexcept;
+
+	OS0UIWindowState& window(OS0UIWindow window) noexcept;
+	OS0UIWindowState const& window(OS0UIWindow window) const noexcept;
+	OS0WindowManager& windowManager() noexcept { return windowManager_; }
+	OS0WindowManager const& windowManager() const noexcept { return windowManager_; }
+	OS0InteractionMode& interactionMode() noexcept { return interactionMode_; }
+	OS0InteractionMode const& interactionMode() const noexcept
+	{
+		return interactionMode_;
+	}
+	OS0WindowHandle managedId(OS0UIPanel panel) const noexcept;
+	OS0WindowHandle managedId(OS0UIWindow window) const noexcept;
 
 private:
 	static size_t index(OS0UIPanel panel) noexcept;
+	static size_t index(OS0UIWindow window) noexcept;
 
 	BOOLEAN creatorActive_ = TRUE;
 	UINT8 creatorStage_ = static_cast<UINT8>(OS0CreatorStage::WELCOME);
-	std::array<BOOLEAN, static_cast<size_t>(OS0UIPanel::COUNT)> visible_{};
+	OS0WindowManager windowManager_;
+	OS0InteractionMode interactionMode_;
 };
 
+OS0UICommandDescriptor const& GetOS0UICommandDescriptor(
+	OS0UICommand command) noexcept;
+OS0UIWindowDescriptor const& GetOS0UIWindowDescriptor(
+	OS0UIWindow window) noexcept;
+OS0UIWindow OS0UIWindowFromPersistenceKey(const char* key) noexcept;
 OS0UICommand OS0CommandForDockSlot(size_t slot) noexcept;

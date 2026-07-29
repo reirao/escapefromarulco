@@ -1,14 +1,15 @@
 # Feature wiring audit
 
 This matrix compares the public prototype claims with the actual runtime path in
-the source. It was last verified for `v0.0.1.11`.
+the source. It was last verified for `v0.0.1.12`.
 
 | Feature | Runtime status | Wiring / persistence |
 | --- | --- | --- |
 | Direct tactical start | Verified | `JAScreens` starts the OS0 sandbox; the bootstrap creates the operator, clears enemies, marks the sector controlled and enters `GAME_SCREEN`. |
 | Character creation | Verified | One modal tactical creator owns the validated callsign, ten attributes and two freely selected traits. Completion persists in OS0 session state; the duplicate laptop wrapper has been removed. |
 | UI runtime and viewport | Verified | One runtime owns creator/panel transitions and one layout owns the fixed 38-pixel command dock. World rendering, scrolling and exit regions stop above that dock. |
-| Object-first workspace | Verified | Duplicate context/tools/actions/object panels and their hidden hit regions are retired. Character inventory is optional; Sector, Inspector and Toolbox are the only movable workspace windows. |
+| Object-first workspace | Verified | Duplicate context/tools/actions/object panels and their hidden hit regions are retired. Inventory, loot, equipment, libraries, Sector, Inspector, Toolbox, Environment and the live editor all use one template/state manager; character inventory remains optional. |
+| Unified window focus and persistence | Verified after manager migration | `OS0WindowManager` owns bounds, visibility, suspension, drag, clamp, saved position and render Z order. The native JA2 child mouse-region list is projected from that same order, including immediate focus transfer when a header drag begins. |
 | Object-derived interaction | Verified | Hover selection uses the real map sprite, the stable world marker and the object-anchored icon fan. Container contents remain spatially arranged around their owning object instead of a generic list window. |
 | Pixel-accurate scenery selection | Verified | Hover and all mouse-button actions scan nearby visible object/structure sprites by opaque pixel instead of relying only on the ground cell. Multi-tile structures resolve to their canonical base object. |
 | Character inventory drag/drop | Verified | Uses JA2's item-pointer and placement functions, so slot rules and item stacks remain engine-owned. |
@@ -33,14 +34,19 @@ the source. It was last verified for `v0.0.1.11`.
 | Salvage and surface digging | Verified | Nearby tool-gated actions remove map objects/surface layers through map-temp recording and create physical timber, stone, scrap or soil stacks. Digging is surface editing, not deep voxel terrain. |
 | Sector stockpiles/upgrades | Verified | Four resource counters and three upgrade flags use reserved bits in saved `SECTORINFO`. Workshop and depot alter yields; the built shelter can be clicked to recover the current team. |
 | Tactical zoom | Verified | World rendering and display/world input coordinates share the same zoom transform; edge-aware crop bias exposes the actual map boundary when JA2's camera reaches it. The command dock is not part of the zoomed or scrollable viewport. |
+| Realtime field editor | Verified as a sandbox authoring layer | `TERRAIN` opens a movable catalog UI for the active tileset, editor-safe items, generic actors and NPC/RPC profiles. Category filters, variants, layers, quantity and facing feed typed frame-boundary commands; terrain paint/smooth and all 32 road macros reuse guarded native JA2 editor algorithms. |
+| Empty/load/save world workflow | Verified with map-level recovery | `EMPTY MAP` uses two-click confirmation; save/load uses `%APPDATA%\JA2\OS0\maps\live-editor.dat`. World replacement preserves the player squad and creates a temporary map snapshot before teardown, restoring map, squad, selection, camera and ambience on failure. This is not full tactical-state undo. |
 | Live tactical strategy window | Verified as an initial replacement | `STRATEGIC MAP` now opens a movable live window with base upgrades, the 16x16 control map and a clickable team roster. Travel plotting, assignments, militia and finance still remain future ports from the legacy Map Screen. |
 | Feedback reports | Verified | Writes tester text, game state, recent OS0 events, engine-log tail and asset-catalog snapshot under `%APPDATA%\JA2\Feedback`. |
 | Portable Windows runtime | Verified after package fix | The playtest runtime includes FLTK, image-codec, SDL and MinGW DLL dependencies; testers do not need MSYS2, developer tools or GPU-specific libraries. |
 
 ## Not implemented yet
 
-- Placement/building of arbitrary catalogued assets. `buildable/placeable` currently
-  classifies a future blueprint and changes its action/inspector label.
+- Player-economy blueprint construction of arbitrary catalogued assets. The debug live
+  editor can author active-tileset assets, while `buildable/placeable` in normal play
+  still classifies a future blueprint and changes its action/inspector label.
+- General edit-history undo/redo. World replacement has a recovery snapshot, but map
+  `.dat` files cannot restore transient projectiles, physics events or active bomb timers.
 - A deep, voxel-like terrain volume or general-purpose rigid-body physics engine.
 - JA2 1.13 data/code integration.
 - Network multiplayer or synchronized co-op simulation.

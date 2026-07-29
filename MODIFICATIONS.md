@@ -1,7 +1,7 @@
 # Modification notice
 
 This repository is a modified derivative of JA2 Stracciatella. Work on the current
-prototype was performed from 2026-07-24 through 2026-07-29.
+prototype was performed from 2026-07-24 through 2026-07-30.
 
 Prominent notices were added to modified source files in accordance with the included
 Strategy First source-code license agreement.
@@ -42,6 +42,24 @@ The code is experimental and does not represent an official JA2 Stracciatella re
   records so positions survive UI refactors and resolution changes.
 - Added focused unit coverage for creator validation, UI state transitions, dock
   mapping, viewport bounds and OS0 persistent-session migration.
+
+## v0.0.1.12 stable runtime checkpoint
+
+- Consolidated tactical windows behind a shared manager for geometry, visibility,
+  focus, drag capture, persistence, Z order and modal suspension.
+- Added an explicit interaction-mode controller so direct movement, aiming, item
+  dragging, context actions and realtime editing no longer compete for input.
+- Stabilized mouse-facing WASD control, reverse/strafe movement, sprint state and
+  tile-boundary replanning while retaining JA2's path and animation ownership.
+- Added a movable realtime field editor for active-tileset graphics, items and
+  actors, including guarded terrain brushes, native road macros and empty/load/save
+  workflows with map-level recovery.
+- Made environment discovery and editor catalogs lazy, cached pixel-accurate scenery
+  hits, localized inventory redraws and throttled item-cursor refreshes.
+- Added mouse-region Z-order projection and persistent named window layouts, fixing
+  hidden controls, overlap clicks and drag focus across the OS0 workspace.
+- Expanded regression coverage for interaction modes, mouse-region ordering,
+  creator/runtime transitions, item relations, viewport mapping and editor requests.
 
 ## v0.1.1-alpha hotfix
 
@@ -210,3 +228,40 @@ The code is experimental and does not represent an official JA2 Stracciatella re
   not collapse or relocate open OS0 windows.
 - The embedded Arulco view now reads live enemy and militia totals from `SectorInfo`
   alongside the real tactical radar asset and existing team/control data.
+
+## Realtime field-editor architecture
+
+- Added a movable realtime editor launched from the `TERRAIN` command. It pages
+  through real, saveable assets from the active tileset, every editor-safe item,
+  generic actor archetypes and actual NPC/RPC profiles, with native sprite previews.
+- Added catalog-driven category filters for every palette plus controls for native
+  layer selection, related tile variants, road-macro variants, terrain brush radius,
+  paint/smooth mode, item quantity and eight-way NPC rotation/facing.
+- Added a guarded `EMPTY MAP` command that replaces the loaded tactical world in
+  place, keeps the real player squad and never creates a parallel editor world.
+- Added typed terrain-paint, terrain-smoothing and road recipes. They reuse JA2's
+  native texture stacking, terrain/shoreline smoothing and road-macro algorithms
+  behind value-only requests with world-edge guards.
+- Tile, item and NPC placement, typed recipes, typed removal, catalog refresh,
+  `LOAD MAP` and `.dat` saving run through one command queue at the tactical frame
+  boundary. Stale selections are rejected using tileset, item, team and grid
+  identity guards.
+- Added `OS0WindowManager`: shared templates now own geometry, visibility,
+  suspension, dragging, clamping, persistence and Z order for inventory, object,
+  catalog, strategy, inspector, environment and editor windows.
+- Projected that Z order into every managed native child `MOUSE_REGION`. Safe reinsertion
+  preserves callbacks, user data, enabled state and active drag capture, while an
+  order check avoids relinking regions on unchanged frames.
+- Aim, stack splitting, context menus, held items and world swaps gate editor input
+  centrally, preventing hidden high-priority mouse regions from stealing clicks.
+- Replaced the invisible item-details modal/loot side effect with the movable live
+  inspector, so requesting details can no longer strand direct control.
+- Map saves are written below `%APPDATA%/JA2/OS0/maps` through temporary and backup
+  files and restore the live world's wireframe/render state after the operation.
+- `LOAD MAP` reads the sanitized `live-editor.dat` target from the same private
+  directory. Before either load or blank-world creation, a temporary map snapshot
+  is written; failures after teardown reload it, reinsert the real squad before
+  authored NPCs and restore selection, camera and ambient sound.
+- Recovery is deliberately map-level rollback, not full undo. Transient event,
+  projectile, physics-object and active-bomb-timer state is cleared during a world
+  replacement and cannot be reconstructed from a JA2 map file.

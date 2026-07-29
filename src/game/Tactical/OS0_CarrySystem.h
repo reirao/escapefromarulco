@@ -11,6 +11,14 @@ enum class OS0CarryPhase : UINT8
 	WALKING
 };
 
+enum class OS0CarryMode : UINT8
+{
+	CARRY,
+	PUSH,
+	PULL,
+	THROW
+};
+
 enum class OS0CarryCancelReason : UINT8
 {
 	NONE,
@@ -33,6 +41,7 @@ struct OS0CarryContinuationFacts
 struct OS0CarryState
 {
 	OS0CarryPhase phase = OS0CarryPhase::IDLE;
+	OS0CarryMode mode = OS0CarryMode::CARRY;
 	GridNo source = NOWHERE;
 	GridNo destination = NOWHERE;
 	GridNo actionGrid = NOWHERE;
@@ -49,7 +58,7 @@ struct OS0CarryState
 	BOOLEAN walking() const noexcept { return phase == OS0CarryPhase::WALKING; }
 
 	BOOLEAN begin(GridNo newSource, UINT8 newLevel, UINT16 newTile,
-		SoldierID newCarrier) noexcept
+		SoldierID newCarrier, OS0CarryMode newMode = OS0CarryMode::CARRY) noexcept
 	{
 		if (newSource < 0 || newSource >= WORLD_MAX || newLevel > 1 ||
 			newTile >= NUMBEROFTILES || newCarrier == NOBODY)
@@ -59,6 +68,7 @@ struct OS0CarryState
 		}
 		reset();
 		phase = OS0CarryPhase::TARGETING;
+		mode = newMode;
 		source = newSource;
 		sourceLevel = newLevel;
 		tileIndex = newTile;

@@ -6,13 +6,13 @@ An experimental, non-commercial rework of *Jagged Alliance 2* built on
 > **Early alpha:** this build is intentionally unfinished. Expect rough controls,
 > incomplete systems and crashes. The purpose of this release is hands-on testing.
 
-Current playtest: **0.0.1.11**. This is the first consolidated baseline after the
-experimental `v0.5.x-alpha` series; its lower version number is intentional.
+Current stable playtest: **0.0.1.12**. This is the tested runtime checkpoint after
+the consolidated `v0.0.1.11` baseline.
 
 ## Download and play
 
-1. Open the [v0.0.1.11 release](https://github.com/reirao/escapefromarulco/releases/tag/v0.0.1.11).
-2. Download `Escape-from-Arulco-Playtest-v0.0.1.11.zip`.
+1. Open the [v0.0.1.12 release](https://github.com/reirao/escapefromarulco/releases/tag/v0.0.1.12).
+2. Download `Escape-from-Arulco-Playtest-v0.0.1.12.zip`.
 3. Extract the complete ZIP into a writable folder.
 4. Run `START_PLAYTEST.cmd`.
 5. In the launcher, select your own legally installed JA2 or JA2 Gold directory.
@@ -52,6 +52,10 @@ the original JA2 game data. Windows x64 and an existing JA2 installation are req
 - Dismantling and digging that produce timber, stone, scrap and topsoil
 - Material-specific debug tools for debris, fences, trees, metal and earth
 - Per-sector stockpiles and buildable shelter, workshop and secure depot upgrades
+- Movable live-world editor with active-tileset assets, editor-safe items, NPC/RPC
+  profiles, category filters, placement/removal, terrain brushes and native road macros
+- Empty-map and `live-editor.dat` load/save workflow that keeps the player squad and
+  rolls a failed world replacement back to a temporary map snapshot
 - Zoomed tactical view
 - Built-in playtest feedback reports
 
@@ -74,6 +78,11 @@ The exact implementation status and current boundaries are recorded in
   construction/resource database
 - **Asset Library:** left-click a card to center its real map instance; right-click the
   card to edit its reusable catalog record
+- **TERRAIN / Live Editor:** choose `TILES`, `ITEMS`, `NPCS` or `SYSTEM`, filter a
+  category, select `PLACE`/`ERASE`, then click the tactical world. Terrain and water
+  use adjustable paint/smooth brushes; roads cycle the original 32 JA2 road macros.
+  `EMPTY MAP` requires a second confirmation click. `SYSTEM` contains `LOAD MAP`,
+  while the dedicated command saves `%APPDATA%\JA2\OS0\maps\live-editor.dat`.
 
 Asset classifications are written to `%APPDATA%\JA2\AssetCatalog\os0-assets.tsv`.
 This file can be shared between testers without distributing original JA2 graphics.
@@ -94,6 +103,12 @@ See [PLAYTESTING.md](PLAYTESTING.md) for the full test checklist.
 
 The project retains the Stracciatella build system. See [COMPILATION.md](COMPILATION.md).
 The tested Windows build uses MSYS2 UCRT64/MinGW64, CMake and Ninja.
+
+On the configured Windows development machine, double-click
+`BUILD_AND_START_LOCAL.cmd`. It configures `C:\tmp\ja2-sandbox-build`, compiles
+only changed files, refreshes the required MinGW/SDL runtime DLLs and starts the
+new executable in windowed mode. Command-line arguments override the default
+`-window` argument.
 
 ```bash
 cmake /path/to/escapefromarulco -G Ninja -DWITH_UNITTESTS=OFF

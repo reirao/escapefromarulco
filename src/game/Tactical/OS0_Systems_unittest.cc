@@ -6,10 +6,12 @@
 #include "OS0_CarrySystem.h"
 #include "OS0_CoverOrderSystem.h"
 #include "OS0_CreatorModel.h"
+#include "OS0_RealtimeEditor.h"
 #include "OS0_SectorEconomySystem.h"
 #include "OS0_TacticalSession.h"
 #include "OS0_UIRuntime.h"
 #include "OS0_ViewportInput.h"
+#include "OS0_WindowManager.h"
 #include "OS0_WorldInteractionSystem.h"
 #include "SaveLoadGameStates.h"
 
@@ -77,6 +79,34 @@ TEST(OS0ActionRegistryTest, OneDeterministicResolverDrivesCursorSurfaces)
 		EXPECT_NE(ContextActionName(action), nullptr);
 		EXPECT_NE(ContextActionExplanation(action), nullptr);
 	}
+}
+
+TEST(OS0ActionRegistryTest, EnvironmentCapabilitiesDriveEveryObjectSurface)
+{
+	OS0EnvironmentActionFacts facts;
+	facts.hasAsset = TRUE;
+	facts.near = TRUE;
+	facts.moveCandidate = TRUE;
+	facts.canMove = TRUE;
+	facts.canThrow = FALSE;
+	facts.salvageable = TRUE;
+	facts.canSalvage = FALSE;
+	facts.debugCatalog = TRUE;
+
+	std::vector<OS0ResolvedAction> const actions =
+		ResolveOS0EnvironmentActions(facts);
+	auto enabled = [&](ContextAction action)
+	{
+		auto const found = std::find_if(actions.begin(), actions.end(),
+			[action](auto const& entry) { return entry.action == action; });
+		return found != actions.end() && found->enabled;
+	};
+	EXPECT_TRUE(enabled(ContextAction::CARRY));
+	EXPECT_TRUE(enabled(ContextAction::PUSH));
+	EXPECT_TRUE(enabled(ContextAction::PULL));
+	EXPECT_FALSE(enabled(ContextAction::THROW));
+	EXPECT_FALSE(enabled(ContextAction::SALVAGE));
+	EXPECT_TRUE(OS0IsManipulationAction(ContextAction::THROW));
 }
 
 TEST(OS0ViewportGestureStateTest, ConsumesOnlyMatchedAndHandledReleases)
@@ -164,6 +194,189 @@ TEST(OS0UIRuntimeTest, PanelsAreIndependentAndDockMappingIsStable)
 	EXPECT_EQ(OS0CommandForDockSlot(0), OS0UICommand::CHARACTER);
 	EXPECT_EQ(OS0CommandForDockSlot(7), OS0UICommand::SANDBOX);
 	EXPECT_EQ(OS0CommandForDockSlot(8), OS0UICommand::COUNT);
+}
+
+TEST(OS0UIRegistryTest, CommandsWindowsAndArtworkHaveCompleteSemanticMetadata)
+{
+	for (UINT8 value = 0; value < static_cast<UINT8>(OS0UICommand::COUNT);
+		++value)
+	{
+		OS0UICommand const command = static_cast<OS0UICommand>(value);
+		OS0UICommandDescriptor const& descriptor =
+			GetOS0UICommandDescriptor(command);
+		EXPECT_EQ(descriptor.command, command);
+		EXPECT_NE(descriptor.label, nullptr);
+		EXPECT_NE(descriptor.tooltip, nullptr);
+		EXPECT_NE(descriptor.icon, OS0UIIcon::COUNT);
+	}
+
+	OS0UIRuntime ui;
+	ui.enterCampaign(TRUE);
+	for (UINT8 value = 0; value < static_cast<UINT8>(OS0UIWindow::COUNT);
+		++value)
+	{
+		OS0UIWindow const window = static_cast<OS0UIWindow>(value);
+		OS0UIWindowDescriptor const& descriptor =
+			GetOS0UIWindowDescriptor(window);
+		EXPECT_EQ(descriptor.window, window);
+		EXPECT_NE(descriptor.persistenceKey, nullptr);
+		EXPECT_EQ(OS0UIWindowFromPersistenceKey(descriptor.persistenceKey), window);
+		EXPECT_EQ(ui.window(window).visible, descriptor.defaultVisible);
+	}
+	EXPECT_EQ(OS0UIWindowFromPersistenceKey("obsolete-window"),
+		OS0UIWindow::COUNT);
+
+	for (UINT8 value = 0; value < static_cast<UINT8>(OS0UIIcon::COUNT);
+		++value)
+	{
+		OS0UIIcon const icon = static_cast<OS0UIIcon>(value);
+		OS0UIIconDescriptor const& descriptor = GetOS0UIIconDescriptor(icon);
+		EXPECT_EQ(descriptor.icon, icon);
+		EXPECT_NE(descriptor.label, nullptr);
+		EXPECT_LT(descriptor.frame,
+			GetOS0UIAssetSheetDescriptor(descriptor.sheet).minimumFrames);
+	}
+}
+
+TEST(OS0UIRuntimeTest, OwnsPanelGeometryDragAndVisibilityTogether)
+{
+	OS0UIRuntime ui;
+	ui.enterCampaign(TRUE);
+	OS0UIWindowState& inventory = ui.panel(OS0UIPanel::INVENTORY);
+	inventory.x = 123;
+	inventory.y = 45;
+	inventory.dragging = TRUE;
+	ui.show(OS0UIPanel::INVENTORY);
+	EXPECT_EQ(ui.panel(OS0UIPanel::INVENTORY).x, 123);
+	EXPECT_EQ(ui.panel(OS0UIPanel::INVENTORY).y, 45);
+	EXPECT_TRUE(ui.panel(OS0UIPanel::INVENTORY).dragging);
+	EXPECT_TRUE(ui.visible(OS0UIPanel::INVENTORY));
+}
+
+TEST(OS0WindowManagerTest, TemplatesShareDragClampAndZOrder)
+{
+	OS0WindowManager windows;
+	windows.setWorkspace({ 0, 0, 320, 200 });
+	ASSERT_TRUE(windows.registerTemplate({ 1, "inventory", "Inventory",
+		OS0UIIcon::HAND, OS0WindowPresentation::FLOATING,
+		{ 20, 30, 140, 90 }, 80, 50,
+		OS0_WINDOW_MOVABLE | OS0_WINDOW_BLOCKS_WORLD_INPUT |
+		OS0_WINDOW_PERSIST_POSITION, TRUE, 1, 0 }));
+	ASSERT_TRUE(windows.registerTemplate({ 2, "editor", "World editor",
+		OS0UIIcon::TOOLKIT, OS0WindowPresentation::FLOATING,
+		{ 170, 10, 120, 150 }, 90, 80,
+		OS0_WINDOW_MOVABLE | OS0_WINDOW_BLOCKS_WORLD_INPUT |
+		OS0_WINDOW_PERSIST_POSITION, TRUE, 2, 1 }));
+
+	EXPECT_EQ(windows.hitTest(180, 40), 2);
+	ASSERT_TRUE(windows.beginDrag(1, 25, 35));
+	EXPECT_TRUE(windows.dragTo(400, 300));
+	EXPECT_TRUE(windows.endDrag());
+	EXPECT_EQ(windows.bounds(1).x, 180);
+	EXPECT_EQ(windows.bounds(1).y, 110);
+	EXPECT_EQ(windows.hitTest(200, 120), 1);
+	EXPECT_TRUE(windows.blocksWorldInputAt(200, 120));
+}
+
+TEST(OS0WindowManagerTest, SuspensionDoesNotDestroyRequestedVisibility)
+{
+	OS0WindowManager windows;
+	ASSERT_TRUE(windows.registerTemplate({ 3, "inspector", "Inspector",
+		OS0UIIcon::EXAMINE, OS0WindowPresentation::FLOATING,
+		{ 10, 10, 100, 80 }, 40, 30,
+		OS0_WINDOW_MOVABLE | OS0_WINDOW_COLLAPSE_DURING_AIM,
+		TRUE, 1, 0 }));
+	EXPECT_TRUE(windows.requestedVisible(3));
+	EXPECT_TRUE(windows.visible(3));
+	windows.setSuspended(OS0WindowSuspendReason::AIM, TRUE);
+	EXPECT_TRUE(windows.requestedVisible(3));
+	EXPECT_FALSE(windows.visible(3));
+	windows.setSuspended(OS0WindowSuspendReason::MODAL, TRUE);
+	windows.setSuspended(OS0WindowSuspendReason::AIM, FALSE);
+	EXPECT_FALSE(windows.visible(3));
+	EXPECT_TRUE(windows.requestedVisible(3));
+	windows.setSuspended(OS0WindowSuspendReason::MODAL, FALSE);
+	EXPECT_TRUE(windows.visible(3));
+}
+
+TEST(OS0WindowManagerTest, RadialsUseTheirAnchorAndModalsBlockWorkspace)
+{
+	OS0WindowManager windows;
+	windows.setWorkspace({ 0, 0, 640, 440 });
+	ASSERT_TRUE(windows.registerTemplate({ 5, "context", "Context",
+		OS0UIIcon::TARGET, OS0WindowPresentation::RADIAL,
+		{ 320, 200, 184, 184 }, 80, 80,
+		OS0_WINDOW_BLOCKS_WORLD_INPUT, TRUE, 10, -1 }));
+	EXPECT_EQ(windows.hitTest(235, 115), 5);
+	EXPECT_EQ(windows.hitTest(220, 100), OS0_INVALID_WINDOW);
+
+	ASSERT_TRUE(windows.registerTemplate({ 6, "modal", "Modal",
+		OS0UIIcon::LOOK, OS0WindowPresentation::MODAL,
+		{ 250, 170, 140, 100 }, 80, 60,
+		OS0_WINDOW_BLOCKS_WORLD_INPUT, TRUE, 20, -1 }));
+	EXPECT_TRUE(windows.blocksWorldInputAt(5, 5));
+}
+
+TEST(OS0WindowManagerTest, LayoutRoundTripScalesReusableTemplates)
+{
+	OS0WindowManager source;
+	source.setWorkspace({ 0, 0, 640, 442 });
+	ASSERT_TRUE(source.registerTemplate({ 4, "sector", "Sector",
+		OS0UIIcon::LOOK, OS0WindowPresentation::FLOATING,
+		{ 100, 80, 200, 100 }, 80, 40,
+		OS0_WINDOW_PERSIST_POSITION, FALSE, 1, 0 }));
+	source.setBounds(4, { 320, 200, 200, 100 });
+	ST::string const serialized = source.serializeLayout(640, 480);
+
+	OS0WindowManager restored;
+	restored.setWorkspace({ 0, 0, 1280, 884 });
+	ASSERT_TRUE(restored.registerTemplate({ 4, "sector", "Sector",
+		OS0UIIcon::LOOK, OS0WindowPresentation::FLOATING,
+		{ 0, 0, 200, 100 }, 80, 40,
+		OS0_WINDOW_PERSIST_POSITION, FALSE, 1, 0 }));
+	ASSERT_TRUE(restored.restoreLayout(serialized, 1280, 960));
+	EXPECT_EQ(restored.bounds(4).x, 640);
+	EXPECT_EQ(restored.bounds(4).y, 400);
+	EXPECT_EQ(restored.bounds(4).w, 400);
+	EXPECT_EQ(restored.bounds(4).h, 200);
+}
+
+TEST(OS0RealtimeEditorSessionTest, QueuesTypedCommandsAndFlagsWorldSwap)
+{
+	OS0RealtimeEditorSession editor;
+	EXPECT_EQ(editor.pendingCount(), 0u);
+	EXPECT_FALSE(editor.hasPendingWorldSwap());
+	EXPECT_FALSE(editor.willInvalidateWorldPointers());
+
+	OS0EditorTilePlacement tile;
+	tile.gridNo = 101;
+	tile.tileIndex = 23;
+	auto const tileCommand = editor.queuePlaceTile(tile);
+	EXPECT_NE(tileCommand, 0u);
+	EXPECT_EQ(editor.pendingCount(), 1u);
+	EXPECT_FALSE(editor.willInvalidateWorldPointers());
+
+	OS0EditorBlankMapRequest blank;
+	blank.tileset = 2;
+	auto const blankCommand = editor.queueNewBlankMap(blank);
+	EXPECT_GT(blankCommand, tileCommand);
+	EXPECT_EQ(editor.pendingCount(), 2u);
+	EXPECT_TRUE(editor.hasPendingWorldSwap());
+	EXPECT_TRUE(editor.willInvalidateWorldPointers());
+
+	OS0EditorSaveRequest save;
+	save.name = "queue-test";
+	auto const saveCommand = editor.queueSave(save);
+	EXPECT_GT(saveCommand, blankCommand);
+	EXPECT_EQ(editor.pendingCount(), 3u);
+	EXPECT_TRUE(editor.willInvalidateWorldPointers());
+
+	OS0EditorLoadRequest load;
+	load.name = "queue-test";
+	auto const loadCommand = editor.queueLoad(load);
+	EXPECT_GT(loadCommand, saveCommand);
+	EXPECT_EQ(editor.pendingCount(), 4u);
+	EXPECT_TRUE(editor.hasPendingWorldSwap());
 }
 
 TEST(OS0UILayoutTest, DockNeverMovesWithWorldAndWindowsStayAboveIt)
@@ -284,6 +497,17 @@ TEST(OS0CarryStateTest, ValidatesBeginWalkAndCancelLifecycle)
 	EXPECT_EQ(carry.source, NOWHERE);
 }
 
+TEST(OS0CarryStateTest, RetainsSelectedPhysicalHandlingMode)
+{
+	OS0CarryState carry;
+	ASSERT_TRUE(carry.begin(1000, 0, 50, 1, OS0CarryMode::PULL));
+	EXPECT_EQ(carry.mode, OS0CarryMode::PULL);
+	ASSERT_TRUE(carry.beginWalk(1001, 0, 999));
+	EXPECT_EQ(carry.mode, OS0CarryMode::PULL);
+	carry.reset();
+	EXPECT_EQ(carry.mode, OS0CarryMode::CARRY);
+}
+
 TEST(OS0TacticalSessionTest, PersistsSimulationAndClearsOnlyTransientState)
 {
 	OS0TacticalSession source;
@@ -336,4 +560,33 @@ TEST(OS0TacticalSessionTest, RejectsMalformedOrFuturePersistentState)
 		std::vector<int32_t>{ 9, 1, 0, 1, 2, 3, 4, 0, 1 });
 	loaded.loadPersistentState(future);
 	EXPECT_TRUE(loaded.state().sectorEconomy.records().empty());
+}
+
+TEST(OS0RealtimeEditorRecipeTest, BrushResolverClipsWithoutRowWrapping)
+{
+	std::vector<INT16> const corner = OS0ResolveEditorBrushGridNos(0, 1);
+	EXPECT_EQ(corner, (std::vector<INT16>{ 0, 1, WORLD_COLS,
+		WORLD_COLS + 1 }));
+
+	INT16 const center = static_cast<INT16>(WORLD_COLS + 1);
+	std::vector<INT16> const square = OS0ResolveEditorBrushGridNos(center, 1);
+	ASSERT_EQ(square.size(), 9u);
+	EXPECT_EQ(square.front(), 0);
+	EXPECT_EQ(square.back(), static_cast<INT16>(WORLD_COLS * 2 + 2));
+	EXPECT_TRUE(OS0ResolveEditorBrushGridNos(-1, 2).empty());
+	EXPECT_TRUE(OS0ResolveEditorBrushGridNos(WORLD_MAX, 2).empty());
+}
+
+TEST(OS0RealtimeEditorRecipeTest, RoadGuardRejectsUnsafeLegacyOffsets)
+{
+	INT16 const firstSafe = static_cast<INT16>(5 * WORLD_COLS + 5);
+	EXPECT_TRUE(OS0EditorRoadMacroFitsWorld(firstSafe, 0));
+	EXPECT_TRUE(OS0EditorRoadMacroFitsWorld(firstSafe, 31));
+	EXPECT_FALSE(OS0EditorRoadMacroFitsWorld(firstSafe, 32));
+	EXPECT_FALSE(OS0EditorRoadMacroFitsWorld(
+		static_cast<INT16>(4 * WORLD_COLS + 5), 0));
+	EXPECT_FALSE(OS0EditorRoadMacroFitsWorld(
+		static_cast<INT16>(5 * WORLD_COLS + 4), 0));
+	EXPECT_FALSE(OS0EditorRoadMacroFitsWorld(
+		static_cast<INT16>((WORLD_ROWS - 1) * WORLD_COLS + 5), 0));
 }

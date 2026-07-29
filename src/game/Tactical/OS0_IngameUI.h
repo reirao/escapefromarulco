@@ -35,6 +35,7 @@ void OS0OpenContextMenu(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 void OS0HoverWorldObject(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 	UINT16 tileIndex, INT16 screenX, INT16 screenY);
 void OS0ClearWorldHover();
+BOOLEAN OS0BlocksWorldInputAt(INT16 screenX, INT16 screenY);
 void OS0CycleCursorAction(SOLDIERTYPE* target, GridNo gridNo, UINT8 level, UINT16 tileIndex);
 void OS0CancelCursorAction();
 BOOLEAN OS0HandleRealtimeControlKey(UINT32 key, UINT32 keyState);

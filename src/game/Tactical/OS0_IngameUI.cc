@@ -11,7 +11,11 @@
 #include "OS0_CreatorModel.h"
 #include "OS0_DirectControl.h"
 #include "OS0_ItemRelations.h"
+#include "OS0_MouseRegionZOrder.h"
+#include "OS0_RealtimeEditor.h"
+#include "OS0_RealtimeEditorUI.h"
 #include "OS0_TacticalSession.h"
+#include "OS0_UIAssetManager.h"
 #include "OS0_UIRuntime.h"
 #include "OS0_WorldInteractionSystem.h"
 
@@ -106,12 +110,17 @@ namespace
 	constexpr INT16 INSPECTOR_H = 96;
 	constexpr INT16 TOOLBOX_W = 132;
 	constexpr INT16 TOOLBOX_H = 132;
+	constexpr INT16 ENVIRONMENT_W = 246;
+	constexpr INT16 ENVIRONMENT_H = 104;
+	constexpr size_t ENVIRONMENT_SKILL_COUNT = 6;
+	constexpr size_t NEARBY_HINT_COUNT = 6;
 	// The field-computer orb owns TACTICAL; the remaining eight toolbox modules
 	// are always available as fixed, screen-space dock icons.
 	constexpr size_t PANEL_DOCK_COUNT =
 		static_cast<size_t>(OS0UICommand::COUNT) - 1;
 	constexpr size_t COMMAND_MODULE_COUNT =
 		static_cast<size_t>(OS0UICommand::COUNT);
+	constexpr size_t GOD_ICON_COUNT = static_cast<size_t>(OS0UIIcon::COUNT);
 	constexpr INT16 COMMAND_BAR_H = OS0UILayout::DOCK_HEIGHT;
 	constexpr INT16 BRAND_W = 184;
 	constexpr INT16 BRAND_H = 40;
@@ -189,24 +198,9 @@ namespace
 		UINT32 born;
 	};
 
-	enum class FloatingPanelId : UINT8
-	{
-		SECTOR,
-		INSPECTOR,
-		TOOLBOX,
-		COUNT
-	};
-
+	using FloatingPanelId = OS0UIWindow;
+	using FloatingPanel = OS0UIWindowState;
 	using ToolboxModule = OS0UICommand;
-
-	struct ActorAnchorState
-	{
-		SOLDIERTYPE const* soldier = nullptr;
-		INT32 x256 = 0;
-		INT32 y256 = 0;
-		UINT32 updatedAt = 0;
-		BOOLEAN valid = FALSE;
-	};
 
 	struct SalvageProfile
 	{
@@ -226,18 +220,16 @@ namespace
 		BOOLEAN catalogued;
 	};
 
-	using SectorUpgrade = OS0SectorUpgradeDefinition;
-
-	struct FloatingPanel
+	struct NearbyInteractionHint
 	{
-		INT16 x;
-		INT16 y;
-		INT16 w;
-		INT16 h;
-		BOOLEAN visible;
-		BOOLEAN dragging;
-		BOOLEAN visibleBeforeAim;
+		GridNo gridNo = NOWHERE;
+		UINT8 level = 0;
+		UINT16 tileIndex = NO_TILE;
+		ContextAction action = ContextAction::INSPECT;
+		BOOLEAN enabled = FALSE;
 	};
+
+	using SectorUpgrade = OS0SectorUpgradeDefinition;
 
 	struct SlotLayout
 	{
@@ -304,10 +296,11 @@ namespace
 	ContentsMode gContentsMode = ContentsMode::SOLDIER;
 	BOOLEAN gHoverVisible = FALSE;
 	BOOLEAN gInspectorPinned = TRUE;
-	BOOLEAN gBagDragging = FALSE;
 	BOOLEAN gAimAutoCollapsed = FALSE;
-	BOOLEAN gBagVisibleBeforeAim = FALSE;
-	BOOLEAN gEquipmentVisibleBeforeAim = FALSE;
+	BOOLEAN gWindowMovedThisFrame = FALSE;
+	OBJECTTYPE const* gLastItemCursorPointer = nullptr;
+	UINT16 gLastItemCursorItem = NOTHING;
+	UINT32 gNextItemCursorRefreshAt = 0;
 	INT8 gLootDragCandidate = -1;
 	INT16 gLootDragStartX = 0;
 	INT16 gLootDragStartY = 0;
@@ -316,21 +309,19 @@ namespace
 	BOOLEAN gBagVisibleBeforeTalk = TRUE;
 	BOOLEAN gTalkDocked = FALSE;
 	BOOLEAN gFieldToolIssued = FALSE;
-	INT16 gBagX = 300;
-	INT16 gBagY = 20;
-	INT16 gInventoryX = 650;
-	INT16 gInventoryY = 20;
+	INT16& gBagX = gUIRuntime.panel(OS0UIPanel::INVENTORY).x;
+	INT16& gBagY = gUIRuntime.panel(OS0UIPanel::INVENTORY).y;
+	INT16& gInventoryX = gBagX;
+	INT16& gInventoryY = gBagY;
 	INT16 gOrbY = 316;
-	INT16 gContextX = 0;
-	INT16 gContextY = 0;
+	INT16& gContextX = gUIRuntime.panel(OS0UIPanel::CONTEXT).x;
+	INT16& gContextY = gUIRuntime.panel(OS0UIPanel::CONTEXT).y;
 	INT16 gEquipmentCentreX = 0;
 	INT16 gEquipmentCentreY = 0;
-	INT16 gStackSplitX = 0;
-	INT16 gStackSplitY = 0;
+	INT16& gStackSplitX = gUIRuntime.panel(OS0UIPanel::STACK_SPLIT).x;
+	INT16& gStackSplitY = gUIRuntime.panel(OS0UIPanel::STACK_SPLIT).y;
 	INT16 gHoverX = 0;
 	INT16 gHoverY = 0;
-	INT16 gDragOffsetX = 0;
-	INT16 gDragOffsetY = 0;
 	ComputerMode gMode = ComputerMode::INFO;
 	SOLDIERTYPE* gInspectedSoldier = nullptr;
 	// The equipment window is an independent live view. World inspection and
@@ -363,7 +354,6 @@ namespace
 	size_t gImpactParticleNext = 0;
 	BOOLEAN& gGodLibraryVisible =
 		gUIRuntime.visibilityRef(OS0UIPanel::ASSET_LIBRARY);
-	BOOLEAN gGodLibraryDragging = FALSE;
 	BOOLEAN& gAssetCatalogVisible =
 		gUIRuntime.visibilityRef(OS0UIPanel::ASSET_CATALOG);
 	BOOLEAN gAssetCatalogReturnToLibrary = FALSE;
@@ -372,21 +362,68 @@ namespace
 	DebugLibraryMode gDebugLibraryMode = DebugLibraryMode::ASSETS;
 	AssetLibraryFilter gAssetLibraryFilter = AssetLibraryFilter::ALL;
 	size_t gAssetLibraryPage = 0;
-	INT16 gGodLibraryX = 0;
-	INT16 gGodLibraryY = 0;
-	INT16 gAssetCatalogX = 0;
-	INT16 gAssetCatalogY = 0;
+	INT16& gGodLibraryX =
+		gUIRuntime.panel(OS0UIPanel::ASSET_LIBRARY).x;
+	INT16& gGodLibraryY =
+		gUIRuntime.panel(OS0UIPanel::ASSET_LIBRARY).y;
+	INT16& gAssetCatalogX =
+		gUIRuntime.panel(OS0UIPanel::ASSET_CATALOG).x;
+	INT16& gAssetCatalogY =
+		gUIRuntime.panel(OS0UIPanel::ASSET_CATALOG).y;
 	AssetCatalogRecord gCatalogDraft{};
 	std::vector<DebugAssetEntry> gDebugAssetLibrary;
 	UINT8 gDebugAssetLibrarySector = 0xff;
 	INT16 gDebugAssetLibraryTileset = -1;
 	SGPVSurface* gWorldZoomBuffer = nullptr;
-	std::array<FloatingPanel, static_cast<size_t>(FloatingPanelId::COUNT)> gFloatingPanels{{
-		{ 190, 72, SECTOR_PANEL_W, SECTOR_PANEL_H, FALSE, FALSE, FALSE },
-		{ 8, 250, INSPECTOR_W, INSPECTOR_H, TRUE, FALSE, FALSE },
-		{ 62, 250, TOOLBOX_W, TOOLBOX_H, FALSE, FALSE, FALSE }
-	}};
-	std::array<ActorAnchorState, TOTAL_SOLDIERS> gActorAnchors{};
+	class FloatingWindowView
+	{
+	public:
+		explicit FloatingWindowView(OS0UIRuntime& runtime) : runtime_(runtime) {}
+		constexpr size_t size() const noexcept
+		{
+			return static_cast<size_t>(FloatingPanelId::COUNT);
+		}
+		FloatingPanel& operator[](size_t index) noexcept
+		{
+			return runtime_.window(static_cast<FloatingPanelId>(index));
+		}
+		FloatingPanel const& operator[](size_t index) const noexcept
+		{
+			return runtime_.window(static_cast<FloatingPanelId>(index));
+		}
+		class iterator
+		{
+		public:
+			iterator(FloatingWindowView& view, size_t index) : view_(view), index_(index) {}
+			FloatingPanel& operator*() const { return view_[index_]; }
+			iterator& operator++() { ++index_; return *this; }
+			BOOLEAN operator!=(iterator const& other) const { return index_ != other.index_; }
+		private:
+			FloatingWindowView& view_;
+			size_t index_;
+		};
+		iterator begin() { return iterator(*this, 0); }
+		iterator end() { return iterator(*this, size()); }
+	private:
+		OS0UIRuntime& runtime_;
+	};
+	FloatingWindowView gFloatingPanels{ gUIRuntime };
+	std::array<NearbyInteractionHint, NEARBY_HINT_COUNT> gNearbyHints{};
+	std::array<ST::string, NEARBY_HINT_COUNT> gNearbyHintHelp{};
+	size_t gNearbyHintCount = 0;
+	GridNo gNearbyHintActorGridNo = NOWHERE;
+	GridNo gNearbyHintCursorGridNo = NOWHERE;
+	UINT32 gNextNearbyHintScanAt = 0;
+	BOOLEAN gNearbyScanWasEnabled = FALSE;
+	GridNo gEnvironmentGridNo = NOWHERE;
+	UINT8 gEnvironmentLevel = 0;
+	UINT16 gEnvironmentTileIndex = NO_TILE;
+	GridNo gEnvironmentActorGridNo = NOWHERE;
+	UINT32 gNextEnvironmentRefreshAt = 0;
+	ST::string gEnvironmentTitle = "NO OBJECT SELECTED";
+	std::array<ContextEntry, ENVIRONMENT_SKILL_COUNT> gEnvironmentEntries{};
+	size_t gEnvironmentEntryCount = 0;
+	ContextAction gHoverSuggestedAction = ContextAction::COUNT;
 
 	OS0CarryState& CarryState()
 	{
@@ -398,13 +435,102 @@ namespace
 		return OS0GetTacticalSession().state().cursor;
 	}
 
+	OS0InteractionMode& InteractionMode()
+	{
+		return gUIRuntime.interactionMode();
+	}
+
+	OS0InteractionSurface SurfaceForAction(ContextAction const action)
+	{
+		if (action == ContextAction::TAKE_COVER)
+			return OS0InteractionSurface::BEHAVIOR;
+		switch (ContextActionCategory(action))
+		{
+			case ActionCategory::GEAR:
+				return OS0InteractionSurface::EQUIPMENT;
+			case ActionCategory::STANCE:
+				return OS0InteractionSurface::BEHAVIOR;
+			case ActionCategory::WORLD:
+			case ActionCategory::INFO:
+			case ActionCategory::DEBUG:
+				return OS0InteractionSurface::ENVIRONMENT;
+			case ActionCategory::MOVEMENT:
+			case ActionCategory::COMBAT:
+			case ActionCategory::MEDICAL:
+			case ActionCategory::SOCIAL:
+			case ActionCategory::COUNT:
+				return OS0InteractionSurface::ACTIONS;
+		}
+		return OS0InteractionSurface::ACTIONS;
+	}
+
+	void ResetNearbyScanCache()
+	{
+		gNearbyHintActorGridNo = NOWHERE;
+		gNearbyHintCursorGridNo = NOWHERE;
+		gNextNearbyHintScanAt = 0;
+		// Scan mode changes hover semantics. Force the current under-cursor object
+		// through the resolver even when the pointer itself did not move.
+		gHoverCursorSoldier = nullptr;
+		gHoverCursorGridNo = NOWHERE;
+		gHoverCursorLevel = 0;
+		gHoverCursorTileIndex = NO_TILE;
+		gHoverCursorHeldItem = NOTHING;
+		gHoverSuggestedAction = ContextAction::COUNT;
+	}
+
+	void SetInteractionForAction(ContextAction const action)
+	{
+		if (action == ContextAction::ATTACK)
+		{
+			InteractionMode().beginFight(OS0InteractionSurface::ACTIONS);
+		}
+		else if (action == ContextAction::MOVE)
+		{
+			if (InteractionMode().nearbyScanEnabled())
+				InteractionMode().returnToNormal();
+			else
+			{
+				InteractionMode().selectSurface(OS0InteractionSurface::ACTIONS);
+				InteractionMode().returnToNormal();
+			}
+		}
+		else
+		{
+			InteractionMode().beginInteraction(SurfaceForAction(action));
+		}
+	}
+
 	SOLDIERTYPE* CarryCarrier()
 	{
 		return ID2Soldier(CarryState().carrier);
 	}
 
+	void RefreshHeldItemCursor()
+	{
+		if (!gpItemPointer)
+		{
+			gLastItemCursorPointer = nullptr;
+			gLastItemCursorItem = NOTHING;
+			gNextItemCursorRefreshAt = 0;
+			return;
+		}
+		const UINT32 now = GetJA2Clock();
+		if (gLastItemCursorPointer == gpItemPointer &&
+			gLastItemCursorItem == gpItemPointer->usItem &&
+			now < gNextItemCursorRefreshAt) return;
+		SetMouseCursorFromCurrentItem();
+		gLastItemCursorPointer = gpItemPointer;
+		gLastItemCursorItem = gpItemPointer->usItem;
+		// Cursor annotations may change with the hovered destination, but rebuilding
+		// the external item sprite every render frame made drag visibly flicker.
+		gNextItemCursorRefreshAt = now + 80;
+	}
+
 	void OutlineBox(INT16 x, INT16 y, INT16 w, INT16 h, UINT16 colour);
 	void DrawIconCorners(INT16 x, INT16 y, INT16 w, INT16 h, UINT16 colour);
+	void DrawFloatingPanelShell(FloatingPanel const& panel, FloatingPanelId id,
+		const ST::string& title);
 	void ContextActionCallback(MOUSE_REGION* region, UINT32 reason);
 	void EquipmentPackCallback(MOUSE_REGION* region, UINT32 reason);
 	void ItemTransferIntentCallback(MOUSE_REGION* region, UINT32 reason);
@@ -416,9 +542,16 @@ namespace
 	void DebugLibraryCloseCallback(MOUSE_REGION* region, UINT32 reason);
 	void AssetCatalogCallback(MOUSE_REGION* region, UINT32 reason);
 	void ToolboxModuleCallback(MOUSE_REGION* region, UINT32 reason);
+	void EnvironmentSkillCallback(MOUSE_REGION* region, UINT32 reason);
+	void NearbyHintCallback(MOUSE_REGION* region, UINT32 reason);
+	void NearbyHintMoveCallback(MOUSE_REGION* region, UINT32 reason);
 	void ActivateToolboxModule(ToolboxModule module);
+	void ApplyCursorTool(ContextAction action);
 	void SetBagRegionsEnabled(BOOLEAN enabled);
+	size_t RefreshLootWorldItems();
+	void SetLootRegionsEnabled(BOOLEAN enabled);
 	void PositionBagRegions();
+	void PositionLootRegions();
 	BOOLEAN GetActorDisplayAnchor(SOLDIERTYPE const* soldier, INT16& x, INT16& y);
 	void ClampWindowPositions();
 	BOOLEAN SaveUILayout();
@@ -431,15 +564,14 @@ namespace
 	SGPVSurface* gAnimatedMercPreview = nullptr;
 	SOLDIERTYPE const* gAnimatedMercPreviewSoldier = nullptr;
 	SGPVSurface* gAssetLibrarySymbolSurface = nullptr;
-	SGPVObject* gGodNewIcons = nullptr;
-	SGPVObject* gGodDoorIcons = nullptr;
-	SGPVObject* gGodButtonFrame = nullptr;
 	MOUSE_REGION gGodLibraryBlock;
 	MOUSE_REGION gGodLibraryGrabber;
 	MOUSE_REGION gGodLibraryClose;
-	std::array<MOUSE_REGION, 25> gGodIconRegions;
+	std::array<MOUSE_REGION, GOD_ICON_COUNT + 1> gGodIconRegions;
 	std::array<MOUSE_REGION, 12> gAssetLibraryRegions;
 	std::array<MOUSE_REGION, static_cast<size_t>(ToolboxModule::COUNT)> gToolboxRegions;
+	std::array<MOUSE_REGION, ENVIRONMENT_SKILL_COUNT> gEnvironmentSkillRegions;
+	std::array<MOUSE_REGION, NEARBY_HINT_COUNT> gNearbyHintRegions;
 	MOUSE_REGION gAssetCatalogBlock;
 	std::array<MOUSE_REGION, 11> gAssetCatalogRegions;
 	MOUSE_REGION gContextBlock;
@@ -499,13 +631,6 @@ namespace
 
 	constexpr std::array<const char*, 5> gFeedbackCategories{{
 		"BUG", "CONTROLS", "VISUAL", "IDEA", "CRASH / STABILITY"
-	}};
-
-	constexpr std::array<const char*, 24> gGodIconNames{{
-		"RUN", "WALK", "CROUCH", "PRONE", "LOOK", "CANCEL",
-		"HAND / LOOT", "TALK", "TARGET", "KNIFE", "FIRST AID", "PUNCH",
-		"EXPLOSIVE", "TOOLKIT", "WIRE CUTTER", "CROWBAR", "KEY",
-		"KEYRING", "OPEN", "EXAMINE", "BREACH", "DISARM", "LOCKPICK", "BOOT"
 	}};
 
 	constexpr std::array<const char*, static_cast<size_t>(AssetCategory::COUNT)>
@@ -573,6 +698,8 @@ namespace
 			gFloatingPanels[static_cast<size_t>(FloatingPanelId::INSPECTOR)];
 		FloatingPanel& toolbox =
 			gFloatingPanels[static_cast<size_t>(FloatingPanelId::TOOLBOX)];
+		FloatingPanel& environment =
+			gFloatingPanels[static_cast<size_t>(FloatingPanelId::ENVIRONMENT)];
 
 		sector.x = std::max<INT16>(0, gsVIEWPORT_END_X - sector.w - 8);
 		sector.y = std::max<INT16>(8, bottom - sector.h - 8);
@@ -580,6 +707,9 @@ namespace
 		inspector.y = std::max<INT16>(8, bottom - inspector.h - 8);
 		toolbox.x = std::max<INT16>(8, gsVIEWPORT_END_X - toolbox.w - 8);
 		toolbox.y = std::max<INT16>(8, bottom - toolbox.h - 8);
+		environment.x = 8;
+		environment.y = std::min<INT16>(56,
+			std::max<INT16>(8, bottom - environment.h - 8));
 		if (positionCharacter)
 		{
 			gBagX = std::max<INT16>(0, gsVIEWPORT_END_X - PANE_W - 8);
@@ -589,21 +719,7 @@ namespace
 
 	void ClampWindowPositions()
 	{
-		OS0UIRect bag = gUILayout.clampWindow(
-			{ gBagX, gBagY, PANE_W, BAG_H });
-		gBagX = bag.x;
-		gBagY = bag.y;
-		OS0UIRect library = gUILayout.clampWindow(
-			{ gGodLibraryX, gGodLibraryY, GOD_LIBRARY_W, GOD_LIBRARY_H });
-		gGodLibraryX = library.x;
-		gGodLibraryY = library.y;
-		for (FloatingPanel& panel : gFloatingPanels)
-		{
-			OS0UIRect const clamped = gUILayout.clampWindow(
-				{ panel.x, panel.y, panel.w, panel.h });
-			panel.x = clamped.x;
-			panel.y = clamped.y;
-		}
+		gUIRuntime.windowManager().clampAll();
 		gInventoryX = gBagX;
 		gInventoryY = gBagY;
 	}
@@ -613,21 +729,8 @@ namespace
 		try
 		{
 			GCM->userPrivateFiles()->createDir("OS0");
-			ST::string output = ST::format(
-				"# Escape from Arulco UI layout v2\n"
-				"screen {} {}\n"
-				"bag {} {}\n"
-				"library {} {}\n",
-				SCREEN_WIDTH, SCREEN_HEIGHT,
-				gBagX, gBagY, gGodLibraryX, gGodLibraryY);
-			constexpr std::array<const char*, static_cast<size_t>(FloatingPanelId::COUNT)>
-				panelNames{{ "sector", "inspector", "toolbox" }};
-			for (size_t i = 0; i < gFloatingPanels.size(); ++i)
-			{
-				FloatingPanel const& panel = gFloatingPanels[i];
-				output += ST::format("panel {} {} {}\n",
-					panelNames[i], panel.x, panel.y);
-			}
+			ST::string const output = gUIRuntime.windowManager().serializeLayout(
+				SCREEN_WIDTH, SCREEN_HEIGHT);
 			AutoSGPFile file{
 				GCM->userPrivateFiles()->openForWriting(UI_LAYOUT_PATH, true) };
 			file->write(output.c_str(), output.size());
@@ -658,7 +761,17 @@ namespace
 		{
 			AutoSGPFile file{
 				GCM->userPrivateFiles()->openForReading(UI_LAYOUT_PATH) };
-			std::istringstream stream(file->readStringToEnd().c_str());
+			ST::string const savedLayout = file->readStringToEnd();
+			std::string const layoutText = savedLayout.to_std_string();
+			if (layoutText.find("window ") != std::string::npos)
+			{
+				gUIRuntime.windowManager().restoreLayout(savedLayout,
+					SCREEN_WIDTH, SCREEN_HEIGHT);
+				gUIRuntime.hideTransientWorldPanels();
+				ClampWindowPositions();
+				return;
+			}
+			std::istringstream stream(savedLayout.c_str());
 			std::string line;
 			while (std::getline(stream, line))
 			{
@@ -681,14 +794,11 @@ namespace
 					INT32 x = 0;
 					INT32 y = 0;
 					if (!(row >> panelName >> x >> y)) continue;
-					size_t index = gFloatingPanels.size();
-					if (panelName == "sector") index =
-						static_cast<size_t>(FloatingPanelId::SECTOR);
-					else if (panelName == "inspector") index =
-						static_cast<size_t>(FloatingPanelId::INSPECTOR);
-					else if (panelName == "toolbox") index =
-						static_cast<size_t>(FloatingPanelId::TOOLBOX);
-					else
+					FloatingPanelId const known =
+						OS0UIWindowFromPersistenceKey(panelName.c_str());
+					size_t index = known == FloatingPanelId::COUNT ?
+						gFloatingPanels.size() : static_cast<size_t>(known);
+					if (known == FloatingPanelId::COUNT)
 					{
 						// v1 used the old eight-panel enum. Migrate only the three
 						// surviving windows; dead prototype geometry is discarded.
@@ -732,7 +842,10 @@ namespace
 		}
 		// Persist geometry, never transient open/closed state. A toolbox left open
 		// in an earlier run must not materialize underneath the first world click.
-		gFloatingPanels[static_cast<size_t>(FloatingPanelId::TOOLBOX)].visible = FALSE;
+		gUIRuntime.windowManager().hide(
+			gUIRuntime.managedId(FloatingPanelId::TOOLBOX));
+		gUIRuntime.windowManager().hide(
+			gUIRuntime.managedId(FloatingPanelId::ENVIRONMENT));
 		ClampWindowPositions();
 	}
 
@@ -950,9 +1063,9 @@ namespace
 
 	BOOLEAN FeedbackKeyboardHook(InputAtom* event)
 	{
-		const FloatingPanel& panel =
-			gFloatingPanels[static_cast<size_t>(FloatingPanelId::SECTOR)];
-		if (!panel.visible || gSectorPanelMode != SectorPanelMode::REPORT ||
+		if (!gUIRuntime.windowManager().visible(gUIRuntime.managedId(
+			FloatingPanelId::SECTOR)) ||
+			gSectorPanelMode != SectorPanelMode::REPORT ||
 			!gFeedbackEditing) return FALSE;
 		if (event->usEvent == TEXT_INPUT)
 		{
@@ -1274,16 +1387,44 @@ namespace
 			gInspectedTileIndex, GetSelectedMan());
 	}
 
-	BOOLEAN BeginInspectedWorldMove()
+	ContextAction CarryModeAction(OS0CarryMode mode)
+	{
+		switch (mode)
+		{
+			case OS0CarryMode::PUSH: return ContextAction::PUSH;
+			case OS0CarryMode::PULL: return ContextAction::PULL;
+			case OS0CarryMode::THROW: return ContextAction::THROW;
+			case OS0CarryMode::CARRY: return ContextAction::CARRY;
+		}
+		return ContextAction::CARRY;
+	}
+
+	OS0CarryMode CarryModeForAction(ContextAction action)
+	{
+		switch (action)
+		{
+			case ContextAction::PUSH: return OS0CarryMode::PUSH;
+			case ContextAction::PULL: return OS0CarryMode::PULL;
+			case ContextAction::THROW: return OS0CarryMode::THROW;
+			default: return OS0CarryMode::CARRY;
+		}
+	}
+
+	const char* CarryModeName(OS0CarryMode mode)
+	{
+		return ContextActionName(CarryModeAction(mode));
+	}
+
+	BOOLEAN BeginInspectedWorldMove(OS0CarryMode mode = OS0CarryMode::CARRY)
 	{
 		if (!IsInspectedWorldAssetNear() || !IsInspectedWorldAssetMovable() ||
 			gInspectedTileIndex >= NUMBEROFTILES) return FALSE;
 		ClearWorldMoveState();
-		CursorState().action = ContextAction::CARRY;
+		CursorState().action = CarryModeAction(mode);
 		OS0CarryState& carry = CarryState();
 		SOLDIERTYPE* const carrier = GetSelectedMan();
 		if (!carrier || !carry.begin(gInspectedGridNo, gInspectedLevel,
-			gInspectedTileIndex, Soldier2ID(carrier))) return FALSE;
+			gInspectedTileIndex, Soldier2ID(carrier), mode)) return FALSE;
 		if (STRUCTURE const* const structure = WorldStructureAt(carry.source,
 			carry.sourceLevel, carry.tileIndex))
 		{
@@ -1452,6 +1593,18 @@ namespace
 		++gContextEntryCount;
 	}
 
+	void FilterContextEntriesForSurface(OS0InteractionSurface const surface)
+	{
+		size_t output = 0;
+		for (size_t input = 0; input < gContextEntryCount; ++input)
+		{
+			if (SurfaceForAction(gContextEntries[input].action) != surface) continue;
+			if (output != input) gContextEntries[output] = gContextEntries[input];
+			++output;
+		}
+		gContextEntryCount = output;
+	}
+
 	UINT16 ActionCategoryColour(ActionCategory category)
 	{
 		switch (category)
@@ -1472,11 +1625,7 @@ namespace
 
 	void DrawContextActionIcon(ContextAction action, INT16 x, INT16 y)
 	{
-		if (ContextActionUsesDoorIcons(action) && gGodDoorIcons)
-			BltVideoObject(FRAME_BUFFER, gGodDoorIcons, 0, x, y);
-		else if (gGodNewIcons)
-			BltVideoObject(FRAME_BUFFER, gGodNewIcons,
-				ContextActionIconFrame(action), x, y);
+		OS0UIAssets().draw(ContextActionIcon(action), FRAME_BUFFER, x, y);
 
 		const UINT16 category = ActionCategoryColour(ContextActionCategory(action));
 		ColorFillVideoSurfaceArea(FRAME_BUFFER, x, y + 21, x + 20, y + 22, category);
@@ -1486,6 +1635,15 @@ namespace
 				x + 12, y + 18, category);
 			ColorFillVideoSurfaceArea(FRAME_BUFFER, x + 4, y + 10,
 				x + 17, y + 13, category);
+		}
+		else if (action == ContextAction::PUSH || action == ContextAction::PULL ||
+			action == ContextAction::THROW)
+		{
+			SetFont(TINYFONT1);
+			SetFontBackground(FONT_MCOLOR_BLACK);
+			SetFontForeground(FONT_WHITE);
+			MPrint(x + 7, y + 7, action == ContextAction::PUSH ? ">" :
+				action == ContextAction::PULL ? "<" : "^");
 		}
 	}
 
@@ -1816,6 +1974,281 @@ namespace
 			HasFieldTool(soldier, RequiredFieldTool(gridNo, level, tileIndex));
 	}
 
+	OS0EnvironmentActionFacts BuildEnvironmentFacts(GridNo gridNo, UINT8 level,
+		UINT16 tileIndex, SOLDIERTYPE const* actor)
+	{
+		OS0EnvironmentActionFacts facts;
+		if (gridNo < 0 || gridNo >= WORLD_MAX) return facts;
+		STRUCTURE const* const structure = tileIndex < NUMBEROFTILES ?
+			WorldStructureAt(gridNo, level, tileIndex) : nullptr;
+		facts.hasAsset = tileIndex < NUMBEROFTILES;
+		facts.hasItems = GetItemPool(gridNo, level) != nullptr;
+		facts.terrain = level == 0 && gpWorldLevelData[gridNo].pLandHead;
+		facts.near = actor && actor->bLevel == level &&
+			PythSpacesAway(actor->sGridNo, gridNo) <= 2;
+		facts.openable = structure &&
+			(structure->fFlags & STRUCTURE_OPENABLE) &&
+			!(structure->fFlags & STRUCTURE_ANYDOOR);
+
+		constexpr StructureFlags fixed = static_cast<StructureFlags>(
+			STRUCTURE_WALLSTUFF | STRUCTURE_ROOF | STRUCTURE_PERSON |
+			STRUCTURE_CORPSE | STRUCTURE_TREE | STRUCTURE_ANYFENCE |
+			STRUCTURE_SWITCH | STRUCTURE_VEHICLE | STRUCTURE_LIGHTSOURCE);
+		facts.moveCandidate = structure && level == 0 &&
+			(structure->fFlags & STRUCTURE_BASE_TILE) &&
+			!(structure->fFlags & fixed) && structure->pDBStructureRef &&
+			structure->pDBStructureRef->pDBStructure->ubNumberOfTiles == 1;
+		facts.canMove = facts.near && facts.moveCandidate && actor &&
+			CanSoldierMoveWorldStructure(actor, structure);
+		if (facts.canMove)
+		{
+			WORLD_PHYSICS_PROFILE const physics = GetWorldPhysicsProfile(structure);
+			facts.canThrow = physics.massKg <=
+				GetSoldierWorldCarryCapacityKg(actor) * 0.30f;
+		}
+
+		SalvageProfile const salvage = facts.hasAsset ?
+			DescribeWorldAsset(gridNo, level, tileIndex) :
+			SalvageProfile{ "GROUND", ResourceKind::SOIL, 0, FALSE };
+		facts.salvageable = salvage.salvageable;
+		facts.canSalvage = CanSalvageWorldAsset(actor, gridNo, level, tileIndex);
+		facts.diggableSurface = facts.terrain && !structure;
+		facts.canDig = facts.diggableSurface && CanDigTerrainAt(actor, gridNo);
+		AssetCatalogRecord const* const catalog = facts.hasAsset ?
+			OS0FindAssetCatalogRecordConst(static_cast<INT16>(giCurrentTilesetID),
+				CanonicalAssetTileIndex(gridNo, level, tileIndex)) : nullptr;
+		facts.buildable = catalog && catalog->buildable;
+		facts.debugCatalog = TRUE;
+		return facts;
+	}
+
+	ST::string EnvironmentActionLabel(ContextAction action,
+		OS0EnvironmentActionFacts const& facts, GridNo gridNo, UINT8 level,
+		UINT16 tileIndex)
+	{
+		switch (action)
+		{
+			case ContextAction::CONTENTS:
+				return facts.near ? "OPEN CONTENTS" : "OPEN / MOVE CLOSER";
+			case ContextAction::PICK_UP:
+				return facts.near ? "PICK UP" : "PICK UP / MOVE CLOSER";
+			case ContextAction::DIG:
+				return HasDiggingTool(GetSelectedMan()) ?
+					"DIG / REMOVE SURFACE" : "DIG / NEED FIELD SHOVEL";
+			case ContextAction::SALVAGE:
+			{
+				FieldToolKind const tool = RequiredFieldTool(gridNo, level, tileIndex);
+				return HasFieldTool(GetSelectedMan(), tool) ?
+					"DISMANTLE / SALVAGE" :
+					ST::format("DISMANTLE / NEED {}", FieldToolName(tool));
+			}
+			case ContextAction::CARRY: return "CARRY / LIFT + PLACE";
+			case ContextAction::PUSH: return "PUSH / ONE-TILE STEPS";
+			case ContextAction::PULL: return "PULL / WALK BACKWARD";
+			case ContextAction::THROW:
+				return facts.canThrow ? "THROW / CHOOSE LANDING" :
+					"THROW / TOO HEAVY";
+			case ContextAction::BUILD:
+				return facts.buildable ? "BLUEPRINT / PLACEABLE" :
+					"BUILD REQUIREMENTS";
+			case ContextAction::INSPECT: return "INSPECT / MATERIAL + CONDITION";
+			case ContextAction::CATALOG: return "GOD / CATALOG ASSET";
+			default: return ContextActionName(action);
+		}
+	}
+
+	BOOLEAN IsEnvironmentSkill(ContextAction action)
+	{
+		return action == ContextAction::DIG || action == ContextAction::SALVAGE ||
+			OS0IsManipulationAction(action);
+	}
+
+	BOOLEAN RefreshEnvironmentTarget(GridNo gridNo, UINT8 level, UINT16 tileIndex)
+	{
+		const size_t previousCount = gEnvironmentEntryCount;
+		std::array<ContextAction, ENVIRONMENT_SKILL_COUNT> previousActions{};
+		std::array<BOOLEAN, ENVIRONMENT_SKILL_COUNT> previousEnabled{};
+		for (size_t i = 0; i < previousCount; ++i)
+		{
+			previousActions[i] = gEnvironmentEntries[i].action;
+			previousEnabled[i] = gEnvironmentEntries[i].enabled;
+		}
+		gEnvironmentGridNo = gridNo;
+		gEnvironmentLevel = level;
+		gEnvironmentTileIndex = tileIndex;
+		gEnvironmentEntryCount = 0;
+		SOLDIERTYPE* const actor = GetSelectedMan();
+		OS0EnvironmentActionFacts const facts = BuildEnvironmentFacts(gridNo,
+			level, tileIndex, actor);
+		if (facts.hasAsset)
+			gEnvironmentTitle = DescribeWorldAsset(gridNo, level, tileIndex).displayName;
+		else if (facts.terrain) gEnvironmentTitle = TerrainPhysicsName(GetTerrainType(gridNo));
+		else gEnvironmentTitle = facts.hasItems ? "GROUND ITEMS" : "NO OBJECT SELECTED";
+		for (OS0ResolvedAction const& resolved :
+			ResolveOS0EnvironmentActions(facts))
+		{
+			if (!IsEnvironmentSkill(resolved.action) ||
+				gEnvironmentEntryCount >= gEnvironmentEntries.size()) continue;
+			gEnvironmentEntries[gEnvironmentEntryCount++] = {
+				resolved.action,
+				EnvironmentActionLabel(resolved.action, facts, gridNo, level,
+					tileIndex),
+				resolved.enabled };
+		}
+		gEnvironmentActorGridNo = actor ? actor->sGridNo : NOWHERE;
+		gNextEnvironmentRefreshAt = GetJA2Clock() + 250;
+		if (previousCount != gEnvironmentEntryCount) return TRUE;
+		for (size_t i = 0; i < gEnvironmentEntryCount; ++i)
+			if (previousActions[i] != gEnvironmentEntries[i].action ||
+				previousEnabled[i] != gEnvironmentEntries[i].enabled)
+				return TRUE;
+		return FALSE;
+	}
+
+	ContextAction PrimaryProximityAction(
+		std::vector<OS0ResolvedAction> const& actions)
+	{
+		for (OS0ResolvedAction const& entry : actions)
+		{
+			if (entry.action == ContextAction::CONTENTS ||
+				entry.action == ContextAction::PICK_UP ||
+				entry.action == ContextAction::DIG ||
+				entry.action == ContextAction::SALVAGE ||
+				OS0IsManipulationAction(entry.action)) return entry.action;
+		}
+		return ContextAction::COUNT;
+	}
+
+	void AddNearbyInteractionHint(GridNo gridNo, UINT8 level, UINT16 tileIndex)
+	{
+		if (gNearbyHintCount >= gNearbyHints.size()) return;
+		for (size_t i = 0; i < gNearbyHintCount; ++i)
+		{
+			if (gNearbyHints[i].gridNo == gridNo &&
+				gNearbyHints[i].tileIndex == tileIndex) return;
+		}
+		OS0EnvironmentActionFacts const facts = BuildEnvironmentFacts(gridNo,
+			level, tileIndex, GetSelectedMan());
+		std::vector<OS0ResolvedAction> const actions =
+			ResolveOS0EnvironmentActions(facts);
+		ContextAction const primary = PrimaryProximityAction(actions);
+		if (primary == ContextAction::COUNT) return;
+		auto const match = std::find_if(actions.begin(), actions.end(),
+			[primary](OS0ResolvedAction const& entry)
+			{ return entry.action == primary; });
+		gNearbyHints[gNearbyHintCount++] = { gridNo, level, tileIndex, primary,
+			match != actions.end() && match->enabled };
+	}
+
+	void UpdateNearbyInteractionHints()
+	{
+		std::array<NearbyInteractionHint, NEARBY_HINT_COUNT> const previous =
+			gNearbyHints;
+		const size_t previousCount = gNearbyHintCount;
+		auto invalidateIfChanged = [&]()
+		{
+			BOOLEAN changed = previousCount != gNearbyHintCount;
+			for (size_t i = 0; !changed && i < gNearbyHintCount; ++i)
+				changed = previous[i].gridNo != gNearbyHints[i].gridNo ||
+					previous[i].tileIndex != gNearbyHints[i].tileIndex ||
+					previous[i].action != gNearbyHints[i].action ||
+					previous[i].enabled != gNearbyHints[i].enabled;
+			if (changed) SetRenderFlags(RENDER_FLAG_FULL);
+		};
+		gNearbyHintCount = 0;
+		const BOOLEAN scanEnabled = InteractionMode().nearbyScanEnabled();
+		if (!scanEnabled)
+		{
+			// Reset the resolver once on the mode edge. Doing this on every frame
+			// destroyed the normal hover cache even while SCAN was dormant.
+			if (gNearbyScanWasEnabled) ResetNearbyScanCache();
+			gNearbyScanWasEnabled = FALSE;
+			invalidateIfChanged();
+			return;
+		}
+		if (!gNearbyScanWasEnabled)
+		{
+			ResetNearbyScanCache();
+			gNearbyScanWasEnabled = TRUE;
+		}
+		SOLDIERTYPE const* const selected = GetSelectedMan();
+		if (!selected || selected->bLife < OKLIFE || gTutorialActive ||
+			gContextVisible || gAimAutoCollapsed || gpItemPointer ||
+			CarryState().active())
+		{
+			gNextNearbyHintScanAt = 0;
+			invalidateIfChanged();
+			return;
+		}
+		const UINT32 now = GetJA2Clock();
+		auto addCursorSoilHint = [&]()
+		{
+			if (gNearbyHintCount < gNearbyHints.size() &&
+				guiCurrentCursorGridNo >= 0 && guiCurrentCursorGridNo < WORLD_MAX &&
+				PythSpacesAway(selected->sGridNo, guiCurrentCursorGridNo) <= 2 &&
+				ResolveWorldTileIndex(guiCurrentCursorGridNo, 0, NO_TILE) >= NUMBEROFTILES)
+				AddNearbyInteractionHint(guiCurrentCursorGridNo, 0, NO_TILE);
+		};
+		if (selected->sGridNo == gNearbyHintActorGridNo &&
+			now < gNextNearbyHintScanAt)
+		{
+			gNearbyHints = previous;
+			gNearbyHintCount = previousCount;
+			if (guiCurrentCursorGridNo != gNearbyHintCursorGridNo)
+			{
+				// The expensive radius scan depends only on the actor. Cursor motion
+				// changes at most the single terrain/shovel affordance.
+				size_t write = 0;
+				for (size_t read = 0; read < gNearbyHintCount; ++read)
+				{
+					NearbyInteractionHint const& hint = gNearbyHints[read];
+					if (hint.action == ContextAction::DIG && hint.tileIndex == NO_TILE)
+						continue;
+					gNearbyHints[write++] = hint;
+				}
+				gNearbyHintCount = write;
+				gNearbyHintCursorGridNo = guiCurrentCursorGridNo;
+				addCursorSoilHint();
+				invalidateIfChanged();
+			}
+			return;
+		}
+		gNearbyHintActorGridNo = selected->sGridNo;
+		gNearbyHintCursorGridNo = guiCurrentCursorGridNo;
+		gNextNearbyHintScanAt = now + 120;
+		const INT16 centreRow = selected->sGridNo / WORLD_COLS;
+		const INT16 centreColumn = selected->sGridNo % WORLD_COLS;
+		for (INT16 radius = 0; radius <= 2 &&
+			gNearbyHintCount < gNearbyHints.size(); ++radius)
+		{
+			for (INT16 rowOffset = -radius; rowOffset <= radius; ++rowOffset)
+			{
+				for (INT16 columnOffset = -radius; columnOffset <= radius;
+					++columnOffset)
+				{
+					if (std::max(std::abs(rowOffset), std::abs(columnOffset)) != radius)
+						continue;
+					const INT16 row = centreRow + rowOffset;
+					const INT16 column = centreColumn + columnOffset;
+					if (row < 0 || row >= WORLD_ROWS || column < 0 ||
+						column >= WORLD_COLS) continue;
+					const GridNo gridNo = row * WORLD_COLS + column;
+					const UINT16 tileIndex = ResolveWorldTileIndex(gridNo,
+						selected->bLevel, NO_TILE);
+					if (tileIndex >= NUMBEROFTILES &&
+						!GetItemPool(gridNo, selected->bLevel)) continue;
+					AddNearbyInteractionHint(gridNo, selected->bLevel, tileIndex);
+				}
+			}
+		}
+
+		// Soil is ubiquitous, so only the tile currently under the pointer earns a
+		// shovel affordance. This avoids surrounding the operator with identical
+		// icons while keeping terrain work discoverable.
+		addCursorSoilHint();
+		invalidateIfChanged();
+	}
+
 	BOOLEAN SalvageWorldAsset(SOLDIERTYPE* soldier, GridNo gridNo,
 		UINT8 level, UINT16 tileIndex)
 	{
@@ -2057,6 +2490,8 @@ namespace
 			gContextBlock.RegionTopLeftY = gContextY - 138;
 			gContextBlock.RegionBottomRightX = gContextX + 138;
 			gContextBlock.RegionBottomRightY = gContextY + 138;
+			gUIRuntime.panel(OS0UIPanel::CONTEXT).w = 276;
+			gUIRuntime.panel(OS0UIPanel::CONTEXT).h = 276;
 			for (size_t i = 0; i < gContextRegions.size(); ++i)
 			{
 				if (i >= gContextEntryCount) continue;
@@ -2079,46 +2514,39 @@ namespace
 		if (gObjectActionFanVisible)
 		{
 			constexpr INT16 iconSize = 26;
-			constexpr INT16 cellSize = 30;
-			const size_t columns = std::min<size_t>(6, gContextEntryCount);
-			const size_t rows = (gContextEntryCount + 5) / 6;
-			const INT16 width = std::max<INT16>(64,
-				static_cast<INT16>(columns * cellSize + 8));
-			const INT16 height = static_cast<INT16>(
-				16 + rows * cellSize + 31);
-
-			INT16 anchorX = gContextX + width / 2;
-			INT16 anchorY = gContextY + height + 12;
+			struct RingPoint { INT16 x; INT16 y; };
+			constexpr std::array<RingPoint, 12> ring{{
+				{   0,-74 }, {  37,-64 }, {  64,-37 }, {  74,  0 },
+				{  64, 37 }, {  37, 64 }, {   0, 74 }, { -37, 64 },
+				{ -64, 37 }, { -74,  0 }, { -64,-37 }, { -37,-64 }
+			}};
+			INT16 anchorX = gContextX;
+			INT16 anchorY = gContextY;
 			if (gContextGridNo >= 0 && gContextGridNo < WORLD_MAX)
 			{
 				GetGridNoScreenPos(gContextGridNo, gContextLevel,
 					&anchorX, &anchorY);
 				OS0MapWorldToDisplayScreen(&anchorX, &anchorY);
 			}
-			const INT16 preferredY = static_cast<INT16>(anchorY - height - 14);
-			gContextX = std::clamp<INT16>(anchorX - width / 2,
-				gsVIEWPORT_START_X, std::max<INT16>(gsVIEWPORT_START_X,
-					gsVIEWPORT_END_X - width));
-			gContextY = preferredY >= gsVIEWPORT_WINDOW_START_Y ? preferredY :
-				std::clamp<INT16>(anchorY + 18, gsVIEWPORT_WINDOW_START_Y,
-					std::max<INT16>(gsVIEWPORT_WINDOW_START_Y,
-						gsVIEWPORT_WINDOW_END_Y - height));
-
-			gContextBlock.RegionTopLeftX = gContextX;
-			gContextBlock.RegionTopLeftY = gContextY;
-			gContextBlock.RegionBottomRightX = gContextX + width;
-			gContextBlock.RegionBottomRightY = gContextY + height;
+			gContextX = std::clamp<INT16>(anchorX,
+				gsVIEWPORT_START_X + 92, gsVIEWPORT_END_X - 92);
+			gContextY = std::clamp<INT16>(anchorY - 20,
+				gsVIEWPORT_WINDOW_START_Y + 92,
+				gsVIEWPORT_WINDOW_END_Y - 92);
+			gContextBlock.RegionTopLeftX = gContextX - 92;
+			gContextBlock.RegionTopLeftY = gContextY - 92;
+			gContextBlock.RegionBottomRightX = gContextX + 92;
+			gContextBlock.RegionBottomRightY = gContextY + 92;
+			gUIRuntime.panel(OS0UIPanel::CONTEXT).w = 184;
+			gUIRuntime.panel(OS0UIPanel::CONTEXT).h = 184;
 			for (size_t i = 0; i < gContextRegions.size(); ++i)
 			{
 				if (i >= gContextEntryCount) continue;
-				const size_t row = i / 6;
-				const size_t first = row * 6;
-				const size_t rowCount = std::min<size_t>(6,
-					gContextEntryCount - first);
-				const INT16 rowWidth = static_cast<INT16>(rowCount * cellSize);
-				const INT16 x = static_cast<INT16>(gContextX +
-					(width - rowWidth) / 2 + (i - first) * cellSize + 2);
-				const INT16 y = static_cast<INT16>(gContextY + 16 + row * cellSize);
+				const size_t ringIndex = i * ring.size() / gContextEntryCount;
+				const INT16 x = static_cast<INT16>(
+					gContextX + ring[ringIndex].x - iconSize / 2);
+				const INT16 y = static_cast<INT16>(
+					gContextY + ring[ringIndex].y - iconSize / 2);
 				gContextRegions[i].RegionTopLeftX = x;
 				gContextRegions[i].RegionTopLeftY = y;
 				gContextRegions[i].RegionBottomRightX = x + iconSize;
@@ -2238,51 +2666,166 @@ namespace
 			y = static_cast<INT16>(y + soldier->sBoundingBoxHeight);
 		}
 		OS0MapWorldToDisplayScreen(&x, &y);
-		const INT16 rawX = x;
-		const INT16 rawY = y;
-		if (soldier->ubID >= gActorAnchors.size()) return TRUE;
-		ActorAnchorState* const state = &gActorAnchors[soldier->ubID];
-		const UINT32 now = GetJA2Clock();
-		if (!state->valid || state->soldier != soldier)
-		{
-			*state = { soldier, rawX * 256, rawY * 256, now, TRUE };
-		}
-		else if (state->updatedAt != now)
-		{
-			const UINT32 dt = now - state->updatedAt;
-			const INT32 targetX = rawX * 256;
-			const INT32 targetY = rawY * 256;
-			const INT32 dx = targetX - state->x256;
-			const INT32 dy = targetY - state->y256;
-			if (gfScrollPending || g_scroll_inertia || dt > 250 ||
-				std::abs(dx) > 150 * 256 || std::abs(dy) > 120 * 256)
-			{
-				// Camera scrolling moves every world-space anchor at once.  Smoothing
-				// that delta makes an attached radial/equipment view visibly lag behind
-				// its actor, so camera motion is applied atomically.  Animation-only
-				// sub-pixel movement keeps the low-pass path below.
-				state->x256 = targetX;
-				state->y256 = targetY;
-			}
-			else
-			{
-				// Fixed-point low-pass: follows animation sub-steps while removing the
-				// one-tile snapping visible in actor-attached widgets.
-				const INT32 alpha = std::clamp<INT32>(static_cast<INT32>(dt) * 10,
-					64, 256);
-				state->x256 += dx * alpha / 256;
-				state->y256 += dy * alpha / 256;
-			}
-			state->updatedAt = now;
-		}
-		x = static_cast<INT16>((state->x256 + 128) / 256);
-		y = static_cast<INT16>((state->y256 + 128) / 256);
+		// GetSoldierScreenPos already projects the engine's continuous dXPos/dYPos.
+		// A second UI-only low-pass made attached gear lag and then jump whenever
+		// the camera or zoom changed. The actor sprite and its projections now use
+		// the same authoritative animation position in the same frame.
 		return TRUE;
+	}
+
+	void SyncManagedMouseRegionZOrder(OS0WindowManager const& windows)
+	{
+		// Region addresses are process-stable. Build this projection once, then let
+		// the adapter do a no-op whenever manager Z has not changed.
+		static std::vector<OS0ManagedMouseRegionGroup> groups;
+		if (groups.empty())
+		{
+			groups.reserve(48);
+			auto addOne = [](OS0WindowHandle const window, MOUSE_REGION& region)
+			{
+				groups.push_back({ window, std::span<MOUSE_REGION>{ &region, 1 }, {} });
+			};
+			auto addArray = [](OS0WindowHandle const window, auto& regions)
+			{
+				groups.push_back({ window, std::span<MOUSE_REGION>{ regions }, {} });
+			};
+
+			OS0WindowHandle const inventory =
+				gUIRuntime.managedId(OS0UIPanel::INVENTORY);
+			addOne(inventory, gBagBlock);
+			addArray(inventory, gSlotRegions);
+			addArray(inventory, gOpsActionRegions);
+			addOne(inventory, gTutorialContinue);
+			addArray(inventory, gTutorialStats);
+			addArray(inventory, gTutorialTraitRegions);
+			addOne(inventory, gBagGrabber);
+			addOne(inventory, gBagClose);
+
+			OS0WindowHandle const context =
+				gUIRuntime.managedId(OS0UIPanel::CONTEXT);
+			addOne(context, gContextBlock);
+			addArray(context, gContextRegions);
+
+			addArray(gUIRuntime.managedId(OS0UIPanel::LOOT), gLootRegions);
+
+			OS0WindowHandle const equipment =
+				gUIRuntime.managedId(OS0UIPanel::EQUIPMENT);
+			addArray(equipment, gEquipmentRegions);
+			addOne(equipment, gEquipmentPackRegion);
+
+			OS0WindowHandle const split =
+				gUIRuntime.managedId(OS0UIPanel::STACK_SPLIT);
+			addOne(split, gStackSplitBlock);
+			addArray(split, gStackSplitRegions);
+
+			OS0WindowHandle const library =
+				gUIRuntime.managedId(OS0UIPanel::ASSET_LIBRARY);
+			addOne(library, gGodLibraryBlock);
+			addArray(library, gAssetLibraryRegions);
+			addArray(library, gGodIconRegions);
+			addOne(library, gGodLibraryGrabber);
+			addOne(library, gGodLibraryClose);
+
+			OS0WindowHandle const catalog =
+				gUIRuntime.managedId(OS0UIPanel::ASSET_CATALOG);
+			addOne(catalog, gAssetCatalogBlock);
+			addArray(catalog, gAssetCatalogRegions);
+
+			auto addFloatingShell = [&](FloatingPanelId const panel)
+			{
+				size_t const index = static_cast<size_t>(panel);
+				OS0WindowHandle const window = gUIRuntime.managedId(panel);
+				addOne(window, gFloatingPanelBlocks[index]);
+				return window;
+			};
+			auto addFloatingControls = [&](FloatingPanelId const panel)
+			{
+				size_t const index = static_cast<size_t>(panel);
+				OS0WindowHandle const window = gUIRuntime.managedId(panel);
+				addOne(window, gFloatingPanelGrabbers[index]);
+				addOne(window, gFloatingPanelCloses[index]);
+			};
+
+			OS0WindowHandle const sector = addFloatingShell(FloatingPanelId::SECTOR);
+			addArray(sector, gFeedbackRegions);
+			addArray(sector, gSectorUpgradeRegions);
+			addArray(sector, gSectorTabRegions);
+			addOne(sector, gStrategicMapRegion);
+			addOne(sector, gSectorTeamRegion);
+			addFloatingControls(FloatingPanelId::SECTOR);
+
+			addFloatingShell(FloatingPanelId::INSPECTOR);
+			addFloatingControls(FloatingPanelId::INSPECTOR);
+
+			OS0WindowHandle const toolbox = addFloatingShell(FloatingPanelId::TOOLBOX);
+			addArray(toolbox, gToolboxRegions);
+			addFloatingControls(FloatingPanelId::TOOLBOX);
+
+			OS0WindowHandle const environment =
+				addFloatingShell(FloatingPanelId::ENVIRONMENT);
+			addArray(environment, gEnvironmentSkillRegions);
+			addFloatingControls(FloatingPanelId::ENVIRONMENT);
+
+			OS0WindowHandle const editor =
+				addFloatingShell(FloatingPanelId::REALTIME_EDITOR);
+			groups.push_back({ editor, {},
+				OS0GetRealtimeEditorUI().mouseRegionsBackToFront() });
+			addFloatingControls(FloatingPanelId::REALTIME_EDITOR);
+		}
+		OS0ApplyManagedMouseRegionZOrder(windows, groups);
+	}
+
+	size_t RefreshLootWorldItems()
+	{
+		gLootWorldItems.fill(-1);
+		size_t slot = 0;
+		if (!gLootVisible || gLootGridNo < 0 || gLootGridNo >= WORLD_MAX)
+			return 0;
+		for (ITEM_POOL* item = GetItemPool(gLootGridNo, gLootLevel);
+			item && slot < gLootWorldItems.size(); item = item->pNext)
+		{
+			if (item->iItemIndex < 0 ||
+				static_cast<size_t>(item->iItemIndex) >= gWorldItems.size()) continue;
+			WORLDITEM const& worldItem = GetWorldItem(item->iItemIndex);
+			if (!worldItem.fExists || worldItem.o.usItem == NOTHING ||
+				worldItem.o.usItem == OWNERSHIP ||
+				worldItem.o.usItem == ACTION_ITEM) continue;
+			gLootWorldItems[slot++] = item->iItemIndex;
+		}
+		return slot;
+	}
+
+	void SetLootRegionsEnabled(BOOLEAN enabled)
+	{
+		const BOOLEAN visible = enabled && gLootVisible && !gContextVisible &&
+			!gAimAutoCollapsed && !gStackSplitVisible && !gAssetCatalogVisible;
+		for (size_t i = 0; i < gLootRegions.size(); ++i)
+		{
+			MOUSE_REGION& region = gLootRegions[i];
+			const UINT16 desiredCursor = gpItemPointer ? EXTERN_CURSOR : CURSOR_NORMAL;
+			if (region.Cursor != desiredCursor) region.ChangeCursor(desiredCursor);
+			const BOOLEAN shouldEnable = visible && gLootWorldItems[i] >= 0;
+			if (shouldEnable && !(region.uiFlags & MSYS_REGION_ENABLED)) region.Enable();
+			else if (!shouldEnable && (region.uiFlags & MSYS_REGION_ENABLED))
+				region.Disable();
+		}
 	}
 
 	void SetBagRegionsEnabled(BOOLEAN enabled)
 	{
-		auto setVisible = [enabled](MOUSE_REGION& r, BOOLEAN visible)
+		OS0WindowManager const& windows = gUIRuntime.windowManager();
+		const BOOLEAN bagVisible = gUIRuntime.visible(OS0UIPanel::INVENTORY);
+		const BOOLEAN contextVisible = gUIRuntime.visible(OS0UIPanel::CONTEXT);
+		const BOOLEAN libraryVisible = gUIRuntime.visible(OS0UIPanel::ASSET_LIBRARY);
+		const BOOLEAN catalogVisible = gUIRuntime.visible(OS0UIPanel::ASSET_CATALOG);
+		auto setVisible = [enabled, catalogVisible](MOUSE_REGION& r,
+			BOOLEAN visible)
+		{
+			r.ChangeCursor(gpItemPointer ? EXTERN_CURSOR : CURSOR_NORMAL);
+			if (enabled && visible && !gStackSplitVisible && !catalogVisible) r.Enable();
+			else r.Disable();
+		};
+		auto setCatalogVisible = [enabled](MOUSE_REGION& r, BOOLEAN visible)
 		{
 			r.ChangeCursor(gpItemPointer ? EXTERN_CURSOR : CURSOR_NORMAL);
 			if (enabled && visible && !gStackSplitVisible) r.Enable();
@@ -2292,67 +2835,79 @@ namespace
 		PositionItemTransferIntentRegions();
 		// Character creation and the optional RPG inventory share one real,
 		// movable window.  It is never opened merely because a merc is selected.
-		setVisible(gBagBlock, gBagVisible);
-		setVisible(gBagGrabber, gBagVisible && !gTutorialActive);
+		setVisible(gBagBlock, bagVisible && !gAimAutoCollapsed);
+		setVisible(gBagGrabber, bagVisible && !gTutorialActive &&
+			!gAimAutoCollapsed);
 		// Creation is modal and fixed in screen space; the optional gameplay
 		// character sheet remains movable and closable.
-		setVisible(gBagClose, gBagVisible && !gTutorialActive);
-		setVisible(gContextBlock, gContextVisible);
-		setVisible(gGodLibraryBlock, gGodLibraryVisible);
-		setVisible(gGodLibraryGrabber, gGodLibraryVisible);
-		setVisible(gGodLibraryClose, gGodLibraryVisible);
+		setVisible(gBagClose, bagVisible && !gTutorialActive &&
+			!gAimAutoCollapsed);
+		setVisible(gContextBlock, contextVisible && !gAimAutoCollapsed);
+		setVisible(gGodLibraryBlock, libraryVisible && !gAimAutoCollapsed);
+		setVisible(gGodLibraryGrabber, libraryVisible && !gAimAutoCollapsed);
+		setVisible(gGodLibraryClose, libraryVisible && !gAimAutoCollapsed);
 		for (MOUSE_REGION& r : gGodIconRegions)
-			setVisible(r, gGodLibraryVisible &&
+			setVisible(r, libraryVisible && !gAimAutoCollapsed &&
 				gDebugLibraryMode == DebugLibraryMode::ICONS);
 		for (size_t i = 0; i < gAssetLibraryRegions.size(); ++i)
 		{
 			const BOOLEAN commonTab = i == 6 || i == 7;
-			setVisible(gAssetLibraryRegions[i], gGodLibraryVisible &&
+			setVisible(gAssetLibraryRegions[i], libraryVisible &&
+				!gAimAutoCollapsed &&
 				(commonTab || gDebugLibraryMode == DebugLibraryMode::ASSETS));
 		}
-		setVisible(gAssetCatalogBlock, gAssetCatalogVisible);
+		setCatalogVisible(gAssetCatalogBlock, catalogVisible && !gAimAutoCollapsed);
 		for (MOUSE_REGION& r : gAssetCatalogRegions)
-			setVisible(r, gAssetCatalogVisible);
-		const BOOLEAN showContentInventory = gBagVisible && !gContextVisible;
-		const BOOLEAN showContentLoot = gLootVisible && !gContextVisible;
+			setCatalogVisible(r, catalogVisible && !gAimAutoCollapsed);
+		const BOOLEAN showContentInventory = bagVisible && !contextVisible &&
+			!gAimAutoCollapsed;
+		const BOOLEAN showContentLoot = gLootVisible && !contextVisible &&
+			!gAimAutoCollapsed;
 		for (size_t i = 0; i < gFloatingPanels.size(); ++i)
 		{
 			const BOOLEAN hasPanelContent =
 				i != static_cast<size_t>(FloatingPanelId::INSPECTOR) || gHoverVisible;
 			const BOOLEAN visible = !gTutorialActive && !gAimAutoCollapsed &&
-				gFloatingPanels[i].visible && hasPanelContent;
+				windows.visible(gUIRuntime.managedId(
+					static_cast<FloatingPanelId>(i))) && hasPanelContent;
 			setVisible(gFloatingPanelBlocks[i], visible);
 			setVisible(gFloatingPanelGrabbers[i], visible);
 			setVisible(gFloatingPanelCloses[i], visible);
 		}
-		const FloatingPanel& toolbox =
-			gFloatingPanels[static_cast<size_t>(FloatingPanelId::TOOLBOX)];
 		for (MOUSE_REGION& r : gToolboxRegions)
-			setVisible(r, toolbox.visible && !gContextVisible && !gTutorialActive);
+			setVisible(r, windows.visible(gUIRuntime.managedId(
+				FloatingPanelId::TOOLBOX)) && !contextVisible && !gTutorialActive);
+		for (size_t i = 0; i < gEnvironmentSkillRegions.size(); ++i)
+			setVisible(gEnvironmentSkillRegions[i], windows.visible(
+				gUIRuntime.managedId(FloatingPanelId::ENVIRONMENT)) &&
+				!contextVisible && !gTutorialActive && !gAimAutoCollapsed &&
+				i < gEnvironmentEntryCount);
 		for (size_t i = 0; i < gPanelDockRegions.size(); ++i)
 		{
 			setVisible(gPanelDockRegions[i], !gTutorialActive && !gAimAutoCollapsed);
 		}
 		for (MOUSE_REGION& r : gFeedbackRegions)
-			setVisible(r, !gTutorialActive && !gContextVisible &&
-				gFloatingPanels[static_cast<size_t>(FloatingPanelId::SECTOR)].visible &&
+			setVisible(r, !gTutorialActive && !contextVisible &&
+				windows.visible(gUIRuntime.managedId(FloatingPanelId::SECTOR)) &&
 				gSectorPanelMode == SectorPanelMode::REPORT);
-		const FloatingPanel& sectorPanel =
-			gFloatingPanels[static_cast<size_t>(FloatingPanelId::SECTOR)];
 		for (MOUSE_REGION& r : gSectorUpgradeRegions)
-			setVisible(r, sectorPanel.visible && !gContextVisible && !gTutorialActive &&
+			setVisible(r, windows.visible(gUIRuntime.managedId(
+				FloatingPanelId::SECTOR)) && !contextVisible && !gTutorialActive &&
 				gSectorPanelMode == SectorPanelMode::BASE);
 		for (MOUSE_REGION& r : gSectorTabRegions)
-			setVisible(r, sectorPanel.visible && !gContextVisible && !gTutorialActive);
-		setVisible(gStrategicMapRegion, sectorPanel.visible && !gContextVisible &&
+			setVisible(r, windows.visible(gUIRuntime.managedId(
+				FloatingPanelId::SECTOR)) && !contextVisible && !gTutorialActive);
+		setVisible(gStrategicMapRegion, windows.visible(gUIRuntime.managedId(
+			FloatingPanelId::SECTOR)) && !contextVisible &&
 			!gTutorialActive && gSectorPanelMode == SectorPanelMode::MAP);
-		setVisible(gSectorTeamRegion, sectorPanel.visible && !gContextVisible &&
+		setVisible(gSectorTeamRegion, windows.visible(gUIRuntime.managedId(
+			FloatingPanelId::SECTOR)) && !contextVisible &&
 			!gTutorialActive && gSectorPanelMode == SectorPanelMode::TEAM);
 		for (size_t i = 0; i < gContextRegions.size(); ++i)
 		{
 			gContextRegions[i].ChangeCursor(
 				gpItemPointer ? EXTERN_CURSOR : CURSOR_NORMAL);
-			if (enabled && !gStackSplitVisible && gContextVisible &&
+			if (enabled && !gStackSplitVisible && !catalogVisible && contextVisible &&
 				i < gContextEntryCount)
 				gContextRegions[i].Enable();
 			else
@@ -2362,32 +2917,30 @@ namespace
 		{
 			MOUSE_REGION& r = gSlotRegions[i];
 			r.ChangeCursor(gpItemPointer ? EXTERN_CURSOR : CURSOR_NORMAL);
-			if (enabled && !gStackSplitVisible && gBagVisible &&
-				!gContextVisible &&
+			if (enabled && !gStackSplitVisible && !catalogVisible && bagVisible &&
+				!contextVisible &&
 				showContentInventory &&
 				(!gTutorialActive || gTutorialStep == 4) &&
 				CanAccessSoldierContents(gInventorySoldier ?
 					gInventorySoldier : GetSelectedMan())) r.Enable();
 			else r.Disable();
 		}
-		for (MOUSE_REGION& r : gLootRegions)
-		{
-			setVisible(r, gLootVisible && !gContextVisible && showContentLoot);
-		}
+		SetLootRegionsEnabled(enabled && showContentLoot);
 		for (MOUSE_REGION& r : gOpsActionRegions)
 		{
 			r.Disable();
 		}
 		for (MOUSE_REGION& r : gEquipmentRegions)
 			setVisible(r, gEquipmentExplodedVisible && gEquipmentSoldier &&
-				CanAccessSoldierContents(gEquipmentSoldier) && !gContextVisible);
+				CanAccessSoldierContents(gEquipmentSoldier) && !contextVisible &&
+				!gAimAutoCollapsed);
 		setVisible(gEquipmentPackRegion, gEquipmentExplodedVisible &&
 			gEquipmentSoldier && gEquipmentSoldier->bTeam == OUR_TEAM &&
-			!gContextVisible);
+			!contextVisible && !gAimAutoCollapsed);
 		for (MOUSE_REGION& r : gItemTransferIntentRegions)
 			setVisible(r, gpItemPointer && gItemTransferTarget &&
-				CanAccessSoldierContents(gItemTransferTarget) && !gContextVisible);
-		if (enabled && gTutorialActive && !gContextVisible)
+				CanAccessSoldierContents(gItemTransferTarget) && !contextVisible);
+		if (enabled && gTutorialActive && !contextVisible && !catalogVisible)
 		{
 			gTutorialContinue.Enable();
 			for (MOUSE_REGION& r : gTutorialStats)
@@ -2407,7 +2960,7 @@ namespace
 			for (MOUSE_REGION& r : gTutorialStats) r.Disable();
 			for (MOUSE_REGION& r : gTutorialTraitRegions) r.Disable();
 		}
-		if (enabled && gStackSplitVisible)
+		if (enabled && gStackSplitVisible && !catalogVisible)
 		{
 			gStackSplitBlock.Enable();
 			for (MOUSE_REGION& r : gStackSplitRegions) r.Enable();
@@ -2421,7 +2974,39 @@ namespace
 		gStackSplitBlock.ChangeCursor(gpItemPointer ? EXTERN_CURSOR : CURSOR_NORMAL);
 		for (MOUSE_REGION& r : gStackSplitRegions)
 			r.ChangeCursor(gpItemPointer ? EXTERN_CURSOR : CURSOR_NORMAL);
-		if (gpItemPointer) SetMouseCursorFromCurrentItem();
+		RefreshHeldItemCursor();
+		if (OS0GetRealtimeEditorUI().initialized())
+		{
+			OS0GetRealtimeEditorUI().setInputEnabled(enabled &&
+				!contextVisible && !gStackSplitVisible && !catalogVisible &&
+				!gTutorialActive && !gAimAutoCollapsed && !gpItemPointer);
+			OS0GetRealtimeEditorUI().update();
+		}
+		SyncManagedMouseRegionZOrder(windows);
+	}
+
+	void PositionLootRegions()
+	{
+		INT16 objectX = gsVIEWPORT_END_X / 2;
+		INT16 objectY = gsVIEWPORT_WINDOW_END_Y / 2;
+		if (gLootGridNo >= 0 && gLootGridNo < WORLD_MAX)
+		{
+			GetGridNoScreenPos(gLootGridNo, gLootLevel, &objectX, &objectY);
+			OS0MapWorldToDisplayScreen(&objectX, &objectY);
+		}
+		constexpr std::array<std::pair<INT16, INT16>, 12> lootOffsets{{
+			{ -122, -94 }, { -61, -112 }, { 1, -112 }, { 62, -94 },
+			{ -132, -58 }, { 73, -58 }, { -132, -23 }, { 73, -23 },
+			{ -122, 14 }, { -61, 30 }, { 1, 30 }, { 62, 14 }
+		}};
+		for (size_t i = 0; i < gLootRegions.size(); ++i)
+		{
+			const INT16 x = std::clamp<INT16>(objectX + lootOffsets[i].first,
+				gsVIEWPORT_START_X + 2, gsVIEWPORT_END_X - 61);
+			const INT16 y = std::clamp<INT16>(objectY + lootOffsets[i].second,
+				gsVIEWPORT_WINDOW_START_Y + 2, gsVIEWPORT_WINDOW_END_Y - 30);
+			MoveRegion(gLootRegions[i], x, y);
+		}
 	}
 
 	void PositionBagRegions()
@@ -2460,26 +3045,7 @@ namespace
 			MoveRegion(gOpsActionRegions[i], gBagX + 14,
 				gBagY + 26 + static_cast<INT16>(i) * 20);
 		}
-		INT16 objectX = gsVIEWPORT_END_X / 2;
-		INT16 objectY = gsVIEWPORT_WINDOW_END_Y / 2;
-		if (gLootGridNo >= 0 && gLootGridNo < WORLD_MAX)
-		{
-			GetGridNoScreenPos(gLootGridNo, gLootLevel, &objectX, &objectY);
-			OS0MapWorldToDisplayScreen(&objectX, &objectY);
-		}
-		constexpr std::array<std::pair<INT16, INT16>, 12> lootOffsets{{
-			{ -122, -94 }, { -61, -112 }, { 1, -112 }, { 62, -94 },
-			{ -132, -58 }, { 73, -58 }, { -132, -23 }, { 73, -23 },
-			{ -122, 14 }, { -61, 30 }, { 1, 30 }, { 62, 14 }
-		}};
-		for (size_t i = 0; i < gLootRegions.size(); ++i)
-		{
-			const INT16 x = std::clamp<INT16>(objectX + lootOffsets[i].first,
-				gsVIEWPORT_START_X + 2, gsVIEWPORT_END_X - 61);
-			const INT16 y = std::clamp<INT16>(objectY + lootOffsets[i].second,
-				gsVIEWPORT_WINDOW_START_Y + 2, gsVIEWPORT_WINDOW_END_Y - 30);
-			MoveRegion(gLootRegions[i], x, y);
-		}
+		PositionLootRegions();
 		for (size_t i = 0; i < gFloatingPanels.size(); ++i)
 		{
 			const FloatingPanel& panel = gFloatingPanels[i];
@@ -2497,6 +3063,16 @@ namespace
 			const INT16 x = static_cast<INT16>(toolboxPanel.x + 9 + (i % 3) * 39);
 			const INT16 y = static_cast<INT16>(toolboxPanel.y + 23 + (i / 3) * 31);
 			MoveRegion(gToolboxRegions[i], x, y);
+		}
+		const FloatingPanel& environmentPanel =
+			gFloatingPanels[static_cast<size_t>(FloatingPanelId::ENVIRONMENT)];
+		for (size_t i = 0; i < gEnvironmentSkillRegions.size(); ++i)
+		{
+			const INT16 x = static_cast<INT16>(environmentPanel.x + 8 +
+				(i % 3) * 78);
+			const INT16 y = static_cast<INT16>(environmentPanel.y + 42 +
+				(i / 3) * 29);
+			MoveRegion(gEnvironmentSkillRegions[i], x, y);
 		}
 		MoveRegion(gGodLibraryBlock, gGodLibraryX, gGodLibraryY);
 		gGodLibraryBlock.RegionBottomRightX = gGodLibraryX + GOD_LIBRARY_W;
@@ -2525,9 +3101,9 @@ namespace
 		}
 		for (size_t i = 0; i < gGodIconRegions.size(); ++i)
 		{
-			// 24 selectable symbols fill the first eight cells of each JA2
+			// Selectable symbols fill the first eight cells of each JA2
 			// 3x3 frame.  The final region occupies the last cell as CLOSE.
-			const size_t cell = i < 24 ?
+			const size_t cell = i < GOD_ICON_COUNT ?
 				(i / 8) * 9 + (i % 8) : 26;
 			const INT16 frame = static_cast<INT16>(cell / 9);
 			const INT16 local = static_cast<INT16>(cell % 9);
@@ -2609,43 +3185,14 @@ namespace
 
 	BOOLEAN UpdateWindowDragging()
 	{
-		BOOLEAN moved = FALSE;
-		if (gBagDragging)
-		{
-			const INT16 x = std::clamp<INT16>(gusMouseXPos - gDragOffsetX, 0,
-				std::max<INT16>(0, gsVIEWPORT_END_X - PANE_W));
-			const INT16 y = std::clamp<INT16>(gusMouseYPos - gDragOffsetY, 0,
-				std::max<INT16>(0, WorkspaceBottom() - BAG_H));
-			moved = x != gBagX || y != gBagY;
-			gBagX = x;
-			gBagY = y;
-		}
-		if (gGodLibraryDragging)
-		{
-			const INT16 x = std::clamp<INT16>(gusMouseXPos - gDragOffsetX, 0,
-				std::max<INT16>(0, gsVIEWPORT_END_X - GOD_LIBRARY_W));
-			const INT16 y = std::clamp<INT16>(gusMouseYPos - gDragOffsetY, 0,
-				std::max<INT16>(0, WorkspaceBottom() - GOD_LIBRARY_H));
-			moved |= x != gGodLibraryX || y != gGodLibraryY;
-			gGodLibraryX = x;
-			gGodLibraryY = y;
-		}
-		for (FloatingPanel& panel : gFloatingPanels)
-		{
-			if (!panel.dragging) continue;
-			const INT16 x = std::clamp<INT16>(gusMouseXPos - gDragOffsetX, 0,
-				std::max<INT16>(0, gsVIEWPORT_END_X - panel.w));
-			const INT16 y = std::clamp<INT16>(gusMouseYPos - gDragOffsetY, 0,
-				std::max<INT16>(0, WorkspaceBottom() - panel.h));
-			moved |= x != panel.x || y != panel.y;
-			panel.x = x;
-			panel.y = y;
-		}
+		BOOLEAN const moved = gUIRuntime.windowManager().dragTo(
+			gusMouseXPos, gusMouseYPos);
 		if (moved)
 		{
 			// Synchronize all hit regions exactly once per rendered frame. Updating
 			// them for every raw mouse event made regions and pixels race each other.
 			PositionBagRegions();
+			OS0GetRealtimeEditorUI().update();
 			SetRenderFlags(RENDER_FLAG_FULL);
 		}
 		return moved;
@@ -2660,16 +3207,22 @@ namespace
 	{
 		if (reason & MSYS_CALLBACK_REASON_POINTER_DWN)
 		{
-			gBagDragging = TRUE;
-			gDragOffsetX = gusMouseXPos - gBagX;
-			gDragOffsetY = gusMouseYPos - gBagY;
+			if (gUIRuntime.windowManager().beginDrag(
+				gUIRuntime.managedId(OS0UIPanel::INVENTORY),
+				gusMouseXPos, gusMouseYPos))
+			{
+				// Rendering and native JA2 hit testing must switch focus in the
+				// same pointer event, otherwise an overlapping old front window
+				// can steal the capture before the next tactical frame.
+				SyncManagedMouseRegionZOrder(gUIRuntime.windowManager());
+			}
 		}
 		if (reason & MSYS_CALLBACK_REASON_POINTER_DWN)
 			SetRenderFlags(RENDER_FLAG_FULL);
 		if (reason & MSYS_CALLBACK_REASON_POINTER_UP)
 		{
 			UpdateWindowDragging();
-			gBagDragging = FALSE;
+			gUIRuntime.windowManager().endDrag();
 			SaveUILayout();
 			SetRenderFlags(RENDER_FLAG_FULL);
 		}
@@ -2691,19 +3244,18 @@ namespace
 	{
 		const size_t index = static_cast<size_t>(region->GetUserData<0>());
 		if (index >= gFloatingPanels.size()) return;
-		FloatingPanel& panel = gFloatingPanels[index];
 		if (reason & MSYS_CALLBACK_REASON_POINTER_DWN)
 		{
-			panel.dragging = TRUE;
-			gDragOffsetX = gusMouseXPos - panel.x;
-			gDragOffsetY = gusMouseYPos - panel.y;
+			if (gUIRuntime.windowManager().beginDrag(gUIRuntime.managedId(
+				static_cast<FloatingPanelId>(index)), gusMouseXPos, gusMouseYPos))
+				SyncManagedMouseRegionZOrder(gUIRuntime.windowManager());
 		}
 		if (reason & MSYS_CALLBACK_REASON_POINTER_DWN)
 			SetRenderFlags(RENDER_FLAG_FULL);
 		if (reason & MSYS_CALLBACK_REASON_POINTER_UP)
 		{
 			UpdateWindowDragging();
-			panel.dragging = FALSE;
+			gUIRuntime.windowManager().endDrag();
 			SaveUILayout();
 			SetRenderFlags(RENDER_FLAG_FULL);
 		}
@@ -2714,9 +3266,12 @@ namespace
 		if (!(reason & MSYS_CALLBACK_REASON_POINTER_UP)) return;
 		const size_t index = static_cast<size_t>(region->GetUserData<0>());
 		if (index >= gFloatingPanels.size()) return;
-		gFloatingPanels[index].visible = FALSE;
+		gUIRuntime.windowManager().hide(gUIRuntime.managedId(
+			static_cast<FloatingPanelId>(index)));
 		if (index == static_cast<size_t>(FloatingPanelId::SECTOR))
 			StopFeedbackEditing();
+		if (index == static_cast<size_t>(FloatingPanelId::REALTIME_EDITOR))
+			ApplyCursorTool(ContextAction::MOVE);
 		SaveUILayout();
 		SetBagRegionsEnabled(TRUE);
 		SetRenderFlags(RENDER_FLAG_FULL);
@@ -2825,6 +3380,7 @@ namespace
 	{
 		CursorState().action = action;
 		CursorState().attackMode = action == ContextAction::ATTACK;
+		SetInteractionForAction(action);
 		switch (ContextActionCursor(action))
 		{
 			case OS0CursorMode::MOVE:   guiPendingOverrideEvent = A_CHANGE_TO_MOVE;     break;
@@ -2834,7 +3390,7 @@ namespace
 			case OS0CursorMode::ATTACK: guiPendingOverrideEvent = M_CHANGE_TO_ACTION;   break;
 			case OS0CursorMode::NONE:   break;
 		}
-		if (action != ContextAction::CARRY) ClearWorldMoveState();
+		if (!OS0IsManipulationAction(action)) ClearWorldMoveState();
 		SetRenderFlags(RENDER_FLAG_FULL);
 	}
 
@@ -2889,7 +3445,7 @@ namespace
 			std::max<INT16>(0, gsVIEWPORT_END_X - width));
 		gContextY = std::clamp<INT16>(gusMouseYPos, 0,
 			std::max<INT16>(0, gsVIEWPORT_END_Y - height));
-		gContextVisible = TRUE;
+		gUIRuntime.show(OS0UIPanel::CONTEXT);
 		PositionContextRegions();
 		SetBagRegionsEnabled(TRUE);
 		SetRenderFlags(RENDER_FLAG_FULL);
@@ -2933,7 +3489,7 @@ namespace
 			std::max<INT16>(0, gsVIEWPORT_END_X - width));
 		gContextY = std::clamp<INT16>(gusMouseYPos, 0,
 			std::max<INT16>(0, gsVIEWPORT_END_Y - height));
-		gContextVisible = TRUE;
+		gUIRuntime.show(OS0UIPanel::CONTEXT);
 		PositionContextRegions();
 		SetBagRegionsEnabled(TRUE);
 		SetRenderFlags(RENDER_FLAG_FULL);
@@ -2946,6 +3502,7 @@ namespace
 		if (index >= gContextEntryCount || !gContextEntries[index].enabled) return;
 
 		const ContextAction action = gContextEntries[index].action;
+		InteractionMode().beginInteraction(SurfaceForAction(action));
 		RecordFeedbackEvent(ST::format("ACTION {} grid {} tile {}",
 			ContextActionName(action), gContextGridNo, gContextTileIndex));
 		SOLDIERTYPE* const selected = GetSelectedMan();
@@ -3020,11 +3577,15 @@ namespace
 				}
 				break;
 			case ContextAction::BUILD:
-				gFloatingPanels[static_cast<size_t>(FloatingPanelId::SECTOR)].visible = TRUE;
+				gUIRuntime.windowManager().show(
+					gUIRuntime.managedId(FloatingPanelId::SECTOR));
 				gMode = ComputerMode::BUILD;
 				break;
 			case ContextAction::CARRY:
-				BeginInspectedWorldMove();
+			case ContextAction::PUSH:
+			case ContextAction::PULL:
+			case ContextAction::THROW:
+				BeginInspectedWorldMove(CarryModeForAction(action));
 				break;
 			case ContextAction::TALK:
 				guiPendingOverrideEvent = T_CHANGE_TO_TALKING;
@@ -3138,14 +3699,24 @@ namespace
 				{
 					detailObject = &subject->inv[gContextInventorySlot];
 				}
-				if (detailObject && detailObject->usItem != NOTHING)
-				{
-					gItemDetailsObject = *detailObject;
-					gItemDetailsName = GCM->getItem(detailObject->usItem)->getName();
-					gItemDetailsVisible = TRUE;
-					gContentsMode = ContentsMode::WORLD;
-					gLootVisible = TRUE;
-				}
+			if (detailObject && detailObject->usItem != NOTHING)
+			{
+				gItemDetailsObject = *detailObject;
+				gItemDetailsName = GCM->getItem(detailObject->usItem)->getName();
+				// Details are inspector content, not a second inventory window.  The
+				// old path made an invisible ITEM_DETAILS window modal and opened the
+				// loot panel as a side effect, which could strand direct control.
+				gItemDetailsVisible = FALSE;
+				gHoverTitle = gItemDetailsName;
+				gHoverDetail = ST::format("ITEM {} / CONDITION {}% / STACK {}",
+					detailObject->usItem, detailObject->bStatus[0],
+					detailObject->ubNumberOfObjects);
+				gHoverDebugDetail = "RMB ACTIONS / DRAG TO CHARACTER OR CONTAINER";
+				gHoverVisible = TRUE;
+				gInspectorPinned = TRUE;
+				gUIRuntime.windowManager().show(gUIRuntime.managedId(
+					FloatingPanelId::INSPECTOR));
+			}
 				break;
 			}
 			case ContextAction::EQUIP_ITEM:
@@ -3269,11 +3840,13 @@ namespace
 					gInspectedLevel = 0;
 					gInspectedTileIndex = NO_TILE;
 					CaptureInspectorPreview(gInspectedGridNo, 0);
+					RefreshEnvironmentTarget(gContextGridNo, 0, NO_TILE);
 				}
 				break;
 			case ContextAction::SALVAGE:
-				if (selected) SalvageWorldAsset(selected, gContextGridNo,
-					gContextLevel, gContextTileIndex);
+				if (selected && SalvageWorldAsset(selected, gContextGridNo,
+					gContextLevel, gContextTileIndex))
+					RefreshEnvironmentTarget(gContextGridNo, gContextLevel, NO_TILE);
 				break;
 			case ContextAction::CATALOG:
 				OpenAssetCatalog(gContextGridNo, gContextLevel, gContextTileIndex);
@@ -3301,7 +3874,7 @@ namespace
 		gStackSplitSoldier = soldier;
 		gStackSplitSlot = slot;
 		gStackSplitAmount = 1;
-		gStackSplitVisible = TRUE;
+		gUIRuntime.show(OS0UIPanel::STACK_SPLIT);
 		PositionBagRegions();
 		SetBagRegionsEnabled(TRUE);
 		SetRenderFlags(RENDER_FLAG_FULL);
@@ -3309,7 +3882,7 @@ namespace
 
 	void CloseStackSplit()
 	{
-		gStackSplitVisible = FALSE;
+		gUIRuntime.hide(OS0UIPanel::STACK_SPLIT);
 		gStackSplitSoldier = nullptr;
 		gStackSplitSlot = NO_SLOT;
 		gStackSplitAmount = 1;
@@ -3335,7 +3908,7 @@ namespace
 		}
 		SOLDIERTYPE* const soldier = gStackSplitSoldier;
 		const INT8 slot = gStackSplitSlot;
-		gStackSplitVisible = FALSE;
+		gUIRuntime.hide(OS0UIPanel::STACK_SPLIT);
 		gStackSplitSoldier = nullptr;
 		gStackSplitSlot = NO_SLOT;
 		InternalBeginItemPointer(soldier, &moving, slot);
@@ -3832,7 +4405,8 @@ namespace
 			case 0:
 				gSectorPanelMode = SectorPanelMode::MAP;
 				gStrategicSelectedSector = gWorldSector;
-				gFloatingPanels[static_cast<size_t>(FloatingPanelId::SECTOR)].visible = TRUE;
+				gUIRuntime.windowManager().show(
+					gUIRuntime.managedId(FloatingPanelId::SECTOR));
 				break;
 			case 1:
 				gfBeginEndTurn = TRUE;
@@ -3860,15 +4434,13 @@ namespace
 	{
 		if (reason & MSYS_CALLBACK_REASON_RBUTTON_UP)
 		{
-			FloatingPanel& strategy =
-				gFloatingPanels[static_cast<size_t>(FloatingPanelId::SECTOR)];
-			strategy.visible = !strategy.visible;
+			gUIRuntime.windowManager().toggle(
+				gUIRuntime.managedId(FloatingPanelId::SECTOR));
 		}
 		else if (reason & MSYS_CALLBACK_REASON_POINTER_UP)
 		{
-			FloatingPanel& toolbox =
-				gFloatingPanels[static_cast<size_t>(FloatingPanelId::TOOLBOX)];
-			toolbox.visible = !toolbox.visible;
+			gUIRuntime.windowManager().toggle(
+				gUIRuntime.managedId(FloatingPanelId::TOOLBOX));
 		}
 		else return;
 		PositionBagRegions();
@@ -3886,16 +4458,70 @@ namespace
 		ActivateToolboxModule(module);
 	}
 
+	void EnvironmentSkillCallback(MOUSE_REGION* region, UINT32 reason)
+	{
+		if (!(reason & MSYS_CALLBACK_REASON_POINTER_UP) || gContextVisible) return;
+		const size_t index = static_cast<size_t>(region->GetUserData<0>());
+		if (index >= gEnvironmentEntryCount ||
+			!gEnvironmentEntries[index].enabled ||
+			gEnvironmentGridNo < 0 || gEnvironmentGridNo >= WORLD_MAX) return;
+		ContextAction const action = gEnvironmentEntries[index].action;
+		OS0OpenContextMenu(nullptr, gEnvironmentGridNo, gEnvironmentLevel,
+			gEnvironmentTileIndex, gusMouseXPos, gusMouseYPos);
+		for (size_t i = 0; i < gContextEntryCount; ++i)
+		{
+			if (gContextEntries[i].action != action) continue;
+			ContextActionCallback(&gContextRegions[i],
+				MSYS_CALLBACK_REASON_POINTER_UP);
+			break;
+		}
+	}
+
+	void NearbyHintCallback(MOUSE_REGION* region, UINT32 reason)
+	{
+		if (!(reason & MSYS_CALLBACK_REASON_POINTER_UP) || gContextVisible ||
+			gTutorialActive || gAimAutoCollapsed ||
+			!InteractionMode().nearbyScanEnabled()) return;
+		const size_t index = static_cast<size_t>(region->GetUserData<0>());
+		if (index >= gNearbyHintCount) return;
+		NearbyInteractionHint const hint = gNearbyHints[index];
+		RefreshEnvironmentTarget(hint.gridNo, hint.level, hint.tileIndex);
+		gUIRuntime.windowManager().show(
+			gUIRuntime.managedId(FloatingPanelId::ENVIRONMENT));
+		OS0OpenContextMenu(nullptr, hint.gridNo, hint.level, hint.tileIndex,
+			region->RegionTopLeftX, region->RegionTopLeftY);
+	}
+
+	void NearbyHintMoveCallback(MOUSE_REGION* region, UINT32 reason)
+	{
+		if (!(reason & MSYS_CALLBACK_REASON_GAIN_MOUSE) ||
+			!InteractionMode().nearbyScanEnabled()) return;
+		const size_t index = static_cast<size_t>(region->GetUserData<0>());
+		if (index >= gNearbyHintCount) return;
+		NearbyInteractionHint const& hint = gNearbyHints[index];
+		// The hint temporarily owns the pointer instead of the viewport. Re-project
+		// the same world hover so entering the icon does not close the inspector.
+		OS0HoverWorldObject(nullptr, hint.gridNo, hint.level, hint.tileIndex,
+			region->RegionTopLeftX + 12, region->RegionTopLeftY + 12);
+	}
+
 	void ActivateToolboxModule(ToolboxModule module)
 	{
+		if (module == ToolboxModule::COUNT) return;
 		SOLDIERTYPE* const selected = GetSelectedMan();
-		switch (module)
+		switch (GetOS0UICommandDescriptor(module).intent)
 		{
-			case ToolboxModule::TACTICAL:
+			case OS0UICommandIntent::RETURN_TO_ACTIONS:
+				InteractionMode().setNearbyScanEnabled(false);
+				ResetNearbyScanCache();
+				InteractionMode().selectSurface(OS0InteractionSurface::ACTIONS);
+				InteractionMode().returnToNormal();
 				OS0CancelCursorAction();
 				CloseContextMenu();
 				break;
-			case ToolboxModule::CHARACTER:
+			case OS0UICommandIntent::TOGGLE_EQUIPMENT:
+				InteractionMode().beginInteraction(
+					OS0InteractionSurface::EQUIPMENT);
 				if (selected)
 				{
 					gInventorySoldier = selected;
@@ -3903,47 +4529,101 @@ namespace
 					gUIRuntime.toggle(OS0UIPanel::INVENTORY);
 					if (gBagVisible && CompactArtworkWorkspace())
 					{
-						gFloatingPanels[static_cast<size_t>(
-							FloatingPanelId::SECTOR)].visible = FALSE;
-						gFloatingPanels[static_cast<size_t>(
-							FloatingPanelId::TOOLBOX)].visible = FALSE;
+						gUIRuntime.windowManager().hide(
+							gUIRuntime.managedId(FloatingPanelId::SECTOR));
+						gUIRuntime.windowManager().hide(
+							gUIRuntime.managedId(FloatingPanelId::TOOLBOX));
 					}
 				}
 				break;
-			case ToolboxModule::STEALTH:
+			case OS0UICommandIntent::OPEN_BEHAVIOR:
 				if (selected)
-					OS0ExecuteCharacterQuickAction(selected,
-						OS0CharacterQuickAction::STEALTH);
+				{
+					INT16 anchorX = gusMouseXPos;
+					INT16 anchorY = gusMouseYPos;
+					GetActorDisplayAnchor(selected, anchorX, anchorY);
+					OS0OpenContextMenu(selected, selected->sGridNo,
+						selected->bLevel, NO_TILE, anchorX, anchorY);
+					FilterContextEntriesForSurface(
+						OS0InteractionSurface::BEHAVIOR);
+					gContextTitle = ST::format("{} / BEHAVIOR", selected->name);
+					PositionContextRegions();
+					SetBagRegionsEnabled(TRUE);
+				}
+				InteractionMode().beginInteraction(
+					OS0InteractionSurface::BEHAVIOR);
 				break;
-			case ToolboxModule::OBJECT:
-				gFloatingPanels[static_cast<size_t>(FloatingPanelId::INSPECTOR)].visible =
-					!gFloatingPanels[static_cast<size_t>(FloatingPanelId::INSPECTOR)].visible;
+			case OS0UICommandIntent::TOGGLE_NEARBY_SCAN:
+			{
+				if (!InteractionMode().canScanNearby())
+				{
+					RecordFeedbackEvent("NEARBY SCAN / UNAVAILABLE IN FIGHT");
+					break;
+				}
+				InteractionMode().toggleNearbyScan();
+				const bool scanEnabled = InteractionMode().nearbyScanEnabled();
+				ResetNearbyScanCache();
+				if (scanEnabled)
+				{
+					if (InteractionMode().isNormal())
+						InteractionMode().selectSurface(
+							OS0InteractionSurface::ENVIRONMENT);
+					gUIRuntime.windowManager().show(
+						gUIRuntime.managedId(FloatingPanelId::INSPECTOR));
+				}
+				else
+				{
+					gUIRuntime.windowManager().hide(
+						gUIRuntime.managedId(FloatingPanelId::INSPECTOR));
+					if (!gpItemPointer && !CarryState().active())
+						ApplyCursorTool(ContextAction::MOVE);
+				}
+				RecordFeedbackEvent(scanEnabled ?
+					"NEARBY SCAN / ON" : "NEARBY SCAN / OFF");
 				break;
-			case ToolboxModule::WORLD:
+			}
+			case OS0UICommandIntent::TOGGLE_ENVIRONMENT:
+				InteractionMode().beginInteraction(
+					OS0InteractionSurface::ENVIRONMENT);
 				ApplyCursorTool(ContextAction::INSPECT);
-				gFloatingPanels[static_cast<size_t>(FloatingPanelId::INSPECTOR)].visible = TRUE;
+				gUIRuntime.windowManager().show(
+					gUIRuntime.managedId(FloatingPanelId::INSPECTOR));
+				if (gInspectedGridNo >= 0 && gInspectedGridNo < WORLD_MAX)
+					RefreshEnvironmentTarget(gInspectedGridNo, gInspectedLevel,
+						gInspectedTileIndex);
+				gUIRuntime.windowManager().toggle(
+					gUIRuntime.managedId(FloatingPanelId::ENVIRONMENT));
 				break;
-			case ToolboxModule::ASSETS:
+			case OS0UICommandIntent::OPEN_ASSET_LIBRARY:
+				InteractionMode().beginInteraction(
+					OS0InteractionSurface::ENVIRONMENT);
 				gDebugLibraryMode = DebugLibraryMode::ASSETS;
 				gUIRuntime.show(OS0UIPanel::ASSET_LIBRARY);
 				break;
-			case ToolboxModule::TERRAIN:
-				if (selected) EnsureDebugFieldTools(selected);
-				ApplyCursorTool(ContextAction::USE);
-				break;
-			case ToolboxModule::STRATEGY:
+			case OS0UICommandIntent::TOGGLE_REALTIME_EDITOR:
 			{
-				FloatingPanel& strategy =
-					gFloatingPanels[static_cast<size_t>(FloatingPanelId::SECTOR)];
-				strategy.visible = !strategy.visible;
+				InteractionMode().beginInteraction(
+					OS0InteractionSurface::ENVIRONMENT);
+				OS0WindowHandle const editor = gUIRuntime.managedId(
+					OS0UIWindow::REALTIME_EDITOR);
+				gUIRuntime.windowManager().toggle(editor);
+				if (gUIRuntime.windowManager().requestedVisible(editor) && gpItemPointer)
+					CancelItemPointer();
+				ApplyCursorTool(gUIRuntime.windowManager().requestedVisible(editor) ?
+					ContextAction::INSPECT : ContextAction::MOVE);
 				break;
 			}
-			case ToolboxModule::SANDBOX:
+			case OS0UICommandIntent::TOGGLE_STRATEGY:
+				gUIRuntime.windowManager().toggle(
+					gUIRuntime.managedId(FloatingPanelId::SECTOR));
+				break;
+			case OS0UICommandIntent::OPEN_ICON_LIBRARY:
+				InteractionMode().beginInteraction(
+					OS0InteractionSurface::ENVIRONMENT);
 				if (selected) EnsureDebugFieldTools(selected);
 				gDebugLibraryMode = DebugLibraryMode::ICONS;
 				gUIRuntime.show(OS0UIPanel::ASSET_LIBRARY);
 				break;
-			case ToolboxModule::COUNT: return;
 		}
 		RecordFeedbackEvent(ST::format("TOOLBOX MODULE {}",
 			static_cast<UINT8>(module)));
@@ -3953,19 +4633,51 @@ namespace
 		SetRenderFlags(RENDER_FLAG_FULL);
 	}
 
+	BOOLEAN IsToolboxModuleActive(ToolboxModule const module)
+	{
+		switch (module)
+		{
+			case ToolboxModule::TACTICAL:
+				return InteractionMode().isNormal() &&
+					InteractionMode().isSurfaceSelected(
+						OS0InteractionSurface::ACTIONS);
+			case ToolboxModule::CHARACTER:
+				return gEquipmentExplodedVisible ||
+					InteractionMode().isSurfaceActive(
+						OS0InteractionSurface::EQUIPMENT);
+			case ToolboxModule::STEALTH:
+				return (GetSelectedMan() && GetSelectedMan()->bStealthMode) ||
+					InteractionMode().isSurfaceActive(
+						OS0InteractionSurface::BEHAVIOR);
+			case ToolboxModule::OBJECT:
+				return InteractionMode().nearbyScanEnabled();
+			case ToolboxModule::WORLD:
+				return InteractionMode().isSurfaceActive(
+					OS0InteractionSurface::ENVIRONMENT);
+			case ToolboxModule::ASSETS:
+				return gGodLibraryVisible &&
+					gDebugLibraryMode == DebugLibraryMode::ASSETS;
+			case ToolboxModule::TERRAIN:
+				return gUIRuntime.windowManager().requestedVisible(
+					gUIRuntime.managedId(FloatingPanelId::REALTIME_EDITOR));
+			case ToolboxModule::STRATEGY:
+				return gUIRuntime.windowManager().requestedVisible(
+					gUIRuntime.managedId(FloatingPanelId::SECTOR));
+			case ToolboxModule::SANDBOX:
+				return gGodLibraryVisible &&
+					gDebugLibraryMode == DebugLibraryMode::ICONS;
+			case ToolboxModule::COUNT:
+				return FALSE;
+		}
+		return FALSE;
+	}
+
 	void DrawCommandIcon(size_t index, INT16 x, INT16 y)
 	{
-		if (index == 6 && gGodDoorIcons)
-		{
-			BltVideoObject(FRAME_BUFFER, gGodDoorIcons, 0, x, y);
-			return;
-		}
-		if (!gGodNewIcons) return;
-		constexpr std::array<UINT16, COMMAND_MODULE_COUNT> frames{{
-			24, 18, 0, 21, 12, 42, 39, 21, 18
-		}};
-		if (index >= frames.size()) return;
-		BltVideoObject(FRAME_BUFFER, gGodNewIcons, frames[index], x, y);
+		if (index >= COMMAND_MODULE_COUNT) return;
+		OS0UICommandDescriptor const& descriptor =
+			GetOS0UICommandDescriptor(static_cast<OS0UICommand>(index));
+		OS0UIAssets().draw(descriptor.icon, FRAME_BUFFER, x, y);
 	}
 
 	void DrawOrb()
@@ -3983,8 +4695,8 @@ namespace
 		// The dock has become a single physical field-computer object.  All
 		// non-world systems live in its movable OS window; gameplay actions stay on
 		// characters and world assets.
-		const BOOLEAN open =
-			gFloatingPanels[static_cast<size_t>(FloatingPanelId::TOOLBOX)].visible;
+		const BOOLEAN open = gUIRuntime.windowManager().visible(
+			gUIRuntime.managedId(FloatingPanelId::TOOLBOX));
 		ColorFillVideoSurfaceArea(FRAME_BUFFER, 3, gOrbY + 3,
 			COLLAPSED_OS0_W - 3, gOrbY + COMMAND_BAR_H - 3, black);
 		OutlineBox(3, gOrbY + 3, COLLAPSED_OS0_W - 5,
@@ -3994,8 +4706,7 @@ namespace
 		OutlineBox(9, gOrbY + 7, 27, 22, red);
 		ColorFillVideoSurfaceArea(FRAME_BUFFER, 7, gOrbY + 30,
 			39, gOrbY + 32, open ? bright : red);
-		if (gGodNewIcons)
-			BltVideoObject(FRAME_BUFFER, gGodNewIcons, 12, 13, gOrbY + 9);
+		OS0UIAssets().draw(OS0UIIcon::KEYRING, FRAME_BUFFER, 13, gOrbY + 9);
 		SetFont(TINYFONT1);
 		SetFontBackground(FONT_MCOLOR_BLACK);
 		SetFontForeground(open ? FONT_WHITE : FONT_MCOLOR_RED);
@@ -4004,15 +4715,10 @@ namespace
 			"OS//0 TOOLBOX / LEFT: MODULES / RIGHT: MAP, TEAM, BASE, REPORT");
 		if (!gTutorialActive && !gAimAutoCollapsed)
 		{
-			constexpr std::array<const char*, PANEL_DOCK_COUNT> labels{{
-				"CHARACTER / RPG INVENTORY", "STEALTH / CAMOUFLAGE",
-				"OBJECT INSPECTOR", "WORLD FIELD EDITING", "ASSET DATABASE",
-				"TERRAIN TOOLS", "STRATEGY / MAP / TEAM / REPORT",
-				"SANDBOX / ICON LIBRARY"
-			}};
 			for (size_t i = 0; i < gPanelDockRegions.size(); ++i)
 			{
 				MOUSE_REGION& region = gPanelDockRegions[i];
+				ToolboxModule const module = OS0CommandForDockSlot(i);
 				const INT16 x = region.RegionTopLeftX;
 				const INT16 w = region.W();
 				const BOOLEAN hot = gusMouseXPos >= x &&
@@ -4020,11 +4726,12 @@ namespace
 					gusMouseYPos >= gOrbY;
 				DrawCommandIcon(i + 1, x + std::max<INT16>(2, (w - 20) / 2),
 					gOrbY + 8);
-				if (hot) DrawIconCorners(x + 2, gOrbY + 3,
+				if (hot || IsToolboxModuleActive(module))
+					DrawIconCorners(x + 2, gOrbY + 3,
 					std::max<INT16>(8, w - 4), COMMAND_BAR_H - 6, bright);
 				else ColorFillVideoSurfaceArea(FRAME_BUFFER,
 					x, gOrbY + 5, x, gOrbY + COMMAND_BAR_H - 6, dark);
-				region.SetFastHelpText(labels[i]);
+				region.SetFastHelpText(GetOS0UICommandDescriptor(module).tooltip);
 			}
 		}
 		InvalidateRegion(0, gOrbY, gsVIEWPORT_END_X, SCREEN_HEIGHT);
@@ -4034,32 +4741,17 @@ namespace
 	{
 		FloatingPanel const& panel =
 			gFloatingPanels[static_cast<size_t>(FloatingPanelId::TOOLBOX)];
-		if (!panel.visible || gTutorialActive || gAimAutoCollapsed) return;
-		const UINT16 black = Get16BPPColor(FROMRGB(2, 3, 3));
+		if (!gUIRuntime.windowManager().visible(gUIRuntime.managedId(
+			FloatingPanelId::TOOLBOX)) || gTutorialActive || gAimAutoCollapsed) return;
 		const UINT16 red = Get16BPPColor(FROMRGB(118, 0, 0));
 		const UINT16 bright = Get16BPPColor(FROMRGB(205, 12, 12));
-		ColorFillVideoSurfaceArea(FRAME_BUFFER, panel.x, panel.y,
-			panel.x + panel.w - 1, panel.y + panel.h - 1, black);
-		ColorFillVideoSurfaceArea(FRAME_BUFFER, panel.x, panel.y,
-			panel.x + 28, panel.y + 1, bright);
-		ColorFillVideoSurfaceArea(FRAME_BUFFER, panel.x + panel.w - 29, panel.y,
-			panel.x + panel.w - 1, panel.y + 1, bright);
-		SetFont(TINYFONT1);
-		SetFontBackground(FONT_MCOLOR_BLACK);
-		SetFontForeground(FONT_MCOLOR_RED);
-		MPrint(panel.x + 7, panel.y + 7, "OS//0 TOOLBOX");
-		MPrint(panel.x + panel.w - 13, panel.y + 7, "X");
-		constexpr std::array<const char*, 9> labels{{
-			"TACTICAL / RETURN HELD ITEM", "CHARACTER + INVENTORY",
-			"STEALTH TOGGLE", "OBJECT INSPECTOR", "WORLD FIELD EDITING",
-			"ASSET DATABASE", "TERRAIN TOOLS", "STRATEGY / MAP / TEAM",
-			"SANDBOX / ICON LIBRARY"
-		}};
-		constexpr std::array<UINT16, 9> frames{{
-			24, 18, 0, 21, 12, 42, 39, 21, 18
-		}};
-		ST::string hotLabel = gpItemPointer ? "ITEM HELD / TACTICAL RETURNS IT" :
-			"9 LIVE MODULES";
+		DrawFloatingPanelShell(panel, FloatingPanelId::TOOLBOX,
+			GetOS0UIWindowDescriptor(FloatingPanelId::TOOLBOX).title);
+		ST::string hotLabel = gpItemPointer ? "ITEM HELD / ACTIONS RETURNS IT" :
+			ST::format("{} / {}{}",
+				OS0InteractionStateName(InteractionMode().state()),
+				OS0InteractionSurfaceName(InteractionMode().surface()),
+				InteractionMode().nearbyScanEnabled() ? " / SCAN" : "");
 		for (size_t i = 0; i < gToolboxRegions.size(); ++i)
 		{
 			MOUSE_REGION const& region = gToolboxRegions[i];
@@ -4067,32 +4759,15 @@ namespace
 			const INT16 y = region.RegionTopLeftY;
 			const BOOLEAN hot = gusMouseXPos >= x && gusMouseXPos <= x + 30 &&
 				gusMouseYPos >= y && gusMouseYPos <= y + 26;
-			BOOLEAN active = FALSE;
-			switch (static_cast<ToolboxModule>(i))
-			{
-				case ToolboxModule::CHARACTER: active = gEquipmentExplodedVisible; break;
-				case ToolboxModule::STEALTH: active = GetSelectedMan() &&
-					GetSelectedMan()->bStealthMode; break;
-				case ToolboxModule::OBJECT: active =
-					gFloatingPanels[static_cast<size_t>(FloatingPanelId::INSPECTOR)].visible; break;
-				case ToolboxModule::WORLD: active =
-					CursorState().action == ContextAction::INSPECT; break;
-				case ToolboxModule::ASSETS: active = gGodLibraryVisible &&
-					gDebugLibraryMode == DebugLibraryMode::ASSETS; break;
-				case ToolboxModule::TERRAIN: active =
-					CursorState().action == ContextAction::USE; break;
-				case ToolboxModule::STRATEGY: active =
-					gFloatingPanels[static_cast<size_t>(FloatingPanelId::SECTOR)].visible; break;
-				case ToolboxModule::SANDBOX: active = gGodLibraryVisible &&
-					gDebugLibraryMode == DebugLibraryMode::ICONS; break;
-				default: break;
-			}
-			if (gGodNewIcons)
-				BltVideoObject(FRAME_BUFFER, gGodNewIcons, frames[i], x + 5, y + 3);
+			const BOOLEAN active = IsToolboxModuleActive(
+				static_cast<ToolboxModule>(i));
+			OS0UICommandDescriptor const& descriptor =
+				GetOS0UICommandDescriptor(static_cast<ToolboxModule>(i));
+			OS0UIAssets().draw(descriptor.icon, FRAME_BUFFER, x + 5, y + 3);
 			if (active || hot) DrawIconCorners(x, y, 30, 26,
 				hot ? bright : red);
-			gToolboxRegions[i].SetFastHelpText(labels[i]);
-			if (hot) hotLabel = labels[i];
+			gToolboxRegions[i].SetFastHelpText(descriptor.tooltip);
+			if (hot) hotLabel = descriptor.tooltip;
 		}
 		SetFontForeground(FONT_MCOLOR_DKGRAY);
 		MPrint(panel.x + 7, panel.y + panel.h - 12, hotLabel.left(22));
@@ -4187,19 +4862,60 @@ namespace
 		SetFont(TINYFONT1);
 		SetFontBackground(FONT_MCOLOR_BLACK);
 		SetFontForeground(FONT_MCOLOR_RED);
-		const std::array<size_t, static_cast<size_t>(FloatingPanelId::COUNT)> icons{{
-			6, 2, 0
-		}};
-		DrawCommandIcon(icons[static_cast<size_t>(id)], panel.x + 5, panel.y + 1);
+		OS0UIAssets().draw(GetOS0UIWindowDescriptor(id).icon,
+			FRAME_BUFFER, panel.x + 5, panel.y + 1);
 		MPrint(panel.x + 28, panel.y + 5, title);
 		MPrint(panel.x + panel.w - 13, panel.y + 5, "X");
+	}
+
+	void DrawEnvironmentPanel()
+	{
+		FloatingPanel const& panel =
+			gFloatingPanels[static_cast<size_t>(FloatingPanelId::ENVIRONMENT)];
+		if (!gUIRuntime.windowManager().visible(gUIRuntime.managedId(
+			FloatingPanelId::ENVIRONMENT)) || gTutorialActive ||
+			gAimAutoCollapsed) return;
+		DrawFloatingPanelShell(panel, FloatingPanelId::ENVIRONMENT,
+			GetOS0UIWindowDescriptor(FloatingPanelId::ENVIRONMENT).title);
+		SetFont(TINYFONT1);
+		SetFontBackground(FONT_MCOLOR_BLACK);
+		SetFontForeground(FONT_MCOLOR_RED);
+		MPrint(panel.x + 8, panel.y + 24, gEnvironmentTitle.left(34));
+		if (gEnvironmentEntryCount == 0)
+		{
+			SetFontForeground(FONT_MCOLOR_DKGRAY);
+			MPrint(panel.x + 8, panel.y + 49,
+				"SELECT OR APPROACH A WORLD OBJECT");
+		}
+		const UINT16 bright = Get16BPPColor(FROMRGB(205, 12, 12));
+		const UINT16 disabled = Get16BPPColor(FROMRGB(38, 38, 38));
+		for (size_t i = 0; i < gEnvironmentEntryCount; ++i)
+		{
+			MOUSE_REGION const& region = gEnvironmentSkillRegions[i];
+			ContextEntry const& entry = gEnvironmentEntries[i];
+			const INT16 x = region.RegionTopLeftX;
+			const INT16 y = region.RegionTopLeftY;
+			const BOOLEAN hot = gusMouseXPos >= x &&
+				gusMouseXPos <= region.RegionBottomRightX &&
+				gusMouseYPos >= y && gusMouseYPos <= region.RegionBottomRightY;
+			DrawContextActionIcon(entry.action, x + 2, y + 2);
+			if (hot || !entry.enabled)
+				DrawIconCorners(x, y, region.W(), region.H(),
+					entry.enabled ? bright : disabled);
+			SetFontForeground(entry.enabled ? FONT_WHITE : FONT_MCOLOR_DKGRAY);
+			MPrint(x + 27, y + 9, ST::string(ContextActionName(entry.action)).left(8));
+			gEnvironmentSkillRegions[i].SetFastHelpText(ST::format("{}\n{}",
+				entry.label, ContextActionExplanation(entry.action)));
+		}
+		InvalidateRegion(panel.x, panel.y, panel.x + panel.w, panel.y + panel.h);
 	}
 
 	void DrawSectorPanel()
 	{
 		FloatingPanel const& panel =
 			gFloatingPanels[static_cast<size_t>(FloatingPanelId::SECTOR)];
-		if (!panel.visible) return;
+		if (!gUIRuntime.windowManager().visible(gUIRuntime.managedId(
+			FloatingPanelId::SECTOR))) return;
 		DrawFloatingPanelShell(panel, FloatingPanelId::SECTOR,
 			ST::format("LIVE STRATEGY / DAY {} / {}:00", GetWorldDay(),
 				GetWorldHour()));
@@ -4630,8 +5346,8 @@ namespace
 		// old rectangular "container inventory" window below.
 		if (gLootVisible && gLootGridNo >= 0 && gLootGridNo < WORLD_MAX)
 		{
-			PositionBagRegions();
-			gLootWorldItems.fill(-1);
+			PositionLootRegions();
+			const size_t slotCount = RefreshLootWorldItems();
 			std::array<ST::string, 12> nextHelp;
 			const UINT16 red = Get16BPPColor(FROMRGB(205, 12, 12));
 			INT16 anchorX;
@@ -4641,15 +5357,12 @@ namespace
 			// The real container is already visible in the world. Do not paint a
 			// scaled dark-backed duplicate over it.
 
-			size_t slot = 0;
-			for (ITEM_POOL* item = GetItemPool(gLootGridNo, gLootLevel);
-				item && slot < gLootWorldItems.size(); item = item->pNext)
+			for (size_t slot = 0; slot < slotCount; ++slot)
 			{
-				if (item->iItemIndex < 0 ||
-					static_cast<size_t>(item->iItemIndex) >= gWorldItems.size()) continue;
-				WORLDITEM& worldItem = GetWorldItem(item->iItemIndex);
-				if (!worldItem.fExists || worldItem.o.usItem == NOTHING ||
-					worldItem.o.usItem == OWNERSHIP || worldItem.o.usItem == ACTION_ITEM) continue;
+				const INT32 itemIndex = gLootWorldItems[slot];
+				if (itemIndex < 0 || static_cast<size_t>(itemIndex) >= gWorldItems.size())
+					continue;
+				WORLDITEM& worldItem = GetWorldItem(itemIndex);
 				MOUSE_REGION const& region = gLootRegions[slot];
 				const INT16 x = region.RegionTopLeftX;
 				const INT16 y = region.RegionTopLeftY;
@@ -4659,14 +5372,13 @@ namespace
 					gusMouseYPos >= y && gusMouseYPos <= y + 27;
 				if (hot) DrawIconCorners(x, y, 59, 28, red);
 				DrawWorldItemSprite(worldItem.o, cx, cy);
-				gLootWorldItems[slot] = item->iItemIndex;
 				ItemModel const* const model = GCM->getItem(worldItem.o.usItem);
 				nextHelp[slot] = ST::format("{} / {}% / x{}\n"
 					"DOUBLE: PACK  RIGHT: OPTIONS  DRAG: MOVE",
 					model->getName(), worldItem.o.bStatus[0],
 					worldItem.o.ubNumberOfObjects);
-				++slot;
 			}
+			SetLootRegionsEnabled(TRUE);
 			for (size_t i = 0; i < gLootRegions.size(); ++i)
 			{
 				if (nextHelp[i] != gLootHelp[i])
@@ -4675,15 +5387,29 @@ namespace
 					gLootRegions[i].SetFastHelpText(nextHelp[i]);
 				}
 			}
-			if (slot == 0)
+			if (slotCount == 0)
 			{
 				// Empty containers collapse back into their world sprite. Never leave a
 				// black pseudo-window or an EMPTY label floating over the map.
 				gLootVisible = FALSE;
+				SetBagRegionsEnabled(TRUE);
+				SetRenderFlags(RENDER_FLAG_FULL);
+				return;
 			}
-			SetBagRegionsEnabled(TRUE);
-			InvalidateRegion(gsVIEWPORT_START_X, gsVIEWPORT_WINDOW_START_Y,
-				gsVIEWPORT_END_X, gsVIEWPORT_WINDOW_END_Y);
+			INT16 dirtyLeft = gsVIEWPORT_END_X;
+			INT16 dirtyTop = gsVIEWPORT_WINDOW_END_Y;
+			INT16 dirtyRight = gsVIEWPORT_START_X;
+			INT16 dirtyBottom = gsVIEWPORT_WINDOW_START_Y;
+			for (size_t i = 0; i < slotCount; ++i)
+			{
+				MOUSE_REGION const& region = gLootRegions[i];
+				dirtyLeft = std::min(dirtyLeft, region.RegionTopLeftX);
+				dirtyTop = std::min(dirtyTop, region.RegionTopLeftY);
+				dirtyRight = std::max(dirtyRight, region.RegionBottomRightX);
+				dirtyBottom = std::max(dirtyBottom, region.RegionBottomRightY);
+			}
+			InvalidateRegion(dirtyLeft - 2, dirtyTop - 2,
+				dirtyRight + 2, dirtyBottom + 2);
 			return;
 		}
 		gLootWorldItems.fill(-1);
@@ -4721,8 +5447,10 @@ namespace
 		PositionEquipmentRegions();
 		const UINT16 red = Get16BPPColor(FROMRGB(205, 12, 12));
 		const UINT16 mutedRed = Get16BPPColor(FROMRGB(92, 8, 8));
-		constexpr std::array<UINT16, 7> slotGlyphs{{
-			12, 12, 12, 18, 3, 24, 24
+		constexpr std::array<OS0UIIcon, 7> slotGlyphs{{
+			OS0UIIcon::LOOK, OS0UIIcon::LOOK, OS0UIIcon::LOOK,
+			OS0UIIcon::HAND, OS0UIIcon::WALK, OS0UIIcon::TARGET,
+			OS0UIIcon::PUNCH
 		}};
 		constexpr std::array<const char*, 7> slotTags{{
 			"HELM", "FACE 1", "FACE 2", "VEST", "LEGS", "HAND 1", "HAND 2"
@@ -4765,9 +5493,7 @@ namespace
 			}
 			else
 			{
-				if (gGodNewIcons)
-					BltVideoObject(FRAME_BUFFER, gGodNewIcons, slotGlyphs[i],
-						x + 7, y + 3);
+				OS0UIAssets().draw(slotGlyphs[i], FRAME_BUFFER, x + 7, y + 3);
 			}
 			if (slot == SECONDHANDPOS &&
 				gEquipmentSoldier->inv[HANDPOS].usItem != NOTHING &&
@@ -4787,8 +5513,8 @@ namespace
 
 		const INT16 packX = gEquipmentPackRegion.RegionTopLeftX;
 		const INT16 packY = gEquipmentPackRegion.RegionTopLeftY;
-		if (gGodNewIcons)
-			BltVideoObject(FRAME_BUFFER, gGodNewIcons, 18, packX + 13, packY + 3);
+		OS0UIAssets().draw(OS0UIIcon::HAND, FRAME_BUFFER,
+			packX + 13, packY + 3);
 		const BOOLEAN packHot = gusMouseXPos >= packX && gusMouseXPos <= packX + 46 &&
 			gusMouseYPos >= packY && gusMouseYPos <= packY + 25;
 		DrawIconCorners(packX, packY, 46, 25,
@@ -4810,6 +5536,12 @@ namespace
 		if (!GetActorDisplayAnchor(gItemTransferTarget, anchorX, anchorY)) return;
 		const UINT16 red = Get16BPPColor(FROMRGB(205, 12, 12));
 		const UINT16 muted = Get16BPPColor(FROMRGB(92, 8, 8));
+		INT16 dirtyLeft = anchorX;
+		INT16 dirtyTop = anchorY;
+		INT16 dirtyRight = anchorX;
+		INT16 dirtyBottom = anchorY;
+		static std::array<ST::string,
+			gOS0ItemTransferIntents.size()> helpCache{};
 		for (size_t i = 0; i < gOS0ItemTransferIntents.size(); ++i)
 		{
 			MOUSE_REGION const& region = gItemTransferIntentRegions[i];
@@ -4817,6 +5549,10 @@ namespace
 			const INT16 y = region.RegionTopLeftY;
 			const INT16 cx = x + 14;
 			const INT16 cy = y + 14;
+			dirtyLeft = std::min(dirtyLeft, x);
+			dirtyTop = std::min<INT16>(dirtyTop, y - 11);
+			dirtyRight = std::max<INT16>(dirtyRight, x + 96);
+			dirtyBottom = std::max<INT16>(dirtyBottom, y + 28);
 			ColorFillVideoSurfaceArea(FRAME_BUFFER, std::min(anchorX, cx), cy,
 				std::max(anchorX, cx), cy, muted);
 			const BOOLEAN hot = gusMouseXPos >= x && gusMouseXPos <= x + 28 &&
@@ -4826,13 +5562,17 @@ namespace
 			DrawIconCorners(x, y, 28, 28,
 				!allowed ? Get16BPPColor(FROMRGB(42, 42, 42)) :
 				(hot ? red : muted));
-			if (gGodNewIcons)
-				BltVideoObject(FRAME_BUFFER, gGodNewIcons,
-					gOS0ItemTransferIntents[i].iconFrame, x + 4, y + 4);
+			OS0UIAssets().draw(gOS0ItemTransferIntents[i].icon,
+				FRAME_BUFFER, x + 4, y + 4);
 			const ST::string relation = ItemTransferIntentLabel(gItemTransferTarget,
 				gOS0ItemTransferIntents[i].intent);
-			gItemTransferIntentRegions[i].SetFastHelpText(ST::format("{}\n{}",
-				relation, allowed ? "CLICK TO APPLY" : "NOT COMPATIBLE"));
+			const ST::string help = ST::format("{}\n{}", relation,
+				allowed ? "CLICK TO APPLY" : "NOT COMPATIBLE");
+			if (helpCache[i] != help)
+			{
+				helpCache[i] = help;
+				gItemTransferIntentRegions[i].SetFastHelpText(help);
+			}
 			if (hot)
 			{
 				SetFont(TINYFONT1);
@@ -4844,8 +5584,8 @@ namespace
 					relation.left(32));
 			}
 		}
-		InvalidateRegion(gsVIEWPORT_START_X, gsVIEWPORT_WINDOW_START_Y,
-			gsVIEWPORT_END_X, gsVIEWPORT_WINDOW_END_Y);
+		InvalidateRegion(dirtyLeft - 2, dirtyTop - 2,
+			dirtyRight + 2, dirtyBottom + 2);
 	}
 
 	void DrawStackSplitDialog()
@@ -4976,11 +5716,8 @@ namespace
 			PositionContextRegions();
 			constexpr INT16 iconSize = 26;
 			const UINT16 red = Get16BPPColor(FROMRGB(205, 12, 12));
+			const UINT16 mutedRed = Get16BPPColor(FROMRGB(92, 8, 8));
 			const UINT16 disabled = Get16BPPColor(FROMRGB(38, 38, 38));
-			SetFont(TINYFONT1);
-			SetFontBackground(FONT_MCOLOR_BLACK);
-			SetFontForeground(FONT_MCOLOR_RED);
-			MPrint(gContextX + 3, gContextY + 4, gContextTitle.left(29));
 
 			size_t hovered = gContextEntryCount;
 			for (size_t i = 0; i < gContextEntryCount; ++i)
@@ -4988,6 +5725,14 @@ namespace
 				MOUSE_REGION const& region = gContextRegions[i];
 				const INT16 x = region.RegionTopLeftX;
 				const INT16 y = region.RegionTopLeftY;
+				const INT16 iconCentreX = x + iconSize / 2;
+				const INT16 iconCentreY = y + iconSize / 2;
+				ColorFillVideoSurfaceArea(FRAME_BUFFER,
+					std::min(gContextX, iconCentreX), gContextY,
+					std::max(gContextX, iconCentreX), gContextY, mutedRed);
+				ColorFillVideoSurfaceArea(FRAME_BUFFER, iconCentreX,
+					std::min(gContextY, iconCentreY), iconCentreX,
+					std::max(gContextY, iconCentreY), mutedRed);
 				const BOOLEAN hot = gusMouseXPos >= x && gusMouseXPos <= x + iconSize &&
 					gusMouseYPos >= y && gusMouseYPos <= y + iconSize;
 				if (hot) hovered = i;
@@ -4995,15 +5740,6 @@ namespace
 					DrawIconCorners(x, y, iconSize, iconSize,
 						!gContextEntries[i].enabled ? disabled : red);
 				DrawContextActionIcon(gContextEntries[i].action, x + 3, y + 3);
-				if (hot)
-				{
-					SetFont(TINYFONT1);
-					SetFontBackground(FONT_MCOLOR_BLACK);
-					SetFontForeground(gContextEntries[i].enabled ?
-						FONT_WHITE : FONT_MCOLOR_DKGRAY);
-					MPrint(gContextX + 3, gContextY + 4,
-						gContextEntries[i].label.left(29));
-				}
 			}
 			if (hovered < gContextEntryCount)
 				DrawContextHoverExplanation(hovered, FALSE);
@@ -5020,11 +5756,67 @@ namespace
 		PositionContextRegions();
 	}
 
+	void DrawNearbyInteractionHints()
+	{
+		const BOOLEAN showHints = InteractionMode().nearbyScanEnabled() &&
+			!gTutorialActive && !gContextVisible && !gAimAutoCollapsed &&
+			!gAssetCatalogVisible && !gStackSplitVisible &&
+			!gpItemPointer && !CarryState().active();
+		const UINT16 red = Get16BPPColor(FROMRGB(205, 12, 12));
+		const UINT16 muted = Get16BPPColor(FROMRGB(72, 58, 34));
+		const UINT16 disabled = Get16BPPColor(FROMRGB(45, 45, 38));
+		for (size_t i = 0; i < gNearbyHintRegions.size(); ++i)
+		{
+			MOUSE_REGION& region = gNearbyHintRegions[i];
+			if (!showHints || i >= gNearbyHintCount)
+			{
+				if (region.uiFlags & MSYS_REGION_ENABLED) region.Disable();
+				continue;
+			}
+			NearbyInteractionHint const& hint = gNearbyHints[i];
+			INT16 anchorX;
+			INT16 anchorY;
+			GetGridNoScreenPos(hint.gridNo, hint.level, &anchorX, &anchorY);
+			OS0MapWorldToDisplayScreen(&anchorX, &anchorY);
+			const INT16 x = anchorX - 12;
+			const INT16 y = anchorY - 42 - static_cast<INT16>((i % 2) * 5);
+			if (x < gsVIEWPORT_START_X || x + 24 > gsVIEWPORT_END_X ||
+				y < gsVIEWPORT_WINDOW_START_Y ||
+				y + 24 > gsVIEWPORT_WINDOW_END_Y)
+			{
+				if (region.uiFlags & MSYS_REGION_ENABLED) region.Disable();
+				continue;
+			}
+			MoveRegion(region, x, y);
+			if (!(region.uiFlags & MSYS_REGION_ENABLED)) region.Enable();
+			const BOOLEAN hot = gusMouseXPos >= x && gusMouseXPos <= x + 24 &&
+				gusMouseYPos >= y && gusMouseYPos <= y + 24;
+			if (hot || !hint.enabled)
+				DrawIconCorners(x, y, 24, 24, hint.enabled ? red : disabled);
+			else
+				ColorFillVideoSurfaceArea(FRAME_BUFFER, x + 2, y + 22,
+					x + 21, y + 23, muted);
+			DrawContextActionIcon(hint.action, x + 2, y + 1);
+			const ST::string help = ST::format(
+				"{} / {}\nCLICK: OBJECT ACTIONS / MMB: CYCLE\n{}",
+				ContextActionName(hint.action), hint.enabled ? "READY" : "REQUIREMENT",
+				ContextActionExplanation(hint.action));
+			if (gNearbyHintHelp[i] != help)
+			{
+				gNearbyHintHelp[i] = help;
+				region.SetFastHelpText(help);
+			}
+			InvalidateRegion(x - 2, y - 2, x + 26, y + 26);
+		}
+	}
+
 	void DrawHoverInspector()
 	{
 		FloatingPanel const& panel =
 			gFloatingPanels[static_cast<size_t>(FloatingPanelId::INSPECTOR)];
-		if (!panel.visible || !gHoverVisible || gTutorialActive || gAimAutoCollapsed)
+		if (!gUIRuntime.windowManager().visible(gUIRuntime.managedId(
+			FloatingPanelId::INSPECTOR)) || !gHoverVisible || gTutorialActive ||
+			gAimAutoCollapsed)
 			return;
 		gHoverX = panel.x;
 		gHoverY = panel.y;
@@ -5136,6 +5928,9 @@ namespace
 				CaptureInspectorPreview(carry.destination, gInspectedLevel);
 				StartExplodedView(carry.destination, gInspectedTileIndex, TRUE);
 			}
+			if (gEnvironmentGridNo == carry.source)
+				RefreshEnvironmentTarget(carry.destination, carry.destinationLevel,
+					carry.tileIndex);
 			// Heavy handling grows the attribute that was actually used. JA2's
 			// StatChange stores sub-points in the merc profile, giving us the same
 			// learn-by-doing loop as the rest of the campaign rather than a new XP bar.
@@ -5146,8 +5941,11 @@ namespace
 					(carry.lifted ? 1 : 3), 2, 12));
 				StatChange(*carrier, STRAMT, practice, FROM_SUCCESS);
 				RecordFeedbackEvent(ST::format("{} {} KG / STR PRACTICE {}",
-					carry.lifted ? "LIFT" : "DRAG",
+					CarryModeName(carry.mode),
 					static_cast<INT32>(physics.massKg + 0.5f), practice));
+				if (carry.mode == OS0CarryMode::THROW)
+					OS0GetTacticalSession().state().pendingVisualEvents.push_back({
+						carry.destination, OS0AssetMaterial::COMPOSITE, 2 });
 			}
 			return TRUE;
 		}
@@ -5196,7 +5994,7 @@ namespace
 			carry.phase = OS0CarryPhase::TARGETING;
 			carry.destination = NOWHERE;
 			carry.actionGrid = NOWHERE;
-			CursorState().action = ContextAction::CARRY;
+			CursorState().action = CarryModeAction(carry.mode);
 			ShadeWorldMoveSource();
 			guiPendingOverrideEvent = M_CHANGE_TO_HANDMODE;
 			SetRenderFlags(RENDER_FLAG_FULL);
@@ -5246,9 +6044,15 @@ namespace
 		// carry cursor/ghost as a second mini-menu beneath the radial fan.
 		OS0CarryState const& carry = CarryState();
 		if (gContextVisible ||
-			(CursorState().action != ContextAction::CARRY && !carry.active())) return;
+			(!OS0IsManipulationAction(CursorState().action) && !carry.active())) return;
 		if (carry.pending())
+		{
 			DrawCarryGhost(gusMouseXPos, gusMouseYPos, FALSE);
+			SetFont(TINYFONT1);
+			SetFontBackground(FONT_MCOLOR_BLACK);
+			SetFontForeground(FONT_MCOLOR_RED);
+			MPrint(gusMouseXPos + 14, gusMouseYPos - 6, CarryModeName(carry.mode));
+		}
 		else if (carry.walking())
 		{
 			SOLDIERTYPE* const carrier = CarryCarrier();
@@ -5270,8 +6074,7 @@ namespace
 			SetFont(TINYFONT1);
 			SetFontBackground(FONT_MCOLOR_BLACK);
 			SetFontForeground(FONT_MCOLOR_RED);
-			MPrint(carrierX - 13, carrierY - 48,
-				carry.lifted ? "LIFT" : "DRAG");
+			MPrint(carrierX - 13, carrierY - 48, CarryModeName(carry.mode));
 
 			if (carry.destination >= 0)
 			{
@@ -5482,15 +6285,16 @@ namespace
 	{
 		if (reason & MSYS_CALLBACK_REASON_POINTER_DWN)
 		{
-			gGodLibraryDragging = TRUE;
-			gDragOffsetX = gusMouseXPos - gGodLibraryX;
-			gDragOffsetY = gusMouseYPos - gGodLibraryY;
+			if (gUIRuntime.windowManager().beginDrag(
+				gUIRuntime.managedId(OS0UIPanel::ASSET_LIBRARY),
+				gusMouseXPos, gusMouseYPos))
+				SyncManagedMouseRegionZOrder(gUIRuntime.windowManager());
 			SetRenderFlags(RENDER_FLAG_FULL);
 		}
 		if (reason & MSYS_CALLBACK_REASON_POINTER_UP)
 		{
 			UpdateWindowDragging();
-			gGodLibraryDragging = FALSE;
+			gUIRuntime.windowManager().endDrag();
 			SaveUILayout();
 			SetRenderFlags(RENDER_FLAG_FULL);
 		}
@@ -5500,7 +6304,9 @@ namespace
 	{
 		if (!(reason & MSYS_CALLBACK_REASON_POINTER_UP)) return;
 		gUIRuntime.hide(OS0UIPanel::ASSET_LIBRARY);
-		gGodLibraryDragging = FALSE;
+		if (gUIRuntime.windowManager().draggingWindow() ==
+			gUIRuntime.managedId(OS0UIPanel::ASSET_LIBRARY))
+			gUIRuntime.windowManager().cancelDrag();
 		SaveUILayout();
 		SetBagRegionsEnabled(TRUE);
 		SetRenderFlags(RENDER_FLAG_FULL);
@@ -5556,11 +6362,12 @@ namespace
 			gDebugLibraryMode != DebugLibraryMode::ICONS)
 			return;
 		const size_t index = static_cast<size_t>(region->GetUserData<0>());
-		if (index < gGodIconNames.size())
+		if (index < GOD_ICON_COUNT)
 		{
 			gGodMenuIcon = static_cast<UINT8>(index);
 			RecordFeedbackEvent(ST::format("GOD ICON {} / {}",
-				index, gGodIconNames[index]));
+				index, GetOS0UIIconDescriptor(
+					static_cast<OS0UIIcon>(index)).label));
 		}
 		gGodLibraryVisible = FALSE;
 		SetBagRegionsEnabled(TRUE);
@@ -5569,8 +6376,7 @@ namespace
 
 	void DrawGodIconLibrary()
 	{
-		if (!gGodLibraryVisible || !gGodNewIcons || !gGodDoorIcons ||
-			!gGodButtonFrame) return;
+		if (!gGodLibraryVisible || !OS0UIAssets().initialized()) return;
 		if (gDebugAssetLibrarySector != gWorldSector.AsByte() ||
 			gDebugAssetLibraryTileset != static_cast<INT16>(giCurrentTilesetID))
 			RebuildDebugAssetLibrary();
@@ -5673,37 +6479,29 @@ namespace
 		}
 
 		for (INT16 frame = 0; frame < 3; ++frame)
-			BltVideoObject(FRAME_BUFFER, gGodButtonFrame, 0,
-				gGodLibraryX + 88 + frame * 78, gGodLibraryY + 64);
+			OS0UIAssets().drawFrame(OS0UIAssetSheet::BUTTON_FRAME, 0,
+				FRAME_BUFFER, gGodLibraryX + 88 + frame * 78,
+				gGodLibraryY + 64);
 
-		for (size_t i = 0; i < gGodIconNames.size(); ++i)
+		for (size_t i = 0; i < GOD_ICON_COUNT; ++i)
 		{
 			const size_t cell = (i / 8) * 9 + (i % 8);
 			const INT16 frame = static_cast<INT16>(cell / 9);
 			const INT16 local = static_cast<INT16>(cell % 9);
 			const INT16 x = gGodLibraryX + 88 + frame * 78 + 9 + (local % 3) * 20;
 			const INT16 y = gGodLibraryY + 72 + (local / 3) * 20;
-			if (i < 15)
-				BltVideoObject(FRAME_BUFFER, gGodNewIcons,
-					static_cast<UINT16>(i * 3), x, y);
-			else
-			{
-				constexpr std::array<UINT16, 9> doorFrames{{
-					0, 3, 6, 9, 12, 15, 18, 21, 25
-				}};
-				BltVideoObject(FRAME_BUFFER, gGodDoorIcons,
-					doorFrames[i - 15], x, y);
-			}
+			OS0UIAssets().draw(static_cast<OS0UIIcon>(i), FRAME_BUFFER, x, y);
 			if (i == gGodMenuIcon) OutlineBox(x - 1, y - 1, 20, 20, red);
 		}
 
 		// The original cancel glyph closes the atlas without changing selection.
-		BltVideoObject(FRAME_BUFFER, gGodNewIcons, 15,
+		OS0UIAssets().draw(OS0UIIcon::CANCEL, FRAME_BUFFER,
 			gGodLibraryX + 88 + 2 * 78 + 49, gGodLibraryY + 112);
 		SetFontForeground(FONT_WHITE);
 		MPrint(gGodLibraryX + 95, gGodLibraryY + 171,
 			ST::format("SELECTED {} / {}", gGodMenuIcon,
-				gGodIconNames[gGodMenuIcon]).left(36));
+				GetOS0UIIconDescriptor(
+					static_cast<OS0UIIcon>(gGodMenuIcon)).label).left(36));
 		SetFontForeground(FONT_MCOLOR_DKGRAY);
 		MPrint(gGodLibraryX + 95, gGodLibraryY + 193,
 			"VANILLA STI SYMBOL ATLAS / CLICK TO BIND STAR");
@@ -5836,7 +6634,7 @@ namespace
 
 	size_t BuildContextCursorActions(SOLDIERTYPE* target, GridNo gridNo,
 		UINT8 level, UINT16 tileIndex,
-		std::array<ContextAction, 6>& available)
+		std::array<ContextAction, 12>& available)
 	{
 		SOLDIERTYPE* const selected = GetSelectedMan();
 		const BOOLEAN validGrid = gridNo >= 0 && gridNo < WORLD_MAX;
@@ -5857,8 +6655,26 @@ namespace
 			target && (target->bTeam == ENEMY_TEAM || target->bTeam == CREATURE_TEAM),
 			hasItems, openable, movable, hasAsset, armed
 		};
-		std::vector<ContextAction> const resolved =
-			ResolveOS0CursorActions(facts);
+		std::vector<ContextAction> resolved = ResolveOS0CursorActions(facts);
+		if (!target && validGrid)
+		{
+			OS0EnvironmentActionFacts const environment = BuildEnvironmentFacts(
+				gridNo, level, tileIndex, selected);
+			auto const move = std::find(resolved.begin(), resolved.end(),
+				ContextAction::MOVE);
+			if (move != resolved.end()) resolved.erase(move);
+			for (OS0ResolvedAction const& entry :
+				ResolveOS0EnvironmentActions(environment))
+			{
+				if (!entry.enabled ||
+					!(entry.action == ContextAction::DIG ||
+					  entry.action == ContextAction::SALVAGE ||
+					  OS0IsManipulationAction(entry.action))) continue;
+				if (std::find(resolved.begin(), resolved.end(), entry.action) ==
+					resolved.end()) resolved.push_back(entry.action);
+			}
+			resolved.push_back(ContextAction::MOVE);
+		}
 		size_t const count = std::min(available.size(), resolved.size());
 		std::copy_n(resolved.begin(), count, available.begin());
 		return count;
@@ -5868,8 +6684,196 @@ namespace
 	{
 		return gTutorialActive || gContextVisible || gStackSplitVisible ||
 			gAssetCatalogVisible || gItemDetailsVisible || gFeedbackEditing ||
+			OS0GetRealtimeEditorUI().active() ||
 			gTacticalStatus.fAutoBandageMode || gpItemPointer ||
-			CarryState().active();
+			CarryState().active() || gUIRuntime.windowManager().draggingWindow() !=
+				OS0_INVALID_WINDOW;
+	}
+
+	void SynchronizeInteractionMode()
+	{
+		const BOOLEAN environmentVisible =
+			gUIRuntime.windowManager().requestedVisible(gUIRuntime.managedId(
+				FloatingPanelId::ENVIRONMENT));
+		OS0InteractionFrameFacts facts;
+		facts.tutorial = gTutorialActive;
+		facts.fight = CursorState().attackMode || gCurrentUIMode == ACTION_MODE ||
+			gCurrentUIMode == CONFIRM_ACTION_MODE;
+		facts.context = gContextVisible;
+		facts.environment = gLootVisible || gAssetCatalogVisible ||
+			gGodLibraryVisible || environmentVisible ||
+			OS0GetRealtimeEditorUI().active();
+		facts.equipment = gEquipmentExplodedVisible || gBagVisible ||
+			gStackSplitVisible || gItemDetailsVisible;
+		facts.cursorAction = CursorState().action != ContextAction::MOVE;
+		facts.cursorSurface = SurfaceForAction(CursorState().action);
+		facts.passiveInteraction = gpItemPointer || CarryState().active() ||
+			gTacticalStatus.fAutoBandageMode;
+		InteractionMode().synchronize(facts);
+	}
+
+	void PrepareRealtimeEditorWorldSwap()
+	{
+		OS0WindowManager& windows = gUIRuntime.windowManager();
+		windows.setSuspended(OS0WindowSuspendReason::WORLD_SWAP, TRUE);
+		windows.cancelDrag();
+		StopFeedbackEditing();
+		if (gpItemPointer) CancelItemPointer();
+		gItemTransferTarget = nullptr;
+		ClearWorldMoveState();
+		CloseContextMenu();
+		OS0TacticalState& tactical = OS0GetTacticalSession().state();
+		tactical.coverOrders.clear();
+		tactical.pendingVisualEvents.clear();
+		tactical.cursor = {};
+		OS0ResetDirectControl();
+		guiPendingOverrideEvent = A_CHANGE_TO_MOVE;
+
+		gUIRuntime.hideTransientWorldPanels();
+		gUIRuntime.hide(OS0UIPanel::ASSET_LIBRARY);
+		gUIRuntime.hide(OS0UIPanel::ASSET_CATALOG);
+		gLootVisible = FALSE;
+		gEquipmentExplodedVisible = FALSE;
+		gStackSplitVisible = FALSE;
+		gItemDetailsVisible = FALSE;
+		gHoverVisible = FALSE;
+		gEquipmentSoldier = nullptr;
+		gStackSplitSoldier = nullptr;
+		gStackSplitSlot = NO_SLOT;
+		gInventorySoldier = nullptr;
+		gInspectedSoldier = nullptr;
+		gContextSoldier = nullptr;
+		gInspectedGridNo = NOWHERE;
+		gInspectedTileIndex = NO_TILE;
+		gLootGridNo = NOWHERE;
+		gLootTileIndex = NO_TILE;
+		gLootWorldItems.fill(-1);
+		gEnvironmentGridNo = NOWHERE;
+		gEnvironmentLevel = 0;
+		gEnvironmentTileIndex = NO_TILE;
+		gEnvironmentActorGridNo = NOWHERE;
+		gNextEnvironmentRefreshAt = 0;
+		gEnvironmentEntryCount = 0;
+		gNearbyHintCount = 0;
+		gNearbyScanWasEnabled = FALSE;
+		gHoverCursorSoldier = nullptr;
+		gHoverCursorGridNo = NOWHERE;
+		gHoverCursorTileIndex = NO_TILE;
+		gDebugAssetLibrary.clear();
+		gDebugAssetLibrarySector = 0xff;
+		gDebugAssetLibraryTileset = -1;
+		for (ImpactParticle& particle : gImpactParticles) particle.born = 0;
+		SetBagRegionsEnabled(TRUE);
+	}
+
+	void FinishRealtimeEditorWorldSwap(BOOLEAN const succeeded)
+	{
+		if (succeeded)
+		{
+			// Damage records are keyed by sector/grid/tile. A replacement map is a
+			// new geometry identity and must not inherit durability from its predecessor.
+			OS0GetTacticalSession().state().assetDamage.clear();
+			gFieldToolIssued = FALSE;
+		}
+		gInventorySoldier = GetSelectedMan();
+		if (gInventorySoldier && gBagVisible)
+			gInspectedSoldier = gInventorySoldier;
+		gUIRuntime.windowManager().setSuspended(
+			OS0WindowSuspendReason::WORLD_SWAP, FALSE);
+		PositionBagRegions();
+		SetBagRegionsEnabled(TRUE);
+		SetRenderFlags(RENDER_FLAG_FULL);
+	}
+
+	void UpdateRealtimeEditorSession()
+	{
+		OS0RealtimeEditorSession& editor = OS0GetRealtimeEditor();
+		const BOOLEAN worldSwap = editor.willInvalidateWorldPointers();
+		if (worldSwap) PrepareRealtimeEditorWorldSwap();
+		editor.update();
+		BOOLEAN worldSwapSucceeded = FALSE;
+		for (OS0EditorCommandResult const& result : editor.drainResults())
+		{
+			RecordFeedbackEvent(ST::format("EDITOR {} / {}",
+				result.success ? "OK" : "ERROR", result.message));
+			if ((result.type == OS0EditorCommandType::NEW_BLANK_MAP ||
+				result.type == OS0EditorCommandType::LOAD_MAP) &&
+				result.success)
+				worldSwapSucceeded = TRUE;
+		}
+		if (worldSwap) FinishRealtimeEditorWorldSwap(worldSwapSucceeded);
+		OS0GetRealtimeEditorUI().update();
+		if (OS0GetRealtimeEditorUI().active() && !gpItemPointer)
+		{
+			ContextAction action = ContextAction::INSPECT;
+			switch (OS0GetRealtimeEditorUI().toolState().tool)
+			{
+				case OS0RealtimeEditorTool::SELECT:
+					action = ContextAction::INSPECT; break;
+				case OS0RealtimeEditorTool::PLACE:
+					action = ContextAction::USE; break;
+				case OS0RealtimeEditorTool::ERASE:
+					action = ContextAction::SALVAGE; break;
+				case OS0RealtimeEditorTool::COUNT: break;
+			}
+			if (CursorState().action != action) ApplyCursorTool(action);
+		}
+	}
+
+	void DrawManagedWindow(OS0WindowHandle const id)
+	{
+		switch (static_cast<OS0ManagedWindow>(id))
+		{
+			case OS0ManagedWindow::INVENTORY:
+				DrawBag();
+				break;
+			case OS0ManagedWindow::CONTEXT:
+				DrawContextMenu();
+				break;
+			case OS0ManagedWindow::LOOT:
+				if (gContentsMode == ContentsMode::WORLD) DrawLootMode();
+				break;
+			case OS0ManagedWindow::EQUIPMENT:
+				DrawExplodedEquipment();
+				break;
+			case OS0ManagedWindow::STACK_SPLIT:
+				DrawStackSplitDialog();
+				break;
+			case OS0ManagedWindow::ASSET_LIBRARY:
+				DrawGodIconLibrary();
+				break;
+			case OS0ManagedWindow::ASSET_CATALOG:
+				DrawAssetCatalog();
+				break;
+			case OS0ManagedWindow::ITEM_DETAILS:
+				// ITEM_DETAILS is retained as a persistence-compatible ID. Details
+				// are projected through INSPECTOR; there is no duplicate window.
+				break;
+			case OS0ManagedWindow::SECTOR:
+				DrawSectorPanel();
+				break;
+			case OS0ManagedWindow::INSPECTOR:
+				DrawHoverInspector();
+				break;
+			case OS0ManagedWindow::TOOLBOX:
+				DrawToolbox();
+				break;
+			case OS0ManagedWindow::ENVIRONMENT:
+				DrawEnvironmentPanel();
+				break;
+			case OS0ManagedWindow::REALTIME_EDITOR:
+				OS0GetRealtimeEditorUI().render();
+				break;
+			case OS0ManagedWindow::COUNT:
+				break;
+		}
+	}
+
+	void DrawManagedWindows()
+	{
+		for (OS0WindowHandle const id :
+			gUIRuntime.windowManager().renderOrder())
+			DrawManagedWindow(id);
 	}
 }
 
@@ -5878,6 +6882,9 @@ void InitializeOS0IngameUI()
 {
 	if (gInitialized) return;
 	gUILayout.configure(SCREEN_WIDTH, SCREEN_HEIGHT, gsVIEWPORT_WINDOW_END_Y);
+	gUIRuntime.windowManager().setWorkspace(
+		{ 0, 0, static_cast<INT16>(SCREEN_WIDTH),
+			gUILayout.workspaceBottom() });
 	gUIRuntime.enterCampaign(
 		OS0GetTacticalSession().state().creatorCompleted);
 	if (gTutorialActive)
@@ -5895,16 +6902,24 @@ void InitializeOS0IngameUI()
 	gBagY = centerY;
 	gInventoryX = gBagX;
 	gInventoryY = gBagY;
-	gFloatingPanels[static_cast<size_t>(FloatingPanelId::SECTOR)] =
+	gUIRuntime.windowManager().setBounds(
+		gUIRuntime.managedId(FloatingPanelId::SECTOR),
 		{ std::max<INT16>(0, (gsVIEWPORT_END_X - SECTOR_PANEL_W) / 2), 24,
-			SECTOR_PANEL_W, SECTOR_PANEL_H, FALSE, FALSE, FALSE };
-	gFloatingPanels[static_cast<size_t>(FloatingPanelId::INSPECTOR)] =
+			SECTOR_PANEL_W, SECTOR_PANEL_H });
+	gUIRuntime.windowManager().setBounds(
+		gUIRuntime.managedId(FloatingPanelId::INSPECTOR),
 		{ 8, std::max<INT16>(8, WorkspaceBottom() - INSPECTOR_H - 8),
-			INSPECTOR_W, INSPECTOR_H, TRUE, FALSE, FALSE };
-	gFloatingPanels[static_cast<size_t>(FloatingPanelId::TOOLBOX)] =
+			INSPECTOR_W, INSPECTOR_H });
+	gUIRuntime.windowManager().setBounds(
+		gUIRuntime.managedId(FloatingPanelId::TOOLBOX),
 		{ std::max<INT16>(8, gsVIEWPORT_END_X - TOOLBOX_W - 8),
 			std::max<INT16>(8, WorkspaceBottom() - TOOLBOX_H - 8),
-			TOOLBOX_W, TOOLBOX_H, FALSE, FALSE, FALSE };
+			TOOLBOX_W, TOOLBOX_H });
+	gUIRuntime.windowManager().setBounds(
+		gUIRuntime.managedId(FloatingPanelId::ENVIRONMENT),
+		{ std::max<INT16>(8, gsVIEWPORT_END_X - ENVIRONMENT_W - 8),
+			std::max<INT16>(8, WorkspaceBottom() - TOOLBOX_H -
+				ENVIRONMENT_H - 16), ENVIRONMENT_W, ENVIRONMENT_H });
 	ApplyArtworkWorkspaceLayout(!gTutorialActive);
 	gGodLibraryX = std::max<INT16>(0,
 		(gsVIEWPORT_END_X - GOD_LIBRARY_W) / 2);
@@ -5927,9 +6942,7 @@ void InitializeOS0IngameUI()
 	ST::string resourceValidationError;
 	if (!OS0ValidateResourceItemDefinitions(&resourceValidationError))
 		throw std::runtime_error(resourceValidationError.c_str());
-	gGodNewIcons = AddVideoObjectFromFile(INTERFACEDIR "/newicons3.sti");
-	gGodDoorIcons = AddVideoObjectFromFile(INTERFACEDIR "/door_op2.sti");
-	gGodButtonFrame = AddVideoObjectFromFile(INTERFACEDIR "/button_frame.sti");
+	OS0UIAssets().initialize();
 
 	MSYS_DefineRegion(&gBagBlock, 0, 0, PANE_W, BAG_H,
 		MSYS_PRIORITY_HIGH, CURSOR_NORMAL, MSYS_NO_CALLBACK, BagBlockCallback);
@@ -5989,6 +7002,22 @@ void InitializeOS0IngameUI()
 			ContextActionCallback);
 		gContextRegions[i].SetUserData<0>(i);
 		gContextRegions[i].Disable();
+	}
+	for (size_t i = 0; i < gEnvironmentSkillRegions.size(); ++i)
+	{
+		MSYS_DefineRegion(&gEnvironmentSkillRegions[i], 0, 0, 72, 26,
+			MSYS_PRIORITY_HIGHEST, CURSOR_NORMAL, MSYS_NO_CALLBACK,
+			EnvironmentSkillCallback);
+		gEnvironmentSkillRegions[i].SetUserData<0>(i);
+		gEnvironmentSkillRegions[i].Disable();
+	}
+	for (size_t i = 0; i < gNearbyHintRegions.size(); ++i)
+	{
+		MSYS_DefineRegion(&gNearbyHintRegions[i], 0, 0, 24, 24,
+			MSYS_PRIORITY_HIGH, CURSOR_NORMAL, NearbyHintMoveCallback,
+			NearbyHintCallback);
+		gNearbyHintRegions[i].SetUserData<0>(i);
+		gNearbyHintRegions[i].Disable();
 	}
 	for (size_t i = 0; i < gFloatingPanels.size(); ++i)
 	{
@@ -6126,6 +7155,8 @@ void InitializeOS0IngameUI()
 		gLootRegions[i].Disable();
 	}
 
+	OS0GetRealtimeEditorUI().initialize(gUIRuntime.windowManager(),
+		gUIRuntime.managedId(OS0UIWindow::REALTIME_EDITOR));
 	PositionBagRegions();
 	// Input ownership is global to the OS//0 shell, not conditional on the
 	// optional character window.  Tying all regions to gBagVisible left the dock
@@ -6138,7 +7169,7 @@ void InitializeOS0IngameUI()
 	// otherwise leaves a zero-sized cursor until some unrelated UI transition.
 	// Prime a visible cursor once; normal tactical cursor selection owns every
 	// subsequent frame (including aim and held-item cursors).
-	if (gpItemPointer) SetMouseCursorFromCurrentItem();
+	if (gpItemPointer) RefreshHeldItemCursor();
 	else SetCurrentCursorFromDatabase(CURSOR_NORMAL);
 	// Materialize the layout immediately. Drag releases and OS0 expansion keep
 	// updating it, while a crash or forced process exit can no longer lose the
@@ -6152,6 +7183,7 @@ void ShutdownOS0IngameUI()
 {
 	if (!gInitialized) return;
 	SaveUILayout();
+	OS0GetRealtimeEditorUI().shutdown();
 	ClearWorldMoveState();
 	CloseContextMenu();
 	gHoverVisible = FALSE;
@@ -6169,6 +7201,8 @@ void ShutdownOS0IngameUI()
 	MSYS_RemoveRegion(&gAssetCatalogBlock);
 	for (MOUSE_REGION& r : gAssetCatalogRegions) MSYS_RemoveRegion(&r);
 	for (MOUSE_REGION& r : gContextRegions) MSYS_RemoveRegion(&r);
+	for (MOUSE_REGION& r : gEnvironmentSkillRegions) MSYS_RemoveRegion(&r);
+	for (MOUSE_REGION& r : gNearbyHintRegions) MSYS_RemoveRegion(&r);
 	for (MOUSE_REGION& r : gFloatingPanelBlocks) MSYS_RemoveRegion(&r);
 	for (MOUSE_REGION& r : gFloatingPanelGrabbers) MSYS_RemoveRegion(&r);
 	for (MOUSE_REGION& r : gFloatingPanelCloses) MSYS_RemoveRegion(&r);
@@ -6190,21 +7224,7 @@ void ShutdownOS0IngameUI()
 	for (MOUSE_REGION& r : gTutorialTraitRegions) MSYS_RemoveRegion(&r);
 	for (MOUSE_REGION& r : gOpsActionRegions) MSYS_RemoveRegion(&r);
 	for (MOUSE_REGION& r : gLootRegions) MSYS_RemoveRegion(&r);
-	if (gGodNewIcons)
-	{
-		DeleteVideoObject(gGodNewIcons);
-		gGodNewIcons = nullptr;
-	}
-	if (gGodDoorIcons)
-	{
-		DeleteVideoObject(gGodDoorIcons);
-		gGodDoorIcons = nullptr;
-	}
-	if (gGodButtonFrame)
-	{
-		DeleteVideoObject(gGodButtonFrame);
-		gGodButtonFrame = nullptr;
-	}
+	OS0UIAssets().shutdown();
 	if (gWorldZoomBuffer)
 	{
 		DeleteVideoSurface(gWorldZoomBuffer);
@@ -6251,12 +7271,11 @@ void ShutdownOS0IngameUI()
 	gPanelInteractionGuardUntil = 0;
 	gLootIgnoreInputUntil = 0;
 	gAimAutoCollapsed = FALSE;
-	gBagVisibleBeforeAim = FALSE;
-	gEquipmentVisibleBeforeAim = FALSE;
+	gUIRuntime.windowManager().setSuspended(OS0WindowSuspendReason::AIM, FALSE);
 	gFieldToolIssued = FALSE;
 	gContentsMode = ContentsMode::SOLDIER;
 	gGodLibraryVisible = FALSE;
-	gGodLibraryDragging = FALSE;
+	gUIRuntime.windowManager().cancelDrag();
 	gAssetCatalogVisible = FALSE;
 	gAssetCatalogReturnToLibrary = FALSE;
 	gAssetCatalogNameEditing = FALSE;
@@ -6317,6 +7336,9 @@ void OS0RenderAutoFirstAidStatus(BOOLEAN complete, UINT32 elapsedSeconds)
 void UpdateOS0TacticalSession()
 {
 	if (!gInitialized) InitializeOS0IngameUI();
+	// Editor callbacks only enqueue stable ids. This is the single tactical
+	// frame boundary where those commands may mutate canonical JA2 world state.
+	UpdateRealtimeEditorSession();
 	OS0TacticalState& state = OS0GetTacticalSession().state();
 	BOOLEAN inputRegionsDirty = FALSE;
 	for (OS0ImpactVisualEvent const& event : state.pendingVisualEvents)
@@ -6344,7 +7366,7 @@ void UpdateOS0TacticalSession()
 	}
 	fRenderRadarScreen = FALSE;
 	if (inputRegionsDirty) SetBagRegionsEnabled(TRUE);
-	UpdateWindowDragging();
+	gWindowMovedThisFrame = UpdateWindowDragging();
 	if (!gTutorialActive && !gFieldToolIssued)
 	{
 		if (SOLDIERTYPE* const selected = GetSelectedMan())
@@ -6353,6 +7375,7 @@ void UpdateOS0TacticalSession()
 			gFieldToolIssued = TRUE;
 		}
 	}
+	SynchronizeInteractionMode();
 	if (!gTutorialActive)
 	{
 		OS0UpdateDirectControl(GetSelectedMan(), !DirectControlBlocked(),
@@ -6372,21 +7395,12 @@ void UpdateOS0TacticalSession()
 		if (aiming && !gAimAutoCollapsed)
 		{
 			StopFeedbackEditing();
-			gBagVisibleBeforeAim = gBagVisible;
-			gEquipmentVisibleBeforeAim = gEquipmentExplodedVisible;
-			for (FloatingPanel& panel : gFloatingPanels)
-			{
-				panel.visibleBeforeAim = panel.visible;
-				panel.visible = FALSE;
-			}
+			gUIRuntime.windowManager().setSuspended(
+				OS0WindowSuspendReason::AIM, TRUE);
 			gAimAutoCollapsed = TRUE;
-			gBagVisible = FALSE;
-			gEquipmentExplodedVisible = FALSE;
 			gStackSplitVisible = FALSE;
 			gStackSplitSoldier = nullptr;
 			gStackSplitSlot = NO_SLOT;
-			gGodLibraryVisible = FALSE;
-			gAssetCatalogVisible = FALSE;
 			gAssetCatalogNameEditing = FALSE;
 			SetUIKeyboardHook(nullptr);
 			CloseContextMenu();
@@ -6396,20 +7410,25 @@ void UpdateOS0TacticalSession()
 		else if (!aiming && gAimAutoCollapsed)
 		{
 			gAimAutoCollapsed = FALSE;
-			gBagVisible = gBagVisibleBeforeAim;
-			gBagVisibleBeforeAim = FALSE;
-			gEquipmentExplodedVisible = gEquipmentVisibleBeforeAim &&
-				gEquipmentSoldier != nullptr;
-			gEquipmentVisibleBeforeAim = FALSE;
-			for (FloatingPanel& panel : gFloatingPanels)
-			{
-				panel.visible = panel.visibleBeforeAim;
-				panel.visibleBeforeAim = FALSE;
-			}
+			gUIRuntime.windowManager().setSuspended(
+				OS0WindowSuspendReason::AIM, FALSE);
 			SetBagRegionsEnabled(TRUE);
 			SetRenderFlags(RENDER_FLAG_FULL);
 		}
 	}
+	if (gEnvironmentGridNo >= 0 && gEnvironmentGridNo < WORLD_MAX &&
+		gUIRuntime.windowManager().visible(gUIRuntime.managedId(
+			FloatingPanelId::ENVIRONMENT)))
+	{
+		SOLDIERTYPE const* const selected = GetSelectedMan();
+		const GridNo actorGrid = selected ? selected->sGridNo : NOWHERE;
+		if ((actorGrid != gEnvironmentActorGridNo ||
+			GetJA2Clock() >= gNextEnvironmentRefreshAt) &&
+			RefreshEnvironmentTarget(gEnvironmentGridNo, gEnvironmentLevel,
+				gEnvironmentTileIndex))
+			SetBagRegionsEnabled(TRUE);
+	}
+	UpdateNearbyInteractionHints();
 	if (gLootVisible && !IsInspectedWorldAssetNear())
 	{
 		gLootVisible = FALSE;
@@ -6444,41 +7463,34 @@ void RenderOS0IngameUI()
 	if (!gTutorialActive && gBagVisible)
 		CaptureAnimatedMercPreview(gInventorySoldier ?
 			gInventorySoldier : GetSelectedMan());
-	if (!gTutorialActive)
-	{
-		DrawArtworkBrand();
-	}
-	if (gBagVisible) DrawBag();
-	if (!gTutorialActive)
-	{
-		DrawSectorPanel();
-		if (gLootVisible && gContentsMode == ContentsMode::WORLD) DrawLootMode();
-	}
+	if (!gTutorialActive) DrawArtworkBrand();
 	DrawWorldSelection();
-	DrawExplodedEquipment();
-	DrawItemTransferIntents();
+	DrawNearbyInteractionHints();
 	DrawImpactParticles();
-	DrawOrb();
-	DrawToolbox();
-	DrawActionMenu();
-	DrawHoverInspector();
-	DrawContextMenu();
-	DrawGodIconLibrary();
-	DrawAssetCatalog();
-	DrawStackSplitDialog();
-	if (gpItemPointer) SetMouseCursorFromCurrentItem();
+	if (!gAimAutoCollapsed)
+	{
+		DrawActionMenu();
+		// All registered windows now share one z-order. World-attached effects
+		// stay below them; newly focused/modal windows therefore cannot be painted
+		// underneath an older hard-coded draw call.
+		DrawManagedWindows();
+		// The held-item relation is a cursor projection rather than a window and
+		// remains immediately visible above the selected destination. Modals keep
+		// exclusive ownership of the frame.
+		if (!gStackSplitVisible && !gAssetCatalogVisible)
+			DrawItemTransferIntents();
+		DrawOrb();
+	}
+	RefreshHeldItemCursor();
 
 	// The tactical renderer uses dirty rectangles. A full refresh while moving
 	// prevents the "hall of mirrors" trails visible in the previous prototype.
-	BOOLEAN floatingPanelDragging = FALSE;
-	for (FloatingPanel const& panel : gFloatingPanels)
-		floatingPanelDragging |= panel.dragging;
+	const BOOLEAN managedWindowDragging = gWindowMovedThisFrame;
 	const BOOLEAN equipmentMoving = gEquipmentExplodedVisible &&
 		gEquipmentSoldier &&
 		((gAnimControl[gEquipmentSoldier->usAnimState].uiFlags & ANIM_MOVING) ||
 		 gfScrollPending || g_scroll_inertia);
-	if (gTutorialActive || gContextVisible || gBagDragging || floatingPanelDragging ||
-		CarryState().active() || equipmentMoving)
+	if (managedWindowDragging || CarryState().active() || equipmentMoving)
 		SetRenderFlags(RENDER_FLAG_FULL);
 }
 
@@ -6488,10 +7500,17 @@ BOOLEAN OS0CreatorIsActive()
 	return gInitialized && gTutorialActive;
 }
 
+BOOLEAN OS0BlocksWorldInputAt(INT16 const screenX, INT16 const screenY)
+{
+	return gInitialized &&
+		gUIRuntime.windowManager().blocksWorldInputAt(screenX, screenY);
+}
+
 
 void OS0OpenCharacterPanel(SOLDIERTYPE* soldier)
 {
 	if (!soldier || GetJA2Clock() < gPanelInteractionGuardUntil) return;
+	InteractionMode().beginInteraction(OS0InteractionSurface::EQUIPMENT);
 	CloseContextMenu();
 	gInspectedSoldier = soldier;
 	gContentsMode = ContentsMode::SOLDIER;
@@ -6501,7 +7520,7 @@ void OS0OpenCharacterPanel(SOLDIERTYPE* soldier)
 	if (soldier->bTeam == OUR_TEAM)
 	{
 		gInventorySoldier = soldier;
-		gBagVisible = TRUE;
+		gUIRuntime.show(OS0UIPanel::INVENTORY);
 	}
 	gInventoryVisible = contentsAvailable;
 	gLootVisible = FALSE;
@@ -6521,7 +7540,7 @@ void OS0ExecuteCharacterQuickAction(SOLDIERTYPE* soldier,
 		if (gDebugAssetLibrarySector != gWorldSector.AsByte() ||
 			gDebugAssetLibraryTileset != static_cast<INT16>(giCurrentTilesetID))
 			RebuildDebugAssetLibrary();
-		gGodLibraryVisible = TRUE;
+		gUIRuntime.show(OS0UIPanel::ASSET_LIBRARY);
 		PositionBagRegions();
 		SetBagRegionsEnabled(TRUE);
 		SetRenderFlags(RENDER_FLAG_FULL);
@@ -6575,6 +7594,8 @@ BOOLEAN OS0SelectWorldObject(SOLDIERTYPE* target, GridNo gridNo,
 	CloseContextMenu();
 	if (target)
 	{
+		InteractionMode().beginInteraction(target->bTeam == OUR_TEAM ?
+			OS0InteractionSurface::EQUIPMENT : OS0InteractionSurface::ACTIONS);
 		gItemDetailsVisible = FALSE;
 		gInspectedSoldier = target;
 		gInspectedGridNo = NOWHERE;
@@ -6596,6 +7617,7 @@ BOOLEAN OS0SelectWorldObject(SOLDIERTYPE* target, GridNo gridNo,
 	const BOOLEAN hasItems = GetItemPool(gridNo, level) != nullptr;
 	const BOOLEAN hasAsset = tileIndex < NUMBEROFTILES;
 	if (!hasItems && !hasAsset) return FALSE;
+	InteractionMode().beginInteraction(OS0InteractionSurface::ENVIRONMENT);
 	gContextTitle = hasAsset ? DescribeWorldAsset(gridNo, level, tileIndex).displayName :
 		(hasItems ? "GROUND ITEMS" : "WORLD ASSET");
 	const BOOLEAN sameWorldSelection =
@@ -6608,6 +7630,7 @@ BOOLEAN OS0SelectWorldObject(SOLDIERTYPE* target, GridNo gridNo,
 	gInspectedGridNo = gridNo;
 	gInspectedLevel = level;
 	gInspectedTileIndex = tileIndex;
+	RefreshEnvironmentTarget(gridNo, level, tileIndex);
 	StartExplodedView(gridNo, tileIndex, TRUE);
 	gLootGridNo = gridNo;
 	gLootLevel = level;
@@ -6646,13 +7669,13 @@ void OS0HoverWorldObject(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 		gHoverCursorGridNo = gridNo;
 		gHoverCursorLevel = level;
 		gHoverCursorTileIndex = tileIndex;
-		if (!CarryState().active())
+		gHoverSuggestedAction = ContextAction::COUNT;
+		if (InteractionMode().nearbyScanEnabled() && !CarryState().active())
 		{
-			std::array<ContextAction, 6> actions{};
+			std::array<ContextAction, 12> actions{};
 			if (BuildContextCursorActions(target, gridNo, level, tileIndex,
-				actions) > 0 && CursorState().action != ContextAction::ATTACK &&
-				actions[0] != CursorState().action)
-				ApplyCursorTool(actions[0]);
+				actions) > 0)
+				gHoverSuggestedAction = actions[0];
 		}
 	}
 	// This relation is evaluated every frame, not only when the world hover key
@@ -6695,24 +7718,30 @@ void OS0HoverWorldObject(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 
 	if (target)
 	{
+		const ContextAction displayAction =
+			gHoverSuggestedAction != ContextAction::COUNT ?
+			gHoverSuggestedAction : CursorState().action;
 		gHoverDebugDetail.clear();
 		gHoverTitle = target->name;
 		gHoverDetail = gpItemPointer ?
 			ST::format("{} -> {} / CHOOSE SLOT",
 				GCM->getItem(gpItemPointer->usItem)->getName(), target->name) :
 			ST::format("{}  HP {}/{}  {}",
-				ContextActionName(CursorState().action), target->bLife, target->bLifeMax,
+				ContextActionName(displayAction), target->bLife, target->bLifeMax,
 				target->bTeam == OUR_TEAM ? "OPERATOR" : "CONTACT");
 	}
 	else if (pool && pool->iItemIndex >= 0 &&
 		static_cast<size_t>(pool->iItemIndex) < gWorldItems.size())
 	{
+		const ContextAction displayAction =
+			gHoverSuggestedAction != ContextAction::COUNT ?
+			gHoverSuggestedAction : CursorState().action;
 		gHoverDebugDetail.clear();
 		WORLDITEM const& worldItem = GetWorldItem(pool->iItemIndex);
 		gHoverTitle = worldItem.o.usItem != NOTHING ?
 			GCM->getItem(worldItem.o.usItem)->getName() : "GROUND ITEMS";
-		gHoverDetail = ST::format("{}  LMB EXECUTE  MMB CYCLE",
-			ContextActionName(CursorState().action));
+		gHoverDetail = ST::format("{}  CLICK ICON / MMB CYCLE",
+			ContextActionName(displayAction));
 	}
 	else
 	{
@@ -6757,12 +7786,14 @@ void OS0ClearWorldHover()
 	gHoverCursorLevel = 0;
 	gHoverCursorTileIndex = NO_TILE;
 	gHoverCursorHeldItem = NOTHING;
+	gHoverSuggestedAction = ContextAction::COUNT;
 }
 
 void OS0OpenContextMenu(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 	UINT16 tileIndex, INT16 screenX, INT16 screenY)
 {
 	if (GetJA2Clock() < gPanelInteractionGuardUntil) return;
+	InteractionMode().beginInteraction(OS0InteractionSurface::ACTIONS);
 	CloseContextMenu();
 	// RMB owns a transient interaction state. Suspend persistent aiming first;
 	// otherwise the aim auto-collapse closes the newly created fan in this frame.
@@ -6855,21 +7886,19 @@ void OS0OpenContextMenu(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 		gContextTileIndex = tileIndex;
 		ITEM_POOL* const pool = hasItems ? GetItemPool(gridNo, level) : nullptr;
 		gContextWorldItemIndex = pool ? pool->iItemIndex : -1;
-		STRUCTURE const* const structure = hasAsset ?
-			WorldStructureAt(gridNo, level, tileIndex) : nullptr;
 		gContextTitle = hasAsset ? DescribeWorldAsset(gridNo, level, tileIndex).displayName :
 			(hasItems ? "GROUND ITEMS" : "WORLD ASSET");
-		const BOOLEAN near = IsInspectedWorldAssetNear();
-		AddContextEntry(ContextAction::INSPECT, "INSPECT / INFO");
-		if (hasAsset)
-			AddContextEntry(ContextAction::CATALOG, "GOD / CATALOG ASSET");
-		if (structure && structure->fFlags & STRUCTURE_OPENABLE &&
-			!(structure->fFlags & STRUCTURE_ANYDOOR))
-			AddContextEntry(ContextAction::CONTENTS, "OPEN CONTENTS", near);
+		OS0EnvironmentActionFacts const facts = BuildEnvironmentFacts(gridNo,
+			level, tileIndex, selected);
+		for (OS0ResolvedAction const& resolved :
+			ResolveOS0EnvironmentActions(facts))
+		{
+			AddContextEntry(resolved.action,
+				EnvironmentActionLabel(resolved.action, facts, gridNo, level,
+					tileIndex), resolved.enabled);
+		}
 		if (hasItems)
 		{
-			AddContextEntry(ContextAction::PICK_UP,
-				near ? "PICK UP" : "APPROACH & PICK UP");
 			if (selected && gContextWorldItemIndex >= 0 &&
 				static_cast<size_t>(gContextWorldItemIndex) < gWorldItems.size())
 			{
@@ -6877,45 +7906,13 @@ void OS0OpenContextMenu(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 				if (worldItem.fExists && worldItem.o.usItem != NOTHING &&
 					OS0PreferredEquipmentSlot(selected, worldItem.o) != NO_SLOT)
 					AddContextEntry(ContextAction::EQUIP_ITEM,
-						"EQUIP DIRECTLY", near &&
+						"EQUIP DIRECTLY", facts.near &&
 						OS0CanAcceptCarriedObject(selected, worldItem.o));
 			}
 		}
-		if (hasAsset && structure)
-		{
-			AddContextEntry(ContextAction::CARRY, "CARRY / REPOSITION",
-				near && IsInspectedWorldAssetMovable());
-			AssetCatalogRecord const* const catalog = OS0FindAssetCatalogRecordConst(
-				static_cast<INT16>(giCurrentTilesetID),
-				CanonicalAssetTileIndex(gridNo, level, tileIndex));
-			AddContextEntry(ContextAction::BUILD,
-				catalog && catalog->buildable ?
-					"BLUEPRINT / PLACEABLE" : "BUILD / SALVAGE REQUIREMENTS");
-		}
-		if (hasAsset)
-		{
-			SalvageProfile const salvage = DescribeWorldAsset(gridNo, level, tileIndex);
-			if (salvage.salvageable)
-			{
-				const FieldToolKind required = RequiredFieldTool(gridNo, level,
-					tileIndex);
-				const BOOLEAN tool = HasFieldTool(selected, required);
-				AddContextEntry(ContextAction::SALVAGE,
-					!tool ? ST::format("NEED {}", FieldToolName(required)) :
-					ST::format("DISMANTLE / +{} {}", salvage.amount,
-						OS0ResourceName(salvage.resource)),
-					CanSalvageWorldAsset(selected, gridNo, level, tileIndex));
-			}
-		}
-		if (level == 0 && gpWorldLevelData[gridNo].pLandHead && !structure)
-		{
-			const BOOLEAN tool = HasDiggingTool(selected);
-			const BOOLEAN diggable = CanDigTerrainAt(selected, gridNo);
-			AddContextEntry(ContextAction::DIG,
-				!tool ? "DIG / NEED FIELD SHOVEL" :
-				diggable ? "DIG / REMOVE SURFACE" : "DIG / GROUND EXPOSED",
-				diggable);
-		}
+		RefreshEnvironmentTarget(gridNo, level, tileIndex);
+		gUIRuntime.windowManager().show(
+			gUIRuntime.managedId(FloatingPanelId::ENVIRONMENT));
 	}
 	else if (hasTerrain)
 	{
@@ -6932,13 +7929,16 @@ void OS0OpenContextMenu(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 		gContentsMode = ContentsMode::WORLD;
 		gContextTitle = TerrainPhysicsName(GetTerrainType(gridNo));
 		CaptureInspectorPreview(gridNo, 0);
-		AddContextEntry(ContextAction::INSPECT, "INSPECT / GROUND");
-		const BOOLEAN tool = HasDiggingTool(selected);
-		const BOOLEAN diggable = CanDigTerrainAt(selected, gridNo);
-		AddContextEntry(ContextAction::DIG,
-			!tool ? "DIG / NEED FIELD SHOVEL" :
-			diggable ? "DIG / REMOVE SURFACE" : "DIG / GROUND EXPOSED",
-			diggable);
+		OS0EnvironmentActionFacts const facts = BuildEnvironmentFacts(gridNo,
+			0, NO_TILE, selected);
+		for (OS0ResolvedAction const& resolved :
+			ResolveOS0EnvironmentActions(facts))
+			AddContextEntry(resolved.action,
+				EnvironmentActionLabel(resolved.action, facts, gridNo, 0, NO_TILE),
+				resolved.enabled);
+		RefreshEnvironmentTarget(gridNo, 0, NO_TILE);
+		gUIRuntime.windowManager().show(
+			gUIRuntime.managedId(FloatingPanelId::ENVIRONMENT));
 	}
 	else if (selected)
 	{
@@ -6988,7 +7988,8 @@ void OS0OpenContextMenu(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 			"FIELD SHOVEL READY" : "FIELD SHOVEL MISSING";
 		gHoverVisible = TRUE;
 	}
-	gFloatingPanels[static_cast<size_t>(FloatingPanelId::INSPECTOR)].visible = TRUE;
+	gUIRuntime.windowManager().show(
+		gUIRuntime.managedId(FloatingPanelId::INSPECTOR));
 
 	if (!gObjectActionFanVisible)
 	{
@@ -6999,7 +8000,7 @@ void OS0OpenContextMenu(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 		gContextY = std::clamp<INT16>(screenY, 0,
 			std::max<INT16>(0, gsVIEWPORT_END_Y - height));
 	}
-	gContextVisible = TRUE;
+	gUIRuntime.show(OS0UIPanel::CONTEXT);
 	PositionContextRegions();
 	SetBagRegionsEnabled(TRUE);
 	SetRenderFlags(RENDER_FLAG_FULL);
@@ -7008,7 +8009,7 @@ void OS0OpenContextMenu(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 void OS0CycleCursorAction(SOLDIERTYPE* target, GridNo gridNo, UINT8 level, UINT16 tileIndex)
 {
 	tileIndex = ResolveWorldTileIndex(gridNo, level, tileIndex);
-	std::array<ContextAction, 6> available{};
+	std::array<ContextAction, 12> available{};
 	const size_t count = BuildContextCursorActions(target, gridNo, level,
 		tileIndex, available);
 	if (count == 0) return;
@@ -7037,6 +8038,8 @@ void OS0CancelCursorAction()
 	}
 	CursorState().action = ContextAction::MOVE;
 	CursorState().attackMode = FALSE;
+	InteractionMode().selectSurface(OS0InteractionSurface::ACTIONS);
+	if (!InteractionMode().nearbyScanEnabled()) InteractionMode().returnToNormal();
 	ClearWorldMoveState();
 	guiPendingOverrideEvent = A_CHANGE_TO_MOVE;
 	SetRenderFlags(RENDER_FLAG_FULL);
@@ -7050,16 +8053,17 @@ BOOLEAN OS0HandleRealtimeControlKey(UINT32 key, UINT32 keyState)
 		OS0CancelCursorAction();
 		return TRUE;
 	}
-	const BOOLEAN directControlKey = key == 'w' || key == 'W' ||
-		key == 'a' || key == 'A' || key == 's' || key == 'S' ||
-		key == 'd' || key == 'D' || key == 'q' || key == 'Q' ||
-		key == 'e' || key == 'E';
-	if (!directControlKey) return FALSE;
+	if (!OS0IsDirectControlKey(key)) return FALSE;
 	// Alt/Ctrl combinations remain engine shortcuts. Shift is intentionally part
-	// of direct control and promotes a standing movement segment to RUNNING.
+	// of direct control and promotes a standing movement segment to RUNNING. Its
+	// own key-down is consumed as a control state, not routed as a legacy modifier.
 	if (keyState & (ALT_DOWN | CTRL_DOWN)) return FALSE;
-	OS0UpdateDirectControl(GetSelectedMan(), !DirectControlBlocked(),
-		CursorState().attackMode);
+	const BOOLEAN enabled = !DirectControlBlocked() && GetSelectedMan();
+	if (enabled)
+		OS0UpdateDirectControl(GetSelectedMan(), TRUE,
+			CursorState().attackMode);
+	// OS0 owns these keys for the whole tactical session. A blocked context/modal
+	// pauses movement but must not leak A/S/D/E back into unrelated JA2 shortcuts.
 	return TRUE;
 }
 
@@ -7138,9 +8142,23 @@ BOOLEAN OS0HandleCursorAction(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 	// A panel opened by a double-click can receive a trailing button-up from the
 	// same physical gesture. Consume it before vanilla UI code sees it.
 	if (GetJA2Clock() < gPanelInteractionGuardUntil) return TRUE;
+	if (OS0GetRealtimeEditorUI().active())
+	{
+		tileIndex = ResolveWorldTileIndex(gridNo, level, tileIndex);
+		return OS0GetRealtimeEditorUI().handleWorldClick(target, gridNo,
+			level, tileIndex);
+	}
 	if (gpItemPointer && OS0HandleHeldItemAction(target, gridNo, level, tileIndex))
 		return TRUE;
 	tileIndex = ResolveWorldTileIndex(gridNo, level, tileIndex);
+	if (CursorState().action == ContextAction::MOVE)
+	{
+		// Deliberately yield to JA2's mature click-path owner. Hover no longer
+		// replaces MOVE unless the explicit nearby-scan mode is active, so LMB can
+		// once again select a full distant path instead of a one-tile OS0 action.
+		if (!InteractionMode().nearbyScanEnabled()) InteractionMode().returnToNormal();
+		return FALSE;
+	}
 	if (CursorState().action == ContextAction::ATTACK)
 	{
 		SOLDIERTYPE* const selected = GetSelectedMan();
@@ -7180,7 +8198,27 @@ BOOLEAN OS0HandleCursorAction(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 		OS0SelectWorldObject(target, gridNo, level, tileIndex);
 		return hasInspectable;
 	}
-	if (CursorState().action != ContextAction::CARRY) return FALSE;
+	if (CursorState().action == ContextAction::DIG)
+	{
+		SOLDIERTYPE* const selected = GetSelectedMan();
+		if (selected && DigTerrainAt(selected, gridNo, tileIndex))
+		{
+			RefreshEnvironmentTarget(gridNo, 0, NO_TILE);
+			RecordFeedbackEvent(ST::format("DIG / GRID {}", gridNo));
+		}
+		return TRUE;
+	}
+	if (CursorState().action == ContextAction::SALVAGE)
+	{
+		SOLDIERTYPE* const selected = GetSelectedMan();
+		if (selected && SalvageWorldAsset(selected, gridNo, level, tileIndex))
+		{
+			RefreshEnvironmentTarget(gridNo, level, NO_TILE);
+			RecordFeedbackEvent(ST::format("DISMANTLE / GRID {}", gridNo));
+		}
+		return TRUE;
+	}
+	if (!OS0IsManipulationAction(CursorState().action)) return FALSE;
 	if (gridNo < 0 || gridNo >= WORLD_MAX || tileIndex >= NUMBEROFTILES)
 		return TRUE;
 
@@ -7195,7 +8233,9 @@ BOOLEAN OS0HandleCursorAction(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 
 	ClearWorldMoveState();
 	OS0CarryState& carry = CarryState();
-	if (!carry.begin(gridNo, level, tileIndex, Soldier2ID(selected))) return TRUE;
+	OS0CarryMode const mode = CarryModeForAction(CursorState().action);
+	if (!carry.begin(gridNo, level, tileIndex, Soldier2ID(selected), mode))
+		return TRUE;
 	if (STRUCTURE const* const moving = WorldStructureAt(gridNo, 0, tileIndex))
 	{
 		WORLD_PHYSICS_PROFILE const physics = GetWorldPhysicsProfile(moving);
@@ -7223,6 +8263,7 @@ void OS0OpenWorldContainer(GridNo gridNo, UINT8 level, UINT16 tileIndex)
 		// the container projection; double-click picks the exact sprite up.
 		return;
 	}
+	InteractionMode().beginInteraction(OS0InteractionSurface::ENVIRONMENT);
 	CloseContextMenu();
 	gContextTitle = tileIndex < NUMBEROFTILES ?
 		DescribeWorldAsset(gridNo, level, tileIndex).displayName : "GROUND ITEMS";
@@ -7253,6 +8294,7 @@ void OS0OpenWorldContainer(GridNo gridNo, UINT8 level, UINT16 tileIndex)
 	if (gLootVisible) gLootIgnoreInputUntil = GetJA2Clock() + 300;
 
 	CaptureInspectorPreview(gridNo, level);
+	RefreshLootWorldItems();
 	PositionBagRegions();
 	SetBagRegionsEnabled(TRUE);
 	SetRenderFlags(RENDER_FLAG_FULL);
@@ -7344,11 +8386,47 @@ BOOLEAN OS0HandlePendingWorldMove(GridNo destination)
 		return TRUE;
 	}
 
+	const INT16 sourceDistance = PythSpacesAway(selected->sGridNo, carry.source);
+	const INT16 destinationDistance =
+		PythSpacesAway(selected->sGridNo, destination);
+	if (carry.mode == OS0CarryMode::PUSH)
+	{
+		const UINT8 away = GetDirectionFromGridNo(carry.source, selected);
+		const GridNo required = NewGridNo(carry.source, DirectionInc(away));
+		if (destination != required) return TRUE;
+	}
+	else if (carry.mode == OS0CarryMode::PULL)
+	{
+		if (PythSpacesAway(carry.source, destination) > 1 ||
+			destinationDistance >= sourceDistance) return TRUE;
+	}
+	else if (carry.mode == OS0CarryMode::THROW)
+	{
+		WORLD_PHYSICS_PROFILE const physics = GetWorldPhysicsProfile(structure);
+		const INT16 maxRange = static_cast<INT16>(std::clamp<INT32>(
+			2 + selected->bStrength / 20 - static_cast<INT32>(physics.massKg / 15.0f),
+			2, 8));
+		if (!carry.lifted || PythSpacesAway(carry.source, destination) > maxRange)
+			return TRUE;
+	}
+
 	// Validate before starting the walk. Invalid tiles leave the crate attached
 	// to the cursor, so the player can simply choose another destination.
 	if (!OkayToAddStructureToWorld(destination, carry.sourceLevel,
 		structure->pDBStructureRef, INVALID_STRUCTURE_ID)) return TRUE;
-	const GridNo actionGrid = FindCarryActionGrid(selected, destination);
+	GridNo actionGrid = FindCarryActionGrid(selected, destination);
+	if (carry.mode == OS0CarryMode::PUSH || carry.mode == OS0CarryMode::THROW)
+		actionGrid = selected->sGridNo;
+	else if (carry.mode == OS0CarryMode::PULL &&
+		destination == selected->sGridNo)
+	{
+		const UINT8 awayFromSource = OppositeDirection(
+			GetDirectionFromGridNo(carry.source, selected));
+		actionGrid = NewGridNo(selected->sGridNo, DirectionInc(awayFromSource));
+		if (actionGrid == selected->sGridNo ||
+			!NewOKDestination(selected, actionGrid, TRUE, selected->bLevel))
+			return TRUE;
+	}
 	if (actionGrid == NOWHERE) return TRUE;
 
 	if (!carry.beginWalk(destination, carry.sourceLevel, actionGrid)) return TRUE;
@@ -7362,7 +8440,7 @@ BOOLEAN OS0HandlePendingWorldMove(GridNo destination)
 		carry.destination = NOWHERE;
 		carry.actionGrid = NOWHERE;
 		carry.phase = OS0CarryPhase::TARGETING;
-		CursorState().action = ContextAction::CARRY;
+		CursorState().action = CarryModeAction(carry.mode);
 		guiPendingOverrideEvent = M_CHANGE_TO_HANDMODE;
 	}
 	SetRenderFlags(RENDER_FLAG_FULL);

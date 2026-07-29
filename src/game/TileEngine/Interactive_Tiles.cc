@@ -35,6 +35,7 @@
 #include "Explosion_Control.h"
 #include "Text.h"
 #include "GameSettings.h"
+#include "Game_Clock.h"
 #include "Environment.h"
 #include "Debug.h"
 #include "UILayout.h"
@@ -43,6 +44,8 @@
 #include "GameInstance.h"
 #include "ContentManager.h"
 #include "ShippingDestinationModel.h"
+
+#include <cstdlib>
 
 #define MAX_INTTILE_STACK 10
 
@@ -614,11 +617,76 @@ BOOLEAN FindOS0WorldAssetAtScreen(GridNo* gridNo, UINT8 level,
 	UINT16* tileIndex, INT16 screenX, INT16 screenY)
 {
 	if (!gridNo || !tileIndex || *gridNo < 0 || *gridNo >= WORLD_MAX) return FALSE;
+	struct RecentAssetHit
+	{
+		GridNo hintGrid = NOWHERE;
+		UINT8 level = 0;
+		INT16 screenX = 0;
+		INT16 screenY = 0;
+		INT16 renderX = 0;
+		INT16 renderY = 0;
+		GridNo resultGrid = NOWHERE;
+		UINT16 resultTile = NO_TILE;
+		GridNo hitGrid = NOWHERE;
+		UINT16 hitTile = NO_TILE;
+		UINT32 checkedAt = 0;
+		BOOLEAN valid = FALSE;
+		BOOLEAN found = FALSE;
+	};
+	static RecentAssetHit recent;
+	const GridNo hintGrid = *gridNo;
 	OS0MapDisplayToWorldScreen(&screenX, &screenY);
+	const UINT32 now = GetJA2Clock();
+	const BOOLEAN sameProjection = recent.valid && recent.hintGrid == hintGrid &&
+		recent.level == level && recent.renderX == gsRenderCenterX &&
+		recent.renderY == gsRenderCenterY;
+	if (sameProjection && recent.found && recent.hitGrid >= 0 &&
+		recent.hitGrid < WORLD_MAX)
+	{
+		INT16 cellX;
+		INT16 cellY;
+		ConvertGridNoToCellXY(recent.hitGrid, &cellX, &cellY);
+		auto stillHits = [&](LEVELNODE const* node) -> BOOLEAN
+		{
+			for (; node; node = node->pNext)
+			{
+				if (node->usIndex != recent.hitTile) continue;
+				SGPRect rect;
+				GetLevelNodeScreenRect(*node, rect, cellX, cellY,
+					recent.hitGrid);
+				return IsPointInScreenRect(screenX, screenY, rect) &&
+					RefinePointCollisionOnStruct(screenX, screenY,
+						rect.iLeft, rect.iBottom, *node);
+			}
+			return FALSE;
+		};
+		MAP_ELEMENT const& map = gpWorldLevelData[recent.hitGrid];
+		if (stillHits(map.pObjectHead) ||
+			(level == 0 ? stillHits(map.pStructHead) : stillHits(map.pOnRoofHead)))
+		{
+			recent.screenX = screenX;
+			recent.screenY = screenY;
+			recent.checkedAt = now;
+			*gridNo = recent.resultGrid;
+			*tileIndex = recent.resultTile;
+			return TRUE;
+		}
+	}
+	// Empty ground is by far the common case. Coalesce sub-pixel motion events,
+	// but never hold a positive hit without re-testing its actual sprite mask.
+	if (sameProjection && !recent.found &&
+		std::abs(static_cast<INT32>(screenX - recent.screenX)) <= 3 &&
+		std::abs(static_cast<INT32>(screenY - recent.screenY)) <= 3 &&
+		static_cast<UINT32>(now - recent.checkedAt) <= 45)
+	{
+		return FALSE;
+	}
 	const INT16 hintX = static_cast<INT16>(*gridNo % WORLD_COLS);
 	const INT16 hintY = static_cast<INT16>(*gridNo / WORLD_COLS);
 	GridNo bestGrid = NOWHERE;
 	UINT16 bestTile = NO_TILE;
+	GridNo bestHitGrid = NOWHERE;
+	UINT16 bestHitTile = NO_TILE;
 	INT32 bestScore = INT32_MIN;
 
 	auto scanLayer = [&](LEVELNODE const* node, GridNo candidateGrid,
@@ -645,6 +713,8 @@ BOOLEAN FindOS0WorldAssetAtScreen(GridNo* gridNo, UINT8 level,
 			bestScore = score;
 			bestGrid = candidateGrid;
 			bestTile = node->usIndex;
+			bestHitGrid = candidateGrid;
+			bestHitTile = node->usIndex;
 			if (node->pStructureData)
 			{
 				STRUCTURE* const base = FindBaseStructure(node->pStructureData);
@@ -679,7 +749,10 @@ BOOLEAN FindOS0WorldAssetAtScreen(GridNo* gridNo, UINT8 level,
 				scanLayer(map.pOnRoofHead, candidate, cellX, cellY, 2);
 		}
 	}
-	if (bestGrid == NOWHERE || bestTile >= NUMBEROFTILES) return FALSE;
+	recent = { hintGrid, level, screenX, screenY, gsRenderCenterX,
+		gsRenderCenterY, bestGrid, bestTile, bestHitGrid, bestHitTile, now, TRUE,
+		bestGrid != NOWHERE && bestTile < NUMBEROFTILES };
+	if (!recent.found) return FALSE;
 	*gridNo = bestGrid;
 	*tileIndex = bestTile;
 	return TRUE;

@@ -14,11 +14,11 @@
 #include "Weapons.h"
 
 const std::array<ItemTransferIntentSpec, 5> gOS0ItemTransferIntents{{
-	{ ItemTransferIntent::PRIMARY_HAND,   "HAND 1 / PRIMARY", 24, -80, -38 },
-	{ ItemTransferIntent::SECONDARY_HAND, "HAND 2 / OFF HAND", 33,  48, -38 },
-	{ ItemTransferIntent::BODY,           "EQUIP ON BODY",     12, -17,-106 },
-	{ ItemTransferIntent::PACK,           "PUT IN PACK",       18,  48, -80 },
-	{ ItemTransferIntent::DROP,           "DROP AT FEET",      39, -80, -80 }
+	{ ItemTransferIntent::PRIMARY_HAND,   "HAND 1 / PRIMARY", OS0UIIcon::TARGET, -80, -38 },
+	{ ItemTransferIntent::SECONDARY_HAND, "HAND 2 / OFF HAND", OS0UIIcon::PUNCH,  48, -38 },
+	{ ItemTransferIntent::BODY,           "EQUIP ON BODY", OS0UIIcon::EXAMINE, -17,-106 },
+	{ ItemTransferIntent::PACK,           "PUT IN PACK", OS0UIIcon::HAND, 48, -80 },
+	{ ItemTransferIntent::DROP,           "DROP AT FEET", OS0UIIcon::WALK, -80, -80 }
 }};
 
 const char* OS0InventorySlotName(INT8 slot)
