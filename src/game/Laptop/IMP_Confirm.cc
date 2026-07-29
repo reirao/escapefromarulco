@@ -1,7 +1,7 @@
 /*
  * Escape from Arulco modification notice:
- * Modified from JA2 Stracciatella, 2026-07-24 through 2026-07-28.
- * See /MODIFICATIONS.md and the SFI source-code license agreement.
+ * Modified from JA2 Stracciatella, 2026-07-24 through 2026-07-29.
+ * See MODIFICATIONS.md and the SFI source-code license agreement.
  */
 
 #include "CharProfile.h"
@@ -35,7 +35,6 @@
 #include "GameLoop.h"
 #include "ScreenIDs.h"
 #include "StrategicMap.h"
-#include "OS0_CreatorScreen.h"
 #include "Overhead.h"
 #include "Player_Command.h"
 #include "Tactical_Save.h"
@@ -230,7 +229,6 @@ void FinalizeIMPCharacter()
 	// The sandbox starts as a normal live tactical sector, not as JA2's
 	// opening helicopter sequence.
 	gTacticalStatus.fDidGameJustStart = FALSE;
-	RequestOS0CreatorExit();
 	SetLaptopExitScreen(GAME_SCREEN);
 	SetCurrentWorldSector(g_merc_arrive_sector);
 	SetPendingNewScreen(GAME_SCREEN);

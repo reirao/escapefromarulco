@@ -1,7 +1,3 @@
-# Escape from Arulco modification notice.
-# Modified from JA2 Stracciatella, 2026-07-24 through 2026-07-28.
-# See /MODIFICATIONS.md and the SFI source-code license agreement.
-
 file(GLOB LOCAL_JA2_HEADERS ${CMAKE_CURRENT_SOURCE_DIR}/*.h)
 
 set(LOCAL_JA2_SOURCES
@@ -51,6 +47,18 @@ set(LOCAL_JA2_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/Militia_Control.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/Morale.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/OppList.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/OS0_ActionRegistry.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/OS0_AssetCatalogService.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/OS0_AssetDamageSystem.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/OS0_CoverOrderSystem.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/OS0_CreatorModel.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/OS0_DirectControl.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/OS0_ItemRelations.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/OS0_SectorEconomySystem.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/OS0_TacticalSession.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/OS0_UIRuntime.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/OS0_ViewportInput.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/OS0_WorldInteractionSystem.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/OS0_IngameUI.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/Overhead.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/PathAI.cc
@@ -88,6 +96,7 @@ if (WITH_UNITTESTS)
         ${LOCAL_JA2_SOURCES}
         ${CMAKE_CURRENT_SOURCE_DIR}/LoadSaveMercProfile_unittest.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/LoadSaveSoldierType_unittest.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/OS0_Systems_unittest.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/Weapons_unittest.cc
     )
 endif()

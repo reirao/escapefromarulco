@@ -1,7 +1,7 @@
 /*
  * Escape from Arulco modification notice:
  * Modified from JA2 Stracciatella on 2026-07-28.
- * See /MODIFICATIONS.md and the SFI source-code license agreement.
+ * See MODIFICATIONS.md and the SFI source-code license agreement.
  */
 
 #ifndef ITEM_TYPES_H

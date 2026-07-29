@@ -1,7 +1,7 @@
 /*
  * Escape from Arulco modification notice:
- * Modified from JA2 Stracciatella, 2026-07-24 through 2026-07-28.
- * See /MODIFICATIONS.md and the SFI source-code license agreement.
+ * Modified from JA2 Stracciatella, 2026-07-24 through 2026-07-29.
+ * See MODIFICATIONS.md and the SFI source-code license agreement.
  */
 
 #include "CharProfile.h"
@@ -288,7 +288,7 @@ void HandleIMPAttributeSelection(void)
 	}
 	if (fSkillAtZeroWarning)
 	{
-		DoLapTopMessageBox(MSG_BOX_IMP_STYLE, pSkillAtZeroWarning, OS0_CREATOR_SCREEN, MSG_BOX_FLAG_YESNO, StatAtZeroBoxCallBack);
+		DoLapTopMessageBox(MSG_BOX_IMP_STYLE, pSkillAtZeroWarning, LAPTOP_SCREEN, MSG_BOX_FLAG_YESNO, StatAtZeroBoxCallBack);
 		fSkillAtZeroWarning = FALSE;
 	}
 }

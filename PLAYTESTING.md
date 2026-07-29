@@ -18,8 +18,12 @@ playtest in its own folder and point the launcher to the original game directory
 
 ## Suggested test pass
 
-1. Complete character creation using a custom name, attributes and two traits.
-2. Move the field-computer window, close it and reopen it from the computer icon.
+1. Start a fresh campaign and complete the single in-world creator using a custom
+   name, attributes and two traits. Verify no laptop creator or forced inventory opens.
+2. Scroll and zoom the world while the creator, command dock and movable windows are
+   visible. The dock must remain fixed and the mouse cursor must remain usable.
+   Also open Character, Inspector, Toolbox and Strategy from the bottom command dock;
+   move the three movable windows, reload and verify their positions are preserved.
 3. Hold the right mouse button over two different owned mercs. Verify the correct merc
    is selected and both graphical JA2 button frames appear.
 4. Click the star in the second frame. Verify the movable Asset Library opens first,

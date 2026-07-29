@@ -51,6 +51,11 @@ file(READ "version" BASE_SEMVER_VERSION)
 # Trim leading and trailing whitespace / newlines
 string(STRIP "${BASE_SEMVER_VERSION}" BASE_SEMVER_VERSION)
 
+# Escape from Arulco has its own playtest version. Keep the upstream engine
+# version independent so Stracciatella save/build compatibility remains clear.
+file(READ "escape-from-arulco-version" ESCAPE_FROM_ARULCO_VERSION)
+string(STRIP "${ESCAPE_FROM_ARULCO_VERSION}" ESCAPE_FROM_ARULCO_VERSION)
+
 include(semver-functions)
 semver_set(ja2-stracciatella_VERSION "${BASE_SEMVER_VERSION}-git")
 if (VERSION_TAG)
@@ -209,6 +214,7 @@ endif()
 
 add_dependencies(${JA2_BINARY} stracciatella)
 set_property(SOURCE ${CMAKE_SOURCE_DIR}/src/game/GameVersion.cc APPEND PROPERTY COMPILE_DEFINITIONS "GAME_VERSION=v${ja2-stracciatella_VERSION}")
+set_property(SOURCE ${CMAKE_SOURCE_DIR}/src/game/GameVersion.cc APPEND PROPERTY COMPILE_DEFINITIONS "ESCAPE_FROM_ARULCO_VERSION=${ESCAPE_FROM_ARULCO_VERSION}")
 
 
 macro(copy_assets_dir_to_ja2_binary_after_build DIR)

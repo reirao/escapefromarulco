@@ -1,3 +1,9 @@
+/*
+ * Escape from Arulco modification notice:
+ * Modified from JA2 Stracciatella, 2026-07-24 through 2026-07-29.
+ * See MODIFICATIONS.md and the SFI source-code license agreement.
+ */
+
 #include "Cursor_Control.h"
 #include "Debug.h"
 #include "Fade_Screen.h"
@@ -467,6 +473,19 @@ void RefreshScreen(void)
 	struct rect : SDL_Rect {
 		void operator+=(SDL_Rect const& r) { SDL_UnionRect(this, &r, this); }
 	} ScreenTextureUpdateRect{ MouseBackground };
+	BOOLEAN presentedScrollApplied = FALSE;
+	auto scrollPresentedViewport = [&]()
+	{
+		if (!scrolling || presentedScrollApplied) return;
+		ScrollJA2Background(gsScrollXIncrement, gsScrollYIncrement);
+		gsScrollXIncrement = 0;
+		gsScrollYIncrement = 0;
+		presentedScrollApplied = TRUE;
+		ScreenTextureUpdateRect += SDL_Rect{
+			gsVIEWPORT_START_X, gsVIEWPORT_WINDOW_START_Y,
+			gsVIEWPORT_END_X - gsVIEWPORT_START_X,
+			gsVIEWPORT_WINDOW_END_Y - gsVIEWPORT_WINDOW_START_Y };
+	};
 
 	if (gfForceFullScreenRefresh || guiDirtyRegionCount > 0 || guiDirtyRegionExCount > 0)
 	{
@@ -476,6 +495,12 @@ void RefreshScreen(void)
 		}
 		else
 		{
+			// Video scrolling shifts the already presented tactical viewport.  Fixed
+			// overlays are regular dirty regions rendered at screen coordinates, so
+			// they must be copied *after* that shift.  Copying them first made OS//0
+			// windows part of the scrolling background for one frame, producing the
+			// visible jump/duplicate trail while the camera moved.
+			if (!gfForceFullScreenRefresh) scrollPresentedViewport();
 			if (gfForceFullScreenRefresh)
 			{
 				SDL_BlitSurface(FrameBuffer, NULL, ScreenBuffer, NULL);
@@ -505,15 +530,19 @@ void RefreshScreen(void)
 				}
 			}
 		}
-		if (scrolling)
+		// A full refresh already copied the completely rendered current camera
+		// frame. Shifting ScreenBuffer afterwards also shifts fixed OS//0 windows
+		// and causes the one-frame jump seen during scrolling. Only the incremental
+		// path needs to reuse and shift the previously presented viewport.
+		if (gfForceFullScreenRefresh && scrolling)
 		{
-			ScrollJA2Background(gsScrollXIncrement, gsScrollYIncrement);
 			gsScrollXIncrement = 0;
 			gsScrollYIncrement = 0;
-			ScreenTextureUpdateRect += SDL_Rect{
-				gsVIEWPORT_START_X, gsVIEWPORT_WINDOW_START_Y,
-				gsVIEWPORT_END_X - gsVIEWPORT_START_X,
-				gsVIEWPORT_WINDOW_END_Y - gsVIEWPORT_WINDOW_START_Y };
+			presentedScrollApplied = TRUE;
+		}
+		else
+		{
+			scrollPresentedViewport();
 		}
 		gfIgnoreScrollDueToCenterAdjust = FALSE;
 	}

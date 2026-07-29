@@ -258,6 +258,17 @@ void InitializeTacticalInterface()
 void InitializeCurrentPanel()
 {
 	MoveRadarScreen( );
+	if (guiCurrentScreen == GAME_SCREEN)
+	{
+		// Tactical OS//0 owns the dedicated world viewport. The fixed command dock
+		// lives below gsVIEWPORT_END_Y and must never become part of camera scrolling.
+		// Legacy TEAM/SM panels may still exist for non-tactical screens, but are not
+		// allocated merely because a merc was selected in the live sector.
+		gsVIEWPORT_WINDOW_END_Y = gsVIEWPORT_END_Y;
+		gfPanelAllocated = FALSE;
+		HideLegacyTacticalInterfaceForOS0();
+		return;
+	}
 
 	switch( gsCurInterfacePanel )
 	{
@@ -364,9 +375,15 @@ void SetCurrentInterfacePanel(InterfacePanelKind const ubNewPanel)
 {
 	if(gfEnteringMapScreen)
 		return;
-	if (guiCurrentScreen == GAME_SCREEN && ubNewPanel == SM_PANEL)
+	if (guiCurrentScreen == GAME_SCREEN)
 	{
-		OS0OpenCharacterPanel(GetSelectedMan());
+		// Legacy callers use SM_PANEL as an implicit "open inventory" command.
+		// That coupling caused selection, dialogue, pickup and load transitions to
+		// pop OS//0 windows. Only explicit OS//0 actions may open character content.
+		if (gfPanelAllocated) ShutdownCurrentPanel();
+		gsCurInterfacePanel = TEAM_PANEL;
+		gsVIEWPORT_WINDOW_END_Y = gsVIEWPORT_END_Y;
+		HideLegacyTacticalInterfaceForOS0();
 		return;
 	}
 	if(gfPanelAllocated && gsCurInterfacePanel == ubNewPanel)
@@ -385,6 +402,11 @@ void SetCurrentInterfacePanel(InterfacePanelKind const ubNewPanel)
 
 void ToggleTacticalPanels( )
 {
+	if (guiCurrentScreen == GAME_SCREEN)
+	{
+		HideLegacyTacticalInterfaceForOS0();
+		return;
+	}
 	SetNewPanel(gsCurInterfacePanel == SM_PANEL ? 0 : GetSelectedMan());
 }
 

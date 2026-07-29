@@ -1,7 +1,7 @@
 /*
  * Escape from Arulco modification notice:
- * Modified from JA2 Stracciatella, 2026-07-24 through 2026-07-28.
- * See /MODIFICATIONS.md and the SFI source-code license agreement.
+ * Modified from JA2 Stracciatella, 2026-07-24 through 2026-07-29.
+ * See MODIFICATIONS.md and the SFI source-code license agreement.
  */
 
 #include "Directories.h"
@@ -237,17 +237,17 @@ static void BtnIMPMainPageBeginCallback(GUI_BUTTON *btn, UINT32 reason)
 		if (iCurrentProfileMode > 2)
 		{
 			// too far along, restart
-			DoLapTopMessageBox(MSG_BOX_IMP_STYLE, pImpPopUpStrings[1], OS0_CREATOR_SCREEN, MSG_BOX_FLAG_YESNO, BeginMessageBoxCallBack);
+			DoLapTopMessageBox(MSG_BOX_IMP_STYLE, pImpPopUpStrings[1], LAPTOP_SCREEN, MSG_BOX_FLAG_YESNO, BeginMessageBoxCallBack);
 		}
 		else
 		{
 			if (LaptopSaveInfo.iCurrentBalance < COST_OF_PROFILE)
 			{
-				DoLapTopMessageBox(MSG_BOX_IMP_STYLE, pImpPopUpStrings[3], OS0_CREATOR_SCREEN, MSG_BOX_FLAG_OK, BeginMessageBoxCallBack);
+				DoLapTopMessageBox(MSG_BOX_IMP_STYLE, pImpPopUpStrings[3], LAPTOP_SCREEN, MSG_BOX_FLAG_OK, BeginMessageBoxCallBack);
 			}
 			else if (NumberOfMercsOnPlayerTeam() >= 18)
 			{
-				DoLapTopMessageBox(MSG_BOX_IMP_STYLE, pImpPopUpStrings[5], OS0_CREATOR_SCREEN, MSG_BOX_FLAG_OK, BeginMessageBoxCallBack);
+				DoLapTopMessageBox(MSG_BOX_IMP_STYLE, pImpPopUpStrings[5], LAPTOP_SCREEN, MSG_BOX_FLAG_OK, BeginMessageBoxCallBack);
 			}
 			else
 			{
@@ -458,7 +458,7 @@ static void IMPMainPageNotSelectableBtnCallback(MOUSE_REGION* pRegion, UINT32 iR
 {
 	if(iReason & MSYS_CALLBACK_REASON_POINTER_UP)
 	{
-		DoLapTopMessageBox( MSG_BOX_IMP_STYLE, pImpPopUpStrings[ 4 ], OS0_CREATOR_SCREEN, MSG_BOX_FLAG_OK, BeginMessageBoxCallBack);
+		DoLapTopMessageBox( MSG_BOX_IMP_STYLE, pImpPopUpStrings[ 4 ], LAPTOP_SCREEN, MSG_BOX_FLAG_OK, BeginMessageBoxCallBack);
 	}
 }
 

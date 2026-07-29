@@ -1,8 +1,15 @@
+/*
+ * Escape from Arulco modification notice:
+ * Modified from JA2 Stracciatella on 2026-07-29.
+ * See MODIFICATIONS.md and the SFI source-code license agreement.
+ */
+
 #include "GameVersion.h"
 
 #define STRINGIFY(x) #x
 #define TOSTRING(x) STRINGIFY(x)
-#define FULL_VERSION "Stracciatella " TOSTRING(GAME_VERSION)
+#define FULL_VERSION "Escape from Arulco " TOSTRING(ESCAPE_FROM_ARULCO_VERSION) \
+	" / Stracciatella " TOSTRING(GAME_VERSION)
 
 //
 // Keeps track of the game version

@@ -1,3 +1,9 @@
+/*
+ * Escape from Arulco modification notice:
+ * Modified from JA2 Stracciatella, 2026-07-24 through 2026-07-29.
+ * See MODIFICATIONS.md and the SFI source-code license agreement.
+ */
+
 #include "Directories.h"
 #include "Font.h"
 #include "Font_Control.h"
@@ -5,6 +11,7 @@
 #include "Medical.h"
 #include "MercPortrait.h"
 #include "Overhead.h"
+#include "OS0_IngameUI.h"
 #include "MessageBoxScreen.h"
 #include "ScreenIDs.h"
 #include "Handle_UI.h"
@@ -39,10 +46,6 @@
 #include <algorithm>
 #include <iterator>
 
-// max number of merc faces per row in autobandage box
-#define NUMBER_MERC_FACES_AUTOBANDAGE_BOX 4
-
-
 static BOOLEAN gfBeginningAutoBandage = FALSE;
 static UINT32  guiAutoBandageSeconds  = 0;
 static BOOLEAN fAutoBandageComplete   = FALSE;
@@ -50,23 +53,12 @@ static BOOLEAN fEndAutoBandage        = FALSE;
 
 BOOLEAN gfAutoBandageFailed;
 
-// the button and associated image for ending autobandage
-static GUIButtonRef iEndAutoBandageButton[2];
-
-
 static MOUSE_REGION gAutoBandageRegion;
 
 
 // the lists of the doctor and patient
 static const SOLDIERTYPE* gdoctor_list[MAX_CHARACTER_COUNT];
 static const SOLDIERTYPE* gpatient_list[MAX_CHARACTER_COUNT];
-
-// faces for update panel
-static SGPVObject* giAutoBandagesSoldierFaces[2 * MAX_CHARACTER_COUNT];
-
-// has the button for autobandage end been setup yet
-static BOOLEAN fAutoEndBandageButtonCreated = FALSE;
-
 
 static void BeginAutoBandageCallBack(MessageBoxReturnValue);
 
@@ -274,8 +266,6 @@ void SetAutoBandageComplete( void )
 }
 
 
-static void DestroyTerminateAutoBandageButton(void);
-static void RemoveFacesForAutoBandage(void);
 static void SetUpAutoBandageUpdatePanel(void);
 
 
@@ -355,13 +345,8 @@ void AutoBandage( BOOLEAN fStart )
 		//Warp game time by the amount of time it took to autobandage.
 		WarpGameTime( guiAutoBandageSeconds, WARPTIME_NO_PROCESSING_OF_EVENTS );
 
-		DestroyTerminateAutoBandageButton( );
-
 		// build a mask
 		MSYS_RemoveRegion( &gAutoBandageRegion );
-
-		// clear faces for auto bandage
-		RemoveFacesForAutoBandage( );
 
 		SetRenderFlags( RENDER_FLAG_FULL );
 		fInterfacePanelDirty = DIRTYLEVEL2;
@@ -389,9 +374,6 @@ static void BeginAutoBandageCallBack(MessageBoxReturnValue const bExitValue)
 }
 
 
-static void AddFacesToAutoBandageBox(void);
-
-
 // the update box for autobandaging mercs
 static void SetUpAutoBandageUpdatePanel(void)
 {
@@ -411,19 +393,31 @@ static void SetUpAutoBandageUpdatePanel(void)
 	while (next_doctor  != endof(gdoctor_list))  *next_doctor++  = NULL;
 	while (next_patient != endof(gpatient_list)) *next_patient++ = NULL;
 
-	// now add the faces
-	AddFacesToAutoBandageBox( );
+	// OS//0 renders treatment as a compact live status.  The doctor/patient
+	// lists remain the authoritative simulation data, but the old portrait box
+	// and its fixed tactical buttons are deliberately not materialized.
 
 	fAutoBandageComplete = FALSE;
 }
 
 
-static void CreateTerminateAutoBandageButton(INT16 sX, INT16 sY);
-static BOOLEAN RenderSoldierSmallFaceForAutoBandagePanel(INT32 iIndex, INT16 sCurrentXPosition, INT16 sCurrentYPosition);
-
-
 static void DisplayAutoBandageUpdatePanel(void)
 {
+	// The original update box was a second, fixed JA2 interface assembled from
+	// tactical panel artwork.  It also ran before the normal OS//0 frame and was
+	// the reason the retired bottom bar appeared again during automatic first
+	// aid.  Keep all medical simulation in this file and delegate presentation
+	// to the single OS//0 HUD layer.
+	OS0RenderAutoFirstAidStatus(fAutoBandageComplete, guiAutoBandageSeconds);
+	return;
+}
+
+// Kept out of the binary as an upstream-reference block while OS//0 stabilises.
+// Nothing below this point owns input, buttons, faces or tactical panel artwork.
+#if 0
+static void DisplayAutoBandageUpdatePanelLegacy(void)
+{
+
 	INT32 iNumberDoctors = 0, iNumberPatients = 0;
 	INT32 iNumberDoctorsHigh = 0, iNumberPatientsHigh = 0;
 	INT32 iNumberDoctorsWide = 0, iNumberPatientsWide = 0;
@@ -936,3 +930,4 @@ static BOOLEAN RenderSoldierSmallFaceForAutoBandagePanel(INT32 iIndex, INT16 sCu
 
 	return( TRUE );
 }
+#endif

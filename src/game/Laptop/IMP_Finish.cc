@@ -1,7 +1,7 @@
 /*
  * Escape from Arulco modification notice:
- * Modified from JA2 Stracciatella, 2026-07-24 through 2026-07-28.
- * See /MODIFICATIONS.md and the SFI source-code license agreement.
+ * Modified from JA2 Stracciatella, 2026-07-24 through 2026-07-29.
+ * See MODIFICATIONS.md and the SFI source-code license agreement.
  */
 
 #include "CharProfile.h"
@@ -208,7 +208,7 @@ static void BtnIMPFinishStartOverCallback(GUI_BUTTON *btn, UINT32 reason)
 {
 	if (reason & MSYS_CALLBACK_REASON_POINTER_UP)
 	{
-		DoLapTopMessageBox(MSG_BOX_IMP_STYLE, pImpPopUpStrings[1], OS0_CREATOR_SCREEN, MSG_BOX_FLAG_YESNO, FinishMessageBoxCallBack);
+		DoLapTopMessageBox(MSG_BOX_IMP_STYLE, pImpPopUpStrings[1], LAPTOP_SCREEN, MSG_BOX_FLAG_YESNO, FinishMessageBoxCallBack);
 	}
 }
 

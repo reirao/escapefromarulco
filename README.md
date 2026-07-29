@@ -6,10 +6,13 @@ An experimental, non-commercial rework of *Jagged Alliance 2* built on
 > **Early alpha:** this build is intentionally unfinished. Expect rough controls,
 > incomplete systems and crashes. The purpose of this release is hands-on testing.
 
+Current playtest: **0.0.1.11**. This is the first consolidated baseline after the
+experimental `v0.5.x-alpha` series; its lower version number is intentional.
+
 ## Download and play
 
-1. Open the [v0.5.5-alpha release](https://github.com/reirao/escapefromarulco/releases/tag/v0.5.5-alpha).
-2. Download `Escape-from-Arulco-Playtest-v0.5.5-alpha.zip`.
+1. Open the [v0.0.1.11 release](https://github.com/reirao/escapefromarulco/releases/tag/v0.0.1.11).
+2. Download `Escape-from-Arulco-Playtest-v0.0.1.11.zip`.
 3. Extract the complete ZIP into a writable folder.
 4. Run `START_PLAYTEST.cmd`.
 5. In the launcher, select your own legally installed JA2 or JA2 Gold directory.
@@ -22,9 +25,14 @@ the original JA2 game data. Windows x64 and an existing JA2 installation are req
 ## Current prototype
 
 - Direct tactical-sector start without helicopter arrival or starting enemies
-- In-world character creation with freely selected attributes and traits
+- One modal in-world character creator with a validated name, freely distributed
+  attributes and two selectable traits; the obsolete laptop creator is retired
+- One UI runtime and one viewport layout boundary shared by creator, windows and input
+- A fixed 38-pixel command dock outside the scrolling/zoomed tactical world
+- Character inventory is optional and opens only from the `CHARACTER` command
 - Object-first character equipment, pocket and container views anchored in the world
-- One compact field-computer icon with a persistent movable Base/Map/Team/Report OS
+- One compact field-computer icon with movable Base/Map/Team/Report, Inspector and
+  Toolbox windows whose positions persist by stable names
 - Character and container inventories with item drag and drop
 - Context-sensitive object, weapon, loot and stance actions
 - Hover-selected context cursors with middle-click cycling through valid actions
@@ -58,7 +66,10 @@ The exact implementation status and current boundaries are recorded in
   Library/JA2 icon hub and the other symbols control character, gear and combat
 - **Middle click:** cycle the current cursor action
 - **Double click:** open a character, container or world object
-- **Computer icon:** open Base, Arulco map/radar, Team and Report
+- **Bottom command dock:** open Character, Inspector, world tools, assets, strategy
+  and sandbox modules; it remains fixed while the tactical camera moves
+- **Computer icon:** toggle the Toolbox; the Strategy symbol opens Base, Arulco
+  map/radar, Team and Report
 - **GOD / CATALOG ASSET:** right-click a world asset and classify it for the shared
   construction/resource database
 - **Asset Library:** left-click a card to center its real map instance; right-click the

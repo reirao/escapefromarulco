@@ -1,3 +1,9 @@
+/*
+ * Escape from Arulco modification notice:
+ * Modified from JA2 Stracciatella, 2026-07-24 through 2026-07-29.
+ * See MODIFICATIONS.md and the SFI source-code license agreement.
+ */
+
 #include "Font_Control.h"
 #include "Handle_Doors.h"
 #include "ItemModel.h"
@@ -60,6 +66,7 @@
 #include "Queen_Command.h"
 #include "Options_Screen.h"
 #include "OS0_IngameUI.h"
+#include "OS0_ViewportInput.h"
 #include "SaveLoadScreen.h"
 #include "Spread_Burst.h"
 #include "AI.h"
@@ -638,6 +645,7 @@ void TacticalViewPortMovementCallback(MOUSE_REGION* region, UINT32 reason) {
 	}
 	// Update cursor state
 	if (reason & MSYS_CALLBACK_REASON_LOST_MOUSE) {
+		OS0ResetViewportPointerGestures();
 		OS0ClearWorldHover();
 		gUIFingersDown = 0;
 		if (!IsPointerOnTacticalTouchUI()) {
@@ -670,6 +678,7 @@ void TacticalViewPortMovementCallback(MOUSE_REGION* region, UINT32 reason) {
 
 void TacticalViewPortTouchCallback(MOUSE_REGION* region, UINT32 reason) {
 	UpdateCurrentCursorTarget();
+	if (OS0HandleViewportPointerEvent(region, reason)) return;
 
 	if (!(gTacticalStatus.uiFlags & INCOMBAT))
 	{
@@ -770,7 +779,9 @@ static void SetUIMouseCursor(void)
 		}
 
 
-		auto comp = !gfIsUsingTouch ? SCREEN_HEIGHT : gViewportRegion.RegionBottomRightY;
+		// OS//0's command dock is not tactical terrain. South-exit detection and
+		// temporary cursor regions stop at the same world boundary as rendering.
+		auto comp = gsVIEWPORT_WINDOW_END_Y;
 		if ( gfScrolledToBottom && gusMouseYPos >= comp - NO_PX_SHOW_EXIT_CURS )
 		{
 			gfUIDisplayActionPoints = FALSE;
@@ -799,7 +810,7 @@ static void SetUIMouseCursor(void)
 
 				MSYS_DefineRegion(&gViewportRegion, 0, 0 ,gsVIEWPORT_END_X, gsVIEWPORT_WINDOW_END_Y,
 							MSYS_PRIORITY_NORMAL,
-							VIDEO_NO_CURSOR, TacticalViewPortMovementCallback, TacticalViewPortTouchCallback);
+							CURSOR_NORMAL, TacticalViewPortMovementCallback, TacticalViewPortTouchCallback);
 
 
 				// Adjust where we blit our cursor!
@@ -811,9 +822,11 @@ static void SetUIMouseCursor(void)
 				// Adjust viewport to edge of screen!
 				// Define region for viewport
 				MSYS_RemoveRegion(&gViewportRegion);
-				MSYS_DefineRegion(&gViewportRegion, 0, 0, gsVIEWPORT_END_X, SCREEN_HEIGHT, MSYS_PRIORITY_NORMAL, VIDEO_NO_CURSOR, TacticalViewPortMovementCallback, TacticalViewPortTouchCallback);
+				MSYS_DefineRegion(&gViewportRegion, 0, 0, gsVIEWPORT_END_X,
+					gsVIEWPORT_WINDOW_END_Y, MSYS_PRIORITY_NORMAL, CURSOR_NORMAL,
+					TacticalViewPortMovementCallback, TacticalViewPortTouchCallback);
 
-				gsGlobalCursorYOffset = SCREEN_HEIGHT - gsVIEWPORT_WINDOW_END_Y;
+				gsGlobalCursorYOffset = 0;
 				SetCurrentCursorFromDatabase(gUICursors[guiNewUICursor].usFreeCursorName);
 
 				gfViewPortAdjustedForSouth = TRUE;
@@ -828,7 +841,7 @@ static void SetUIMouseCursor(void)
 
 				MSYS_DefineRegion(&gViewportRegion, 0, 0 ,gsVIEWPORT_END_X, gsVIEWPORT_WINDOW_END_Y,
 							MSYS_PRIORITY_NORMAL,
-							VIDEO_NO_CURSOR, TacticalViewPortMovementCallback, TacticalViewPortTouchCallback);
+							CURSOR_NORMAL, TacticalViewPortMovementCallback, TacticalViewPortTouchCallback);
 
 
 				// Adjust where we blit our cursor!

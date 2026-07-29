@@ -1,7 +1,7 @@
 /*
  * Escape from Arulco modification notice:
- * Modified from JA2 Stracciatella, 2026-07-24 through 2026-07-28.
- * See /MODIFICATIONS.md and the SFI source-code license agreement.
+ * Modified from JA2 Stracciatella, 2026-07-24 through 2026-07-29.
+ * See MODIFICATIONS.md and the SFI source-code license agreement.
  */
 
 #include "Interface_Panels.h"
@@ -963,7 +963,7 @@ void InitializeSMPanel()
 	// INit viewport region
 	// Set global mouse regions
 	// Define region for viewport
-	MSYS_DefineRegion(&gViewportRegion, 0, 0, gsVIEWPORT_END_X, gsVIEWPORT_WINDOW_END_Y, MSYS_PRIORITY_NORMAL, VIDEO_NO_CURSOR, TacticalViewPortMovementCallback, TacticalViewPortTouchCallback);
+	MSYS_DefineRegion(&gViewportRegion, 0, 0, gsVIEWPORT_END_X, gsVIEWPORT_WINDOW_END_Y, MSYS_PRIORITY_NORMAL, VIDEO_DEFAULT_TO_NO_CURSOR, TacticalViewPortMovementCallback, TacticalViewPortTouchCallback);
 
 	// Create buttons
 	CreateSMPanelButtons();
@@ -2334,7 +2334,7 @@ void InitializeTEAMPanel()
 	// INit viewport region
 	// Set global mouse regions
 	// Define region for viewport
-	MSYS_DefineRegion(&gViewportRegion, 0, 0, gsVIEWPORT_END_X, gsVIEWPORT_END_Y, MSYS_PRIORITY_NORMAL, VIDEO_NO_CURSOR, TacticalViewPortMovementCallback, TacticalViewPortTouchCallback);
+	MSYS_DefineRegion(&gViewportRegion, 0, 0, gsVIEWPORT_END_X, gsVIEWPORT_END_Y, MSYS_PRIORITY_NORMAL, VIDEO_DEFAULT_TO_NO_CURSOR, TacticalViewPortMovementCallback, TacticalViewPortTouchCallback);
 
 	// Create the TEAMpanel from graphic objects.
 	guiTEAMPanel = new SGPVSurface(g_ui.m_teamPanelWidth, TEAMPANEL_HEIGHT, PIXEL_DEPTH);

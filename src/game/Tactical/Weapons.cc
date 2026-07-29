@@ -1,3 +1,9 @@
+/*
+ * Escape from Arulco modification notice:
+ * Modified from JA2 Stracciatella, 2026-07-24 through 2026-07-29.
+ * See MODIFICATIONS.md and the SFI source-code license agreement.
+ */
+
 #include "ArmourModel.h"
 #include "Directories.h"
 #include "Font_Control.h"
@@ -21,7 +27,7 @@
 #include "LOS.h"
 #include "RenderWorld.h"
 #include "OppList.h"
-#include "OS0_IngameUI.h"
+#include "OS0_AssetDamageSystem.h"
 #include "Interface.h"
 #include "Message.h"
 #include "Campaign.h"
@@ -1639,7 +1645,7 @@ void StructureHit(BULLET* const pBullet, const UINT16 usStructureID, const INT32
 		// OS//0 owns gunfire durability for explicitly salvageable/resource
 		// assets. Query it before vanilla damage can remove the structure and
 		// invalidate pStructure; map-critical geometry remains vanilla-owned.
-		if (!OS0NotifyWorldAssetHit(sGridNo, pStructure,
+		if (!OS0ApplyWorldAssetDamage(sGridNo, level, pStructure,
 			static_cast<UINT8>(std::clamp<INT32>(iImpact, 1, 255))))
 		{
 			DamageStructure(pStructure, iImpact, STRUCTURE_DAMAGE_GUNFIRE,

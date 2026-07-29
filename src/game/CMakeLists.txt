@@ -1,7 +1,3 @@
-# Escape from Arulco modification notice.
-# Modified from JA2 Stracciatella, 2026-07-24 through 2026-07-28.
-# See /MODIFICATIONS.md and the SFI source-code license agreement.
-
 add_and_include_subdirectory("Editor")
 add_and_include_subdirectory("Laptop")
 add_and_include_subdirectory("Strategic")
@@ -34,7 +30,6 @@ set(LOCAL_JA2_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/MercPortrait.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/MessageBoxScreen.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/Options_Screen.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/OS0_CreatorScreen.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/SaveLoadGame.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/SaveLoadGameStates.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/SaveLoadScreen.cc

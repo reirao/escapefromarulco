@@ -152,9 +152,11 @@
   "range_penalty_silencer": 0,
   "range_bonus_barrel_extender": 100,
 
-  //  Always show mouse cursor during tactical view (if false, no mourse cursor is shown when moving in real-time mode, selecting a merc, etc)
+  //  Escape from Arulco uses direct real-time control and object-first UI.
+  //  Keep the free cursor visible while moving/selecting; attack mode replaces
+  //  it with the weapon crosshair and held items still use their item cursor.
   //  vanilla setting: false
-  "always_show_cursor_in_tactical": false,
+  "always_show_cursor_in_tactical": true,
 
   //  Show chance-to-hit next to mouse cursor when preparing an attack
   //  vanilla setting: false

@@ -1,7 +1,7 @@
 /*
  * Escape from Arulco modification notice:
- * Modified from JA2 Stracciatella, 2026-07-24 through 2026-07-28.
- * See /MODIFICATIONS.md and the SFI source-code license agreement.
+ * Modified from JA2 Stracciatella, 2026-07-24 through 2026-07-29.
+ * See MODIFICATIONS.md and the SFI source-code license agreement.
  */
 
 #include "CharProfile.h"
@@ -305,7 +305,7 @@ static void BtnIMPBeginScreenDoneCallback(GUI_BUTTON *btn, UINT32 reason)
 		else
 		{
 			// invalid name, reset current mode
-			DoLapTopMessageBox(MSG_BOX_IMP_STYLE, pImpPopUpStrings[2], OS0_CREATOR_SCREEN, MSG_BOX_FLAG_OK, NULL);
+			DoLapTopMessageBox(MSG_BOX_IMP_STYLE, pImpPopUpStrings[2], LAPTOP_SCREEN, MSG_BOX_FLAG_OK, NULL);
 			iCurrentProfileMode = 0;
 		}
 	}

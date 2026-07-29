@@ -1,7 +1,7 @@
 # Modification notice
 
 This repository is a modified derivative of JA2 Stracciatella. Work on the current
-prototype was performed from 2026-07-24 through 2026-07-28.
+prototype was performed from 2026-07-24 through 2026-07-29.
 
 Prominent notices were added to modified source files in accordance with the included
 Strategy First source-code license agreement.
@@ -25,6 +25,23 @@ Strategy First source-code license agreement.
 - Added save-compatible per-sector stockpiles and three buildable sector upgrades.
 
 The code is experimental and does not represent an official JA2 Stracciatella release.
+
+## v0.0.1.11 consolidated baseline
+
+- Replaced competing creator, panel and input state with one tactical UI runtime,
+  one validated creator model and one viewport-layout authority.
+- Removed the obsolete standalone OS0/laptop creator screen and made creator
+  completion persistent without reopening it for migrated saves.
+- Reserved the command dock outside the scrolling and zoomed tactical viewport;
+  cursor and exit-sector regions now respect the same boundary.
+- Made the conventional character inventory an optional `CHARACTER` module instead
+  of forcing it after creation, selection or opening a world container.
+- Retired the remaining invisible context/tools/actions/object/feedback panel hit
+  regions. Feedback now belongs to the Strategy `REPORT` tab.
+- Migrated window geometry from numeric prototype panel IDs to stable named layout
+  records so positions survive UI refactors and resolution changes.
+- Added focused unit coverage for creator validation, UI state transitions, dock
+  mapping, viewport bounds and OS0 persistent-session migration.
 
 ## v0.1.1-alpha hotfix
 

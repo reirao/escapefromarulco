@@ -1,3 +1,9 @@
+/*
+ * Escape from Arulco modification notice:
+ * Modified from JA2 Stracciatella, 2026-07-24 through 2026-07-29.
+ * See MODIFICATIONS.md and the SFI source-code license agreement.
+ */
+
 #pragma once
 
 #include "JA2Types.h"
@@ -17,7 +23,9 @@ enum class OS0CharacterQuickAction : UINT8
 
 void InitializeOS0IngameUI();
 void ShutdownOS0IngameUI();
+void UpdateOS0TacticalSession();
 void RenderOS0IngameUI();
+void OS0RenderAutoFirstAidStatus(BOOLEAN complete, UINT32 elapsedSeconds);
 void OS0OpenCharacterPanel(SOLDIERTYPE* soldier);
 void OS0OpenWorldContainer(GridNo gridNo, UINT8 level, UINT16 tileIndex);
 void OS0ActivateWorldObject(GridNo gridNo, UINT8 level, UINT16 tileIndex);
@@ -29,7 +37,10 @@ void OS0HoverWorldObject(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 void OS0ClearWorldHover();
 void OS0CycleCursorAction(SOLDIERTYPE* target, GridNo gridNo, UINT8 level, UINT16 tileIndex);
 void OS0CancelCursorAction();
+BOOLEAN OS0HandleRealtimeControlKey(UINT32 key, UINT32 keyState);
 BOOLEAN OS0HandleCursorAction(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
+	UINT16 tileIndex);
+BOOLEAN OS0HandleHeldItemAction(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 	UINT16 tileIndex);
 BOOLEAN OS0HandlePendingWorldMove(GridNo destination);
 void OS0AdjustWorldZoom(INT8 direction);
@@ -41,7 +52,7 @@ void OS0MapWorldToDisplayScreen(INT16* x, INT16* y);
 INT16 OS0WorldViewportBottom();
 void OS0PlaceTalkingPanel(INT16 panelWidth, INT16 panelHeight, INT16* x, INT16* y);
 void OS0TalkingPanelClosed();
+BOOLEAN OS0CreatorIsActive();
 void OS0ExecuteCharacterQuickAction(SOLDIERTYPE* soldier,
 	OS0CharacterQuickAction action);
 UINT8 OS0GetGodMenuIcon();
-BOOLEAN OS0NotifyWorldAssetHit(GridNo gridNo, STRUCTURE* structure, UINT8 impact);

@@ -1,7 +1,7 @@
 /*
  * Escape from Arulco modification notice:
- * Modified from JA2 Stracciatella, 2026-07-24 through 2026-07-28.
- * See /MODIFICATIONS.md and the SFI source-code license agreement.
+ * Modified from JA2 Stracciatella, 2026-07-24 through 2026-07-29.
+ * See MODIFICATIONS.md and the SFI source-code license agreement.
  */
 
 #include "Font.h"
@@ -67,6 +67,14 @@ static SOLDIERTYPE* g_new_panel_soldier = 0;
 
 void SetNewPanel(SOLDIERTYPE* const s)
 {
+	if (guiCurrentScreen == GAME_SCREEN)
+	{
+		// Selection is data, not a request to open an inventory window.
+		g_switch_panel = false;
+		g_new_panel_soldier = nullptr;
+		HideLegacyTacticalInterfaceForOS0();
+		return;
+	}
 	g_switch_panel      = true;
 	g_new_panel_soldier = s;
 }
@@ -75,6 +83,13 @@ void SetNewPanel(SOLDIERTYPE* const s)
 void HandleTacticalPanelSwitch()
 {
 	if (!g_switch_panel) return;
+	if (guiCurrentScreen == GAME_SCREEN)
+	{
+		g_switch_panel = false;
+		g_new_panel_soldier = nullptr;
+		HideLegacyTacticalInterfaceForOS0();
+		return;
+	}
 	g_switch_panel = false;
 
 	SOLDIERTYPE* const s = g_new_panel_soldier;

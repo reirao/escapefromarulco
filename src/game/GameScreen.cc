@@ -1,7 +1,7 @@
 /*
  * Escape from Arulco modification notice:
- * Modified from JA2 Stracciatella, 2026-07-24 through 2026-07-28.
- * See /MODIFICATIONS.md and the SFI source-code license agreement.
+ * Modified from JA2 Stracciatella, 2026-07-24 through 2026-07-29.
+ * See MODIFICATIONS.md and the SFI source-code license agreement.
  */
 
 #include "GameLoop.h"
@@ -148,7 +148,7 @@ void EnterTacticalScreen(void)
 		SetCurrentInterfacePanel(TEAM_PANEL);
 	}
 
-	if (!gfTacticalPlacementGUIActive) gRadarRegion.Enable();
+	if (!gfTacticalPlacementGUIActive) gRadarRegion.Disable();
 	gViewportRegion.Enable();
 
 	// set default squad on sector entry
@@ -478,6 +478,7 @@ ScreenID MainGameScreenHandle(void)
 		}
 	}
 
+	UpdateOS0TacticalSession();
 	OS0PrepareWorldZoom();
 
 	// Handle Scroll Of World

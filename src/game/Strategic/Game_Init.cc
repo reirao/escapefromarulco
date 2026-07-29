@@ -1,7 +1,7 @@
 /*
  * Escape from Arulco modification notice:
- * Modified from JA2 Stracciatella, 2026-07-24 through 2026-07-28.
- * See /MODIFICATIONS.md and the SFI source-code license agreement.
+ * Modified from JA2 Stracciatella, 2026-07-24 through 2026-07-29.
+ * See MODIFICATIONS.md and the SFI source-code license agreement.
  */
 
 #include "Game_Init.h"
@@ -42,6 +42,7 @@
 #include "NPC.h"
 #include "NpcPlacementModel.h"
 #include "OppList.h"
+#include "OS0_TacticalSession.h"
 #include "Overhead.h"
 #include "Overhead_Types.h"
 #include "PreBattle_Interface.h"
@@ -221,6 +222,7 @@ void InitNewGame()
 	FreeGlobalMessageList(); // Clear mapscreen messages
 
 	ResetGameStates();
+	OS0ResetCampaignState();
 	InitScriptingEngine();
 
 	if (gubScreenCount == 0)

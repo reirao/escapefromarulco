@@ -12,6 +12,7 @@
 #include "TileDef.h"
 #include "Turn_Based_Input.h"
 #include "OS0_IngameUI.h"
+#include "OS0_ViewportInput.h"
 #include "JAScreens.h"
 #include "PathAI.h"
 #include "Soldier_Control.h"
@@ -112,8 +113,11 @@ void HandleTBClimbWindow( void );
 void GetTBMouseButtonInput(UIEventKind* const puiNewEvent)
 {
 	QueryTBLeftButton( puiNewEvent );
-	QueryTBRightButton( puiNewEvent );
-	QueryTBMiddleButton( puiNewEvent );
+	if (!OS0OwnsViewportContextButtons())
+	{
+		QueryTBRightButton( puiNewEvent );
+		QueryTBMiddleButton( puiNewEvent );
+	}
 }
 
 
@@ -393,10 +397,14 @@ static void QueryTBLeftButton(UIEventKind* const puiNewEvent)
 							{
 								if ( !HandleCheckForExitArrowsInput( TRUE ) )
 								{
-									if ( gpItemPointer != NULL )
+								if ( gpItemPointer != NULL )
+								{
+									if (OS0ConsumeHandledHeldItemRelease())
 									{
-										if ( HandleItemPointerClick( usMapPos ) )
-										{
+										*puiNewEvent = A_CHANGE_TO_MOVE;
+									}
+									else if ( HandleItemPointerClick( usMapPos ) )
+									{
 											// getout of mode
 											EndItemPointer( );
 
@@ -1185,82 +1193,7 @@ void GetPolledKeyboardInput(UIEventKind* puiNewEvent)
 
 void TacticalViewPortTouchCallbackTB(MOUSE_REGION* region, UINT32 reason) {
 	static SOLDIERTYPE* gLastDownUIFullTarget = NULL;
-	auto resolveOS0WorldTarget = [](GridNo& grid)
-	{
-		INT16 interactiveGrid = NOWHERE;
-		LEVELNODE* const node = GetCurInteractiveTileGridNo(&interactiveGrid);
-		UINT16 tile = node ? node->usIndex : NO_TILE;
-		if (node && interactiveGrid >= 0 && interactiveGrid < WORLD_MAX)
-			grid = interactiveGrid;
-		else
-			FindOS0WorldAssetAtScreen(&grid, gsInterfaceLevel, &tile,
-				gusMouseXPos, gusMouseYPos);
-		return tile;
-	};
-
-	if (reason & MSYS_CALLBACK_REASON_WHEEL_UP) {
-		OS0AdjustWorldZoom(1);
-		return;
-	}
-	if (reason & MSYS_CALLBACK_REASON_WHEEL_DOWN) {
-		OS0AdjustWorldZoom(-1);
-		return;
-	}
-	if (reason & MSYS_CALLBACK_REASON_RBUTTON_DWN) {
-		fRightButtonDown = FALSE;
-		return;
-	}
-	if (reason & MSYS_CALLBACK_REASON_MBUTTON_DWN) {
-		fMiddleButtonDown = FALSE;
-		return;
-	}
-	if (reason & MSYS_CALLBACK_REASON_LBUTTON_DOUBLECLICK) {
-		if (gUIFullTarget) OS0OpenCharacterPanel(gUIFullTarget);
-		else {
-			GridNo containerGrid = guiCurrentCursorGridNo;
-			const UINT16 tile = resolveOS0WorldTarget(containerGrid);
-			OS0ActivateWorldObject(containerGrid, gsInterfaceLevel, tile);
-		}
-		return;
-	}
-	if ((reason & MSYS_CALLBACK_REASON_LBUTTON_UP) &&
-		OS0HandlePendingWorldMove(guiCurrentCursorGridNo)) {
-		return;
-	}
-	if (reason & MSYS_CALLBACK_REASON_LBUTTON_UP) {
-		GridNo environmentGrid = guiCurrentCursorGridNo;
-		const UINT16 tile = resolveOS0WorldTarget(environmentGrid);
-		if (OS0HandleCursorAction(gUIFullTarget, environmentGrid, gsInterfaceLevel,
-			tile)) {
-			return;
-		}
-		// Selection updates the inspector, but MOVE mode remains owned by JA2.
-		// This keeps ordinary walking possible across interactive scenery.
-		OS0SelectWorldObject(gUIFullTarget, environmentGrid, gsInterfaceLevel,
-			tile);
-	}
-	if (reason & MSYS_CALLBACK_REASON_RBUTTON_UP) {
-		GridNo contextGrid = guiCurrentCursorGridNo;
-		const UINT16 tile = resolveOS0WorldTarget(contextGrid);
-		OS0OpenContextMenu(gUIFullTarget, contextGrid, gsInterfaceLevel,
-			tile, gusMouseXPos, gusMouseYPos);
-		fRightButtonDown = FALSE;
-		return;
-	} else if (reason & MSYS_CALLBACK_REASON_MBUTTON_UP) {
-		GridNo actionGrid = guiCurrentCursorGridNo;
-		const UINT16 tile = resolveOS0WorldTarget(actionGrid);
-		if (_KeyDown(SHIFT)) {
-			OS0CancelCursorAction();
-			if (SOLDIERTYPE* const selected = GetSelectedMan()) {
-				LocateSoldier(selected, DONTSETLOCATOR);
-			}
-		} else {
-			OS0CycleCursorAction(gUIFullTarget, actionGrid, gsInterfaceLevel,
-				tile);
-		}
-		fMiddleButtonDown = FALSE;
-		return;
-	} else if (reason & MSYS_CALLBACK_REASON_TFINGER_DWN) {
+	if (reason & MSYS_CALLBACK_REASON_TFINGER_DWN) {
 		gUIFingersDown += 1;
 		if (gUIFingersDown == 1) {
 			gLastDownUIFullTarget = gUIFullTarget;
@@ -1288,22 +1221,6 @@ void TacticalViewPortTouchCallbackTB(MOUSE_REGION* region, UINT32 reason) {
 				default:
 					break;
 			}
-		}
-	} else if (reason & MSYS_CALLBACK_REASON_MBUTTON_DWN) {
-		if (_KeyDown(SHIFT) && gpItemPointer == NULL) {
-			switch( gCurrentUIMode )
-			{
-				case MOVE_MODE:
-				case CONFIRM_MOVE_MODE:
-					TogglePanMode();
-					break;
-				default:
-					break;
-			}
-		}
-	} else if (reason & MSYS_CALLBACK_REASON_MBUTTON_UP) {
-		if (gCurrentUIMode == PAN_MODE) {
-			TogglePanMode();
 		}
 	} else if (reason & MSYS_CALLBACK_REASON_TFINGER_UP) {
 		auto selected = GetSelectedMan();
@@ -2215,6 +2132,11 @@ void GetKeyboardInput(UIEventKind* const puiNewEvent)
 			fKeyTaken = gUIKeyboardHook( &InputEvent );
 		}
 		if ( fKeyTaken )
+		{
+			continue;
+		}
+		if ((InputEvent.usEvent == KEY_DOWN || InputEvent.usEvent == KEY_REPEAT) &&
+			OS0HandleRealtimeControlKey(InputEvent.usParam, InputEvent.usKeyState))
 		{
 			continue;
 		}

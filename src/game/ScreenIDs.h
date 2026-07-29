@@ -1,7 +1,7 @@
 /*
  * Escape from Arulco modification notice:
- * Modified from JA2 Stracciatella, 2026-07-24 through 2026-07-28.
- * See /MODIFICATIONS.md and the SFI source-code license agreement.
+ * Modified from JA2 Stracciatella, 2026-07-24 through 2026-07-29.
+ * See MODIFICATIONS.md and the SFI source-code license agreement.
  */
 
 #ifndef __SCREEN_IDS
@@ -33,7 +33,6 @@ enum ScreenID
 	INTRO_SCREEN,
 	CREDIT_SCREEN,
 	QUEST_DEBUG_SCREEN,
-	OS0_CREATOR_SCREEN,
 	MAX_SCREENS,
 
 	NO_PENDING_SCREEN = 0xFFFF

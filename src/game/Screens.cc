@@ -1,7 +1,7 @@
 /*
  * Escape from Arulco modification notice:
- * Modified from JA2 Stracciatella, 2026-07-24 through 2026-07-28.
- * See /MODIFICATIONS.md and the SFI source-code license agreement.
+ * Modified from JA2 Stracciatella, 2026-07-24 through 2026-07-29.
+ * See MODIFICATIONS.md and the SFI source-code license agreement.
  */
 
 #include "Auto_Resolve.h"
@@ -16,7 +16,6 @@
 #include "MapScreen.h"
 #include "MessageBoxScreen.h"
 #include "Options_Screen.h"
-#include "OS0_CreatorScreen.h"
 #include "Quest_Debug_System.h"
 #include "SaveLoadScreen.h"
 #include "Screens.h"
@@ -51,8 +50,7 @@ Screens const GameScreens[] =
 	{ NULL,                 NULL,                        NULL                     },
 	{ NULL,                 IntroScreenHandle,           NULL                     },
 	{ nullptr,              HandleScreen<CREDIT_SCREEN>, nullptr                  },
-	{ QuestDebugScreenInit, QuestDebugScreenHandle,      NULL                     },
-	{ OS0CreatorScreenInit, OS0CreatorScreenHandle,      OS0CreatorScreenShutdown }
+	{ QuestDebugScreenInit, QuestDebugScreenHandle,      NULL                     }
 };
 
 

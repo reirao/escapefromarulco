@@ -5,10 +5,20 @@
  */
 
 #include "OS0_IngameUI.h"
+#include "OS0_ActionRegistry.h"
+#include "OS0_AssetCatalogService.h"
+#include "OS0_AssetDamageSystem.h"
+#include "OS0_CreatorModel.h"
+#include "OS0_DirectControl.h"
+#include "OS0_ItemRelations.h"
+#include "OS0_TacticalSession.h"
+#include "OS0_UIRuntime.h"
+#include "OS0_WorldInteractionSystem.h"
 
 #include "Animation_Control.h"
 #include "AI.h"
 #include "ArmourModel.h"
+#include "Auto_Bandage.h"
 #include "Campaign.h"
 #include "Campaign_Types.h"
 #include "Cursors.h"
@@ -35,7 +45,6 @@
 #include "Items.h"
 #include "Lighting.h"
 #include "Local.h"
-#include "MercPortrait.h"
 #include "MouseSystem.h"
 #include "Overhead.h"
 #include "PathAI.h"
@@ -47,6 +56,7 @@
 #include "ScreenIDs.h"
 #include "SaveLoadMap.h"
 #include "SGPFile.h"
+#include "SkillCheck.h"
 #include "Soldier_Profile.h"
 #include "Soldier_Find.h"
 #include "Soldier_Control.h"
@@ -85,14 +95,6 @@ namespace
 	constexpr INT16 INVENTORY_X = 145;
 	constexpr INT16 CONTINUE_X = PANE_W - 125;
 	constexpr INT16 PANEL_HEADER_H = 19;
-	constexpr INT16 CONTEXT_PANEL_W = 190;
-	constexpr INT16 CONTEXT_PANEL_H = 112;
-	constexpr INT16 TOOLS_PANEL_W = 168;
-	constexpr INT16 TOOLS_PANEL_H = 174;
-	constexpr INT16 ACTIONS_PANEL_W = 194;
-	constexpr INT16 ACTIONS_PANEL_H = 174;
-	constexpr INT16 FEEDBACK_PANEL_W = 390;
-	constexpr INT16 FEEDBACK_PANEL_H = 220;
 	constexpr INT16 SECTOR_PANEL_W = 300;
 	constexpr INT16 SECTOR_PANEL_H = 226;
 	constexpr INT16 STRATEGIC_CELL = 9;
@@ -100,9 +102,17 @@ namespace
 	constexpr INT16 GOD_LIBRARY_H = 250;
 	constexpr INT16 ASSET_CATALOG_W = 318;
 	constexpr INT16 ASSET_CATALOG_H = 194;
-	constexpr size_t PANEL_DOCK_COUNT = 7;
-	constexpr size_t COMMAND_MODULE_COUNT = PANEL_DOCK_COUNT + 1;
-	constexpr INT16 COMMAND_BAR_H = 38;
+	constexpr INT16 INSPECTOR_W = 310;
+	constexpr INT16 INSPECTOR_H = 96;
+	constexpr INT16 TOOLBOX_W = 132;
+	constexpr INT16 TOOLBOX_H = 132;
+	// The field-computer orb owns TACTICAL; the remaining eight toolbox modules
+	// are always available as fixed, screen-space dock icons.
+	constexpr size_t PANEL_DOCK_COUNT =
+		static_cast<size_t>(OS0UICommand::COUNT) - 1;
+	constexpr size_t COMMAND_MODULE_COUNT =
+		static_cast<size_t>(OS0UICommand::COUNT);
+	constexpr INT16 COMMAND_BAR_H = OS0UILayout::DOCK_HEIGHT;
 	constexpr INT16 BRAND_W = 184;
 	constexpr INT16 BRAND_H = 40;
 	constexpr INT16 EVENT_LOG_W = 218;
@@ -110,14 +120,7 @@ namespace
 	constexpr INT16 COLLAPSED_OS0_W = 54;
 	constexpr const char* UI_LAYOUT_PATH = "OS0/os0-ui-layout.tsv";
 
-	enum class ResourceKind : UINT8
-	{
-		TIMBER,
-		STONE,
-		SCRAP,
-		SOIL,
-		COUNT
-	};
+	using ResourceKind = OS0ResourceKind;
 
 	enum class ComputerMode
 	{
@@ -132,30 +135,6 @@ namespace
 		SOLDIER,
 		WORLD
 	};
-
-	enum class ItemTransferIntent : UINT8
-	{
-		HANDS,
-		PACK,
-		DROP
-	};
-
-	struct ItemTransferIntentSpec
-	{
-		ItemTransferIntent intent;
-		const char* label;
-		UINT16 iconFrame;
-		INT16 offsetX;
-		INT16 offsetY;
-	};
-
-	// Registry-driven object-to-actor intents.  Adding a new transfer operation
-	// changes one table instead of another branch in every renderer/callback.
-	constexpr std::array<ItemTransferIntentSpec, 3> gItemTransferIntents{{
-		{ ItemTransferIntent::HANDS, "TAKE IN HANDS", 24, -64, -36 },
-		{ ItemTransferIntent::PACK,  "PUT IN PACK",   18,  30, -36 },
-		{ ItemTransferIntent::DROP,  "DROP HERE",     39, -17, -88 }
-	}};
 
 	enum class SectorPanelMode : UINT8
 	{
@@ -189,62 +168,10 @@ namespace
 		CUTTING_TOOL
 	};
 
-	enum class ContextAction : UINT8
-	{
-		INSPECT,
-		CONTENTS,
-		BUILD,
-		CARRY,
-		TALK,
-		ATTACK,
-		STAND,
-		CROUCH,
-		PRONE,
-		STEALTH,
-		WEAPON_MODE,
-		RELOAD,
-		SWAP_HANDS,
-		UNLOAD,
-		DETAILS,
-		EQUIP_ITEM,
-		MOVE_ITEM,
-		PICK_UP,
-		DIG,
-		SALVAGE,
-		CATALOG,
-		TAKE_COVER
-	};
-
-	enum class AssetCategory : UINT8
-	{
-		UNKNOWN, SANDBAG, DOOR, CONTAINER, STONE, DEBRIS, FURNITURE,
-		TREE, WALL, FLOOR, RESOURCE, DECOR, WORKSTATION, COUNT
-	};
-
-	enum class AssetMaterial : UINT8
-	{
-		AUTO, WOOD, STONE, METAL, SAND, EARTH, ORGANIC, FABRIC,
-		COMPOSITE, COUNT
-	};
-
-	enum class AssetRole : UINT8
-	{
-		DECOR, SALVAGE, STORAGE, BUILDING_PART, CRAFTING_STATION,
-		RESOURCE_NODE, BARRIER, COUNT
-	};
-
-	struct AssetCatalogRecord
-	{
-		INT16 tileset;
-		UINT16 tileIndex;
-		AssetCategory category;
-		AssetMaterial material;
-		AssetRole role;
-		UINT8 width;
-		UINT8 height;
-		BOOLEAN buildable;
-		ST::string label;
-	};
+	using AssetCategory = OS0AssetCategory;
+	using AssetMaterial = OS0AssetMaterial;
+	using AssetRole = OS0AssetRole;
+	using AssetCatalogRecord = OS0AssetCatalogRecord;
 
 	struct ContextEntry
 	{
@@ -262,22 +189,23 @@ namespace
 		UINT32 born;
 	};
 
-	struct AssetDamageState
-	{
-		GridNo gridNo;
-		UINT16 tileIndex;
-		INT16 remaining;
-	};
-
 	enum class FloatingPanelId : UINT8
 	{
-		CONTEXT,
-		TOOLS,
-		ACTIONS,
-		OBJECT_INVENTORY,
 		SECTOR,
-		FEEDBACK,
+		INSPECTOR,
+		TOOLBOX,
 		COUNT
+	};
+
+	using ToolboxModule = OS0UICommand;
+
+	struct ActorAnchorState
+	{
+		SOLDIERTYPE const* soldier = nullptr;
+		INT32 x256 = 0;
+		INT32 y256 = 0;
+		UINT32 updatedAt = 0;
+		BOOLEAN valid = FALSE;
 	};
 
 	struct SalvageProfile
@@ -298,16 +226,7 @@ namespace
 		BOOLEAN catalogued;
 	};
 
-	struct SectorUpgrade
-	{
-		const char* name;
-		const char* benefit;
-		UINT8 timber;
-		UINT8 stone;
-		UINT8 scrap;
-		UINT8 soil;
-		UINT32 flag;
-	};
+	using SectorUpgrade = OS0SectorUpgradeDefinition;
 
 	struct FloatingPanel
 	{
@@ -358,24 +277,33 @@ namespace
 		HELMETPOS, HEAD1POS, HEAD2POS, VESTPOS, LEGPOS, HANDPOS, SECONDHANDPOS
 	}};
 	constexpr std::array<const char*, 7> gExplodedEquipmentLabels{{
-		"HELMET", "FACE 1", "FACE 2", "VEST", "LEGS", "R HAND", "L HAND"
+		"HELMET", "FACE 1", "FACE 2", "VEST", "LEGS",
+		"HAND 1 / PRIMARY", "HAND 2 / OFF HAND"
 	}};
 
+	OS0UIRuntime gUIRuntime;
+	OS0UILayout gUILayout;
 	BOOLEAN gInitialized = FALSE;
-	BOOLEAN gBagVisible = TRUE;
+	// Visibility is established explicitly during initialization. A global TRUE
+	// made selection/load side effects look like random inventory pop-ups.
+	BOOLEAN& gBagVisible =
+		gUIRuntime.visibilityRef(OS0UIPanel::INVENTORY);
 	BOOLEAN gInventoryVisible = FALSE;
-	BOOLEAN gLootVisible = FALSE;
-	BOOLEAN gContextVisible = FALSE;
+	BOOLEAN& gLootVisible = gUIRuntime.visibilityRef(OS0UIPanel::LOOT);
+	BOOLEAN& gContextVisible = gUIRuntime.visibilityRef(OS0UIPanel::CONTEXT);
 	BOOLEAN gObjectActionFanVisible = FALSE;
 	BOOLEAN gCharacterActionFanVisible = FALSE;
-	BOOLEAN gEquipmentExplodedVisible = FALSE;
-	BOOLEAN gStackSplitVisible = FALSE;
+	BOOLEAN& gEquipmentExplodedVisible =
+		gUIRuntime.visibilityRef(OS0UIPanel::EQUIPMENT);
+	BOOLEAN& gStackSplitVisible =
+		gUIRuntime.visibilityRef(OS0UIPanel::STACK_SPLIT);
 	SOLDIERTYPE* gEquipmentSoldier = nullptr;
 	SOLDIERTYPE* gStackSplitSoldier = nullptr;
 	INT8 gStackSplitSlot = NO_SLOT;
 	UINT8 gStackSplitAmount = 1;
 	ContentsMode gContentsMode = ContentsMode::SOLDIER;
 	BOOLEAN gHoverVisible = FALSE;
+	BOOLEAN gInspectorPinned = TRUE;
 	BOOLEAN gBagDragging = FALSE;
 	BOOLEAN gAimAutoCollapsed = FALSE;
 	BOOLEAN gBagVisibleBeforeAim = FALSE;
@@ -392,8 +320,6 @@ namespace
 	INT16 gBagY = 20;
 	INT16 gInventoryX = 650;
 	INT16 gInventoryY = 20;
-	INT16 gLootX = 300;
-	INT16 gLootY = 180;
 	INT16 gOrbY = 316;
 	INT16 gContextX = 0;
 	INT16 gContextY = 0;
@@ -413,7 +339,8 @@ namespace
 	GridNo gInspectedGridNo = NOWHERE;
 	UINT8 gInspectedLevel = 0;
 	UINT16 gInspectedTileIndex = NO_TILE;
-	BOOLEAN gItemDetailsVisible = FALSE;
+	BOOLEAN& gItemDetailsVisible =
+		gUIRuntime.visibilityRef(OS0UIPanel::ITEM_DETAILS);
 	OBJECTTYPE gItemDetailsObject{};
 	ST::string gItemDetailsName;
 	SectorPanelMode gSectorPanelMode = SectorPanelMode::BASE;
@@ -421,37 +348,24 @@ namespace
 	UINT32 gExplodedViewStarted = 0;
 	GridNo gExplodedViewGridNo = NOWHERE;
 	UINT16 gExplodedViewTileIndex = NO_TILE;
-	BOOLEAN gTutorialActive = TRUE;
-	UINT8 gTutorialStep = 0;
-	ST::string gTutorialName = "Operator";
-	INT16 gTutorialStatPoints = 100;
-	std::array<INT8, 10> gTutorialStatValues{{ 55, 55, 55, 55, 55, 55, 55, 55, 55, 55 }};
-	std::array<SkillTrait, 2> gTutorialTraits{{ NO_SKILLTRAIT, NO_SKILLTRAIT }};
-	BOOLEAN gWorldMovePending = FALSE;
-	BOOLEAN gWorldMoveWalking = FALSE;
-	GridNo gWorldMoveSource = NOWHERE;
-	GridNo gWorldMoveDestination = NOWHERE;
-	GridNo gWorldMoveActionGrid = NOWHERE;
-	UINT16 gWorldMoveTileIndex = NO_TILE;
-	SOLDIERTYPE* gWorldMoveCarrier = nullptr;
-	UINT8 gWorldMoveOldShade = DEFAULT_SHADE_LEVEL;
-	BOOLEAN gWorldMoveSourceShaded = FALSE;
-	BOOLEAN gWorldMoveLifted = FALSE;
+	BOOLEAN& gTutorialActive = gUIRuntime.creatorActiveRef();
+	UINT8& gTutorialStep = gUIRuntime.creatorStageValueRef();
+	OS0CreatorModel gCreatorModel;
+	BOOLEAN gVideoScrollBeforeCreator = TRUE;
 	UINT8 gWorldZoom = 1;
-	BOOLEAN gCommandBarExpanded = FALSE;
-	UINT8 gCursorAction = 0;
+	BOOLEAN gVideoScrollBeforeZoom = TRUE;
 	SOLDIERTYPE* gHoverCursorSoldier = nullptr;
 	GridNo gHoverCursorGridNo = NOWHERE;
 	UINT8 gHoverCursorLevel = 0;
 	UINT16 gHoverCursorTileIndex = NO_TILE;
-	SOLDIERTYPE* gCoverCommandSoldier = nullptr;
-	GridNo gCoverCommandDestination = NOWHERE;
+	UINT16 gHoverCursorHeldItem = NOTHING;
 	std::array<ImpactParticle, 48> gImpactParticles{};
 	size_t gImpactParticleNext = 0;
-	std::vector<AssetDamageState> gAssetDamage;
-	BOOLEAN gGodLibraryVisible = FALSE;
+	BOOLEAN& gGodLibraryVisible =
+		gUIRuntime.visibilityRef(OS0UIPanel::ASSET_LIBRARY);
 	BOOLEAN gGodLibraryDragging = FALSE;
-	BOOLEAN gAssetCatalogVisible = FALSE;
+	BOOLEAN& gAssetCatalogVisible =
+		gUIRuntime.visibilityRef(OS0UIPanel::ASSET_CATALOG);
 	BOOLEAN gAssetCatalogReturnToLibrary = FALSE;
 	BOOLEAN gAssetCatalogNameEditing = FALSE;
 	UINT8 gGodMenuIcon = 0;
@@ -463,23 +377,34 @@ namespace
 	INT16 gAssetCatalogX = 0;
 	INT16 gAssetCatalogY = 0;
 	AssetCatalogRecord gCatalogDraft{};
-	std::vector<AssetCatalogRecord> gAssetCatalog;
 	std::vector<DebugAssetEntry> gDebugAssetLibrary;
 	UINT8 gDebugAssetLibrarySector = 0xff;
 	INT16 gDebugAssetLibraryTileset = -1;
 	SGPVSurface* gWorldZoomBuffer = nullptr;
 	std::array<FloatingPanel, static_cast<size_t>(FloatingPanelId::COUNT)> gFloatingPanels{{
-		{ 8, 36, CONTEXT_PANEL_W, CONTEXT_PANEL_H, FALSE, FALSE, FALSE },
-		{ 8, 154, TOOLS_PANEL_W, TOOLS_PANEL_H, TRUE, FALSE, FALSE },
-		{ 438, 36, ACTIONS_PANEL_W, ACTIONS_PANEL_H, FALSE, FALSE, FALSE },
-		{ 88, 118, PANE_W, BAG_H, FALSE, FALSE, FALSE },
 		{ 190, 72, SECTOR_PANEL_W, SECTOR_PANEL_H, FALSE, FALSE, FALSE },
-		{ 120, 70, FEEDBACK_PANEL_W, FEEDBACK_PANEL_H, FALSE, FALSE, FALSE }
+		{ 8, 250, INSPECTOR_W, INSPECTOR_H, TRUE, FALSE, FALSE },
+		{ 62, 250, TOOLBOX_W, TOOLBOX_H, FALSE, FALSE, FALSE }
 	}};
-	std::array<ContextEntry, 8> gPanelActionEntries;
-	size_t gPanelActionEntryCount = 0;
+	std::array<ActorAnchorState, TOTAL_SOLDIERS> gActorAnchors{};
+
+	OS0CarryState& CarryState()
+	{
+		return OS0GetTacticalSession().state().carry;
+	}
+
+	OS0CursorState& CursorState()
+	{
+		return OS0GetTacticalSession().state().cursor;
+	}
+
+	SOLDIERTYPE* CarryCarrier()
+	{
+		return ID2Soldier(CarryState().carrier);
+	}
 
 	void OutlineBox(INT16 x, INT16 y, INT16 w, INT16 h, UINT16 colour);
+	void DrawIconCorners(INT16 x, INT16 y, INT16 w, INT16 h, UINT16 colour);
 	void ContextActionCallback(MOUSE_REGION* region, UINT32 reason);
 	void EquipmentPackCallback(MOUSE_REGION* region, UINT32 reason);
 	void ItemTransferIntentCallback(MOUSE_REGION* region, UINT32 reason);
@@ -490,6 +415,8 @@ namespace
 	void DebugLibraryGrabberCallback(MOUSE_REGION* region, UINT32 reason);
 	void DebugLibraryCloseCallback(MOUSE_REGION* region, UINT32 reason);
 	void AssetCatalogCallback(MOUSE_REGION* region, UINT32 reason);
+	void ToolboxModuleCallback(MOUSE_REGION* region, UINT32 reason);
+	void ActivateToolboxModule(ToolboxModule module);
 	void SetBagRegionsEnabled(BOOLEAN enabled);
 	void PositionBagRegions();
 	BOOLEAN GetActorDisplayAnchor(SOLDIERTYPE const* soldier, INT16& x, INT16& y);
@@ -497,15 +424,13 @@ namespace
 	BOOLEAN SaveUILayout();
 	void LoadUILayout();
 	BOOLEAN AssetCatalogKeyboardHook(InputAtom* event);
-	ST::string SerializeAssetCatalog();
 	void RecordFeedbackEvent(const ST::string& event);
 	BOOLEAN TutorialKeyboardHook(InputAtom* event);
 
-	SGPVObject* gPortrait = nullptr;
 	SGPVSurface* gInspectorPreview = nullptr;
-	SGPVSurface* gObjectSymbolSurface = nullptr;
+	SGPVSurface* gAnimatedMercPreview = nullptr;
+	SOLDIERTYPE const* gAnimatedMercPreviewSoldier = nullptr;
 	SGPVSurface* gAssetLibrarySymbolSurface = nullptr;
-	UINT16 gObjectSymbolTileIndex = NO_TILE;
 	SGPVObject* gGodNewIcons = nullptr;
 	SGPVObject* gGodDoorIcons = nullptr;
 	SGPVObject* gGodButtonFrame = nullptr;
@@ -514,10 +439,10 @@ namespace
 	MOUSE_REGION gGodLibraryClose;
 	std::array<MOUSE_REGION, 25> gGodIconRegions;
 	std::array<MOUSE_REGION, 12> gAssetLibraryRegions;
+	std::array<MOUSE_REGION, static_cast<size_t>(ToolboxModule::COUNT)> gToolboxRegions;
 	MOUSE_REGION gAssetCatalogBlock;
 	std::array<MOUSE_REGION, 11> gAssetCatalogRegions;
 	MOUSE_REGION gContextBlock;
-	ProfileID gPortraitProfile = NO_PROFILE;
 	MOUSE_REGION gBagBlock;
 	MOUSE_REGION gBagGrabber;
 	MOUSE_REGION gBagClose;
@@ -525,18 +450,15 @@ namespace
 	std::array<MOUSE_REGION, static_cast<size_t>(FloatingPanelId::COUNT)> gFloatingPanelGrabbers;
 	std::array<MOUSE_REGION, static_cast<size_t>(FloatingPanelId::COUNT)> gFloatingPanelCloses;
 	std::array<MOUSE_REGION, PANEL_DOCK_COUNT> gPanelDockRegions;
-	std::array<MOUSE_REGION, 10> gToolRegions;
-	std::array<MOUSE_REGION, 8> gActionPanelRegions;
 	std::array<MOUSE_REGION, 4> gFeedbackRegions;
 	std::array<MOUSE_REGION, 3> gSectorUpgradeRegions;
 	std::array<MOUSE_REGION, 4> gSectorTabRegions;
 	MOUSE_REGION gStrategicMapRegion;
 	MOUSE_REGION gSectorTeamRegion;
 	std::array<MOUSE_REGION, NUM_INV_SLOTS> gSlotRegions;
-	std::array<MOUSE_REGION, NUM_INV_SLOTS> gObjectSlotRegions;
 	std::array<MOUSE_REGION, 7> gEquipmentRegions;
 	MOUSE_REGION gEquipmentPackRegion;
-	std::array<MOUSE_REGION, 3> gItemTransferIntentRegions;
+	std::array<MOUSE_REGION, gOS0ItemTransferIntents.size()> gItemTransferIntentRegions;
 	SOLDIERTYPE* gItemTransferTarget = nullptr;
 	MOUSE_REGION gStackSplitBlock;
 	std::array<MOUSE_REGION, 5> gStackSplitRegions;
@@ -549,7 +471,6 @@ namespace
 	std::array<MOUSE_REGION, 12> gLootRegions;
 	std::array<INT32, 12> gLootWorldItems;
 	std::array<ST::string, NUM_INV_SLOTS> gSlotHelp;
-	std::array<ST::string, NUM_INV_SLOTS> gObjectSlotHelp;
 	std::array<ST::string, 7> gEquipmentHelp;
 	std::array<ST::string, 12> gLootHelp;
 	GridNo gLootGridNo = NOWHERE;
@@ -603,22 +524,9 @@ namespace
 			"DECOR", "SALVAGE", "STORAGE", "BUILDING PART", "CRAFTING STATION",
 			"RESOURCE NODE", "BARRIER"
 		}};
-	constexpr const char* ASSET_CATALOG_PATH = "AssetCatalog/os0-assets.tsv";
-	constexpr const char* BUILTIN_ASSET_CATALOG_PATH = "os0-assets.tsv";
 
-	constexpr UINT8 RESOURCE_BITS = 5;
-	constexpr UINT32 RESOURCE_VALUE_MASK = (1u << RESOURCE_BITS) - 1u;
-	constexpr std::array<UINT8, static_cast<size_t>(ResourceKind::COUNT)>
-		gResourceShifts{{ 8, 13, 18, 23 }};
-	constexpr UINT32 OS0_UPGRADE_SHELTER = 0x10000000u;
-	constexpr UINT32 OS0_UPGRADE_WORKSHOP = 0x20000000u;
-	constexpr UINT32 OS0_UPGRADE_DEPOT = 0x40000000u;
 	constexpr UINT8 OS0_CONTAINER_MARKER = 0xE0;
-	constexpr std::array<SectorUpgrade, 3> gSectorUpgrades{{
-		{ "FIELD SHELTER", "CLICK TO RECOVER TEAM", 8, 4, 0, 4, OS0_UPGRADE_SHELTER },
-		{ "SALVAGE WORKSHOP", "+1 SALVAGE YIELD", 4, 4, 8, 0, OS0_UPGRADE_WORKSHOP },
-		{ "SECURE DEPOT", "+1 CONTAINER MATERIAL", 6, 3, 6, 2, OS0_UPGRADE_DEPOT }
-	}};
+	auto const& gSectorUpgrades = OS0SectorUpgrades();
 
 	constexpr std::array<const char*, 10> gTutorialStatNames{{
 		"HEALTH", "AGILITY", "DEXTERITY", "STRENGTH", "WISDOM",
@@ -645,60 +553,33 @@ namespace
 		r.RegionBottomRightY = y + h;
 	}
 
-	INT16 PanelDockStartX()
-	{
-		return static_cast<INT16>(gsVIEWPORT_END_X / COMMAND_MODULE_COUNT);
-	}
-
-	INT16 CommandModuleWidth()
-	{
-		return std::max<INT16>(1,
-			static_cast<INT16>(gsVIEWPORT_END_X / COMMAND_MODULE_COUNT));
-	}
-
 	INT16 WorkspaceBottom()
 	{
-		return std::max<INT16>(0, std::min<INT16>(gOrbY - 3,
-			gsVIEWPORT_WINDOW_END_Y));
+		return gUILayout.workspaceBottom();
 	}
 
 	BOOLEAN CompactArtworkWorkspace()
 	{
-		return gsVIEWPORT_END_X < PANE_W + CONTEXT_PANEL_W + 32 ||
-			WorkspaceBottom() < BAG_H + ACTIONS_PANEL_H + 28;
+		return gsVIEWPORT_END_X < PANE_W + SECTOR_PANEL_W + 32 ||
+			WorkspaceBottom() < BAG_H + TOOLBOX_H + 28;
 	}
 
 	void ApplyArtworkWorkspaceLayout(BOOLEAN positionCharacter)
 	{
 		const INT16 bottom = WorkspaceBottom();
-		FloatingPanel& context =
-			gFloatingPanels[static_cast<size_t>(FloatingPanelId::CONTEXT)];
-		FloatingPanel& tools =
-			gFloatingPanels[static_cast<size_t>(FloatingPanelId::TOOLS)];
-		FloatingPanel& actions =
-			gFloatingPanels[static_cast<size_t>(FloatingPanelId::ACTIONS)];
-		FloatingPanel& object =
-			gFloatingPanels[static_cast<size_t>(FloatingPanelId::OBJECT_INVENTORY)];
 		FloatingPanel& sector =
 			gFloatingPanels[static_cast<size_t>(FloatingPanelId::SECTOR)];
-		FloatingPanel& feedback =
-			gFloatingPanels[static_cast<size_t>(FloatingPanelId::FEEDBACK)];
+		FloatingPanel& inspector =
+			gFloatingPanels[static_cast<size_t>(FloatingPanelId::INSPECTOR)];
+		FloatingPanel& toolbox =
+			gFloatingPanels[static_cast<size_t>(FloatingPanelId::TOOLBOX)];
 
-		context.x = 8;
-		context.y = BRAND_H + 13;
-		tools.x = 8;
-		tools.y = std::max<INT16>(context.y + context.h + 6,
-			bottom - tools.h);
-		actions.x = std::max<INT16>(0, gsVIEWPORT_END_X - actions.w - 8);
-		actions.y = positionCharacter &&
-			bottom >= BAG_H + actions.h + 22 ? BAG_H + 14 :
-			std::max<INT16>(8, bottom - actions.h);
-		object.x = std::max<INT16>(0, (gsVIEWPORT_END_X - object.w) / 2);
-		object.y = std::max<INT16>(8, bottom - object.h - 8);
 		sector.x = std::max<INT16>(0, gsVIEWPORT_END_X - sector.w - 8);
 		sector.y = std::max<INT16>(8, bottom - sector.h - 8);
-		feedback.x = std::max<INT16>(0, (gsVIEWPORT_END_X - feedback.w) / 2);
-		feedback.y = std::max<INT16>(8, (bottom - feedback.h) / 2);
+		inspector.x = 8;
+		inspector.y = std::max<INT16>(8, bottom - inspector.h - 8);
+		toolbox.x = std::max<INT16>(8, gsVIEWPORT_END_X - toolbox.w - 8);
+		toolbox.y = std::max<INT16>(8, bottom - toolbox.h - 8);
 		if (positionCharacter)
 		{
 			gBagX = std::max<INT16>(0, gsVIEWPORT_END_X - PANE_W - 8);
@@ -708,28 +589,23 @@ namespace
 
 	void ClampWindowPositions()
 	{
-		const INT16 bottom = WorkspaceBottom();
-		gBagX = std::clamp<INT16>(gBagX, 0,
-			std::max<INT16>(0, gsVIEWPORT_END_X - PANE_W));
-		gBagY = std::clamp<INT16>(gBagY, 0,
-			std::max<INT16>(0, bottom - BAG_H));
-		gGodLibraryX = std::clamp<INT16>(gGodLibraryX, 0,
-			std::max<INT16>(0, gsVIEWPORT_END_X - GOD_LIBRARY_W));
-		gGodLibraryY = std::clamp<INT16>(gGodLibraryY, 0,
-			std::max<INT16>(0, bottom - GOD_LIBRARY_H));
+		OS0UIRect bag = gUILayout.clampWindow(
+			{ gBagX, gBagY, PANE_W, BAG_H });
+		gBagX = bag.x;
+		gBagY = bag.y;
+		OS0UIRect library = gUILayout.clampWindow(
+			{ gGodLibraryX, gGodLibraryY, GOD_LIBRARY_W, GOD_LIBRARY_H });
+		gGodLibraryX = library.x;
+		gGodLibraryY = library.y;
 		for (FloatingPanel& panel : gFloatingPanels)
 		{
-			panel.x = std::clamp<INT16>(panel.x, 0,
-				std::max<INT16>(0, gsVIEWPORT_END_X - panel.w));
-			panel.y = std::clamp<INT16>(panel.y, 0,
-				std::max<INT16>(0, bottom - panel.h));
+			OS0UIRect const clamped = gUILayout.clampWindow(
+				{ panel.x, panel.y, panel.w, panel.h });
+			panel.x = clamped.x;
+			panel.y = clamped.y;
 		}
-		FloatingPanel const& object =
-			gFloatingPanels[static_cast<size_t>(FloatingPanelId::OBJECT_INVENTORY)];
 		gInventoryX = gBagX;
 		gInventoryY = gBagY;
-		gLootX = object.x;
-		gLootY = object.y;
 	}
 
 	BOOLEAN SaveUILayout()
@@ -738,17 +614,19 @@ namespace
 		{
 			GCM->userPrivateFiles()->createDir("OS0");
 			ST::string output = ST::format(
-				"# Escape from Arulco UI layout v1\n"
+				"# Escape from Arulco UI layout v2\n"
 				"screen {} {}\n"
-				"expanded {}\n"
 				"bag {} {}\n"
 				"library {} {}\n",
-				SCREEN_WIDTH, SCREEN_HEIGHT, gCommandBarExpanded ? 1 : 0,
+				SCREEN_WIDTH, SCREEN_HEIGHT,
 				gBagX, gBagY, gGodLibraryX, gGodLibraryY);
+			constexpr std::array<const char*, static_cast<size_t>(FloatingPanelId::COUNT)>
+				panelNames{{ "sector", "inspector", "toolbox" }};
 			for (size_t i = 0; i < gFloatingPanels.size(); ++i)
 			{
 				FloatingPanel const& panel = gFloatingPanels[i];
-				output += ST::format("panel {} {} {}\n", i, panel.x, panel.y);
+				output += ST::format("panel {} {} {}\n",
+					panelNames[i], panel.x, panel.y);
 			}
 			AutoSGPFile file{
 				GCM->userPrivateFiles()->openForWriting(UI_LAYOUT_PATH, true) };
@@ -769,7 +647,6 @@ namespace
 		INT32 bagY = gBagY;
 		INT32 libraryX = gGodLibraryX;
 		INT32 libraryY = gGodLibraryY;
-		INT32 expanded = gCommandBarExpanded ? 1 : 0;
 		std::array<INT32, static_cast<size_t>(FloatingPanelId::COUNT)> panelX{};
 		std::array<INT32, static_cast<size_t>(FloatingPanelId::COUNT)> panelY{};
 		for (size_t i = 0; i < gFloatingPanels.size(); ++i)
@@ -790,16 +667,37 @@ namespace
 				std::string key;
 				row >> key;
 				if (key == "screen") row >> savedWidth >> savedHeight;
-				else if (key == "expanded") row >> expanded;
+				// v1 stored transient toolbox visibility. It is intentionally ignored.
+				else if (key == "expanded")
+				{
+					INT32 ignored = 0;
+					row >> ignored;
+				}
 				else if (key == "bag") row >> bagX >> bagY;
 				else if (key == "library") row >> libraryX >> libraryY;
 				else if (key == "panel")
 				{
-					INT32 index = -1;
+					std::string panelName;
 					INT32 x = 0;
 					INT32 y = 0;
-					if (row >> index >> x >> y && index >= 0 &&
-						index < static_cast<INT32>(gFloatingPanels.size()))
+					if (!(row >> panelName >> x >> y)) continue;
+					size_t index = gFloatingPanels.size();
+					if (panelName == "sector") index =
+						static_cast<size_t>(FloatingPanelId::SECTOR);
+					else if (panelName == "inspector") index =
+						static_cast<size_t>(FloatingPanelId::INSPECTOR);
+					else if (panelName == "toolbox") index =
+						static_cast<size_t>(FloatingPanelId::TOOLBOX);
+					else
+					{
+						// v1 used the old eight-panel enum. Migrate only the three
+						// surviving windows; dead prototype geometry is discarded.
+						const INT32 legacy = std::stoi(panelName);
+						if (legacy == 4) index = static_cast<size_t>(FloatingPanelId::SECTOR);
+						else if (legacy == 6) index = static_cast<size_t>(FloatingPanelId::INSPECTOR);
+						else if (legacy == 7) index = static_cast<size_t>(FloatingPanelId::TOOLBOX);
+					}
+					if (index < gFloatingPanels.size())
 					{
 						panelX[index] = x;
 						panelY[index] = y;
@@ -832,9 +730,9 @@ namespace
 			gFloatingPanels[i].x = scaleX(panelX[i]);
 			gFloatingPanels[i].y = scaleY(panelY[i]);
 		}
-		gCommandBarExpanded = expanded != 0;
-		gFloatingPanels[static_cast<size_t>(FloatingPanelId::SECTOR)].visible =
-			gCommandBarExpanded;
+		// Persist geometry, never transient open/closed state. A toolbox left open
+		// in an earlier run must not materialize underneath the first world click.
+		gFloatingPanels[static_cast<size_t>(FloatingPanelId::TOOLBOX)].visible = FALSE;
 		ClampWindowPositions();
 	}
 
@@ -848,104 +746,57 @@ namespace
 			(soldier->bLife < OKLIFE || soldier->uiStatusFlags & SOLDIER_DEAD);
 	}
 
-	UINT32& CurrentSectorFacilities()
+	OS0SectorKey CurrentSectorKey()
 	{
-		return SectorInfo[gWorldSector.AsByte()].uiFacilitiesFlags;
+		return { static_cast<UINT8>(gWorldSector.x),
+			static_cast<UINT8>(gWorldSector.y), gWorldSector.z };
 	}
 
-	UINT16 ResourceItem(ResourceKind kind)
+	OS0SectorEconomySystem& CurrentSectorEconomy()
 	{
-		switch (kind)
+		OS0SectorEconomySystem& economy =
+			OS0GetTacticalSession().state().sectorEconomy;
+		OS0SectorKey const sector = CurrentSectorKey();
+		if (!economy.legacyMigrated(sector))
 		{
-			case ResourceKind::TIMBER: return OS0_TIMBER;
-			case ResourceKind::STONE:  return OS0_STONE;
-			case ResourceKind::SCRAP:  return OS0_SCRAP;
-			case ResourceKind::SOIL:   return OS0_SOIL;
-			case ResourceKind::COUNT:  break;
+			UINT32 legacy = 0;
+			if (gWorldSector.z == 0)
+			{
+				UINT32& facilities = SectorInfo[gWorldSector.AsByte()].uiFacilitiesFlags;
+				legacy = facilities;
+				facilities &= ~OS0LegacySectorEconomyMask();
+			}
+			economy.migrateLegacy(sector, legacy);
 		}
-		return NOTHING;
+		return economy;
 	}
 
-	const char* ResourceName(ResourceKind kind)
+	UINT16 SectorResource(ResourceKind kind)
 	{
-		switch (kind)
-		{
-			case ResourceKind::TIMBER: return "TIMBER";
-			case ResourceKind::STONE:  return "STONE";
-			case ResourceKind::SCRAP:  return "SCRAP";
-			case ResourceKind::SOIL:   return "SOIL";
-			case ResourceKind::COUNT:  break;
-		}
-		return "MATERIAL";
-	}
-
-	BOOLEAN IsResourceItem(UINT16 item)
-	{
-		return item == OS0_TIMBER || item == OS0_STONE ||
-			item == OS0_SCRAP || item == OS0_SOIL;
-	}
-
-	ResourceKind ResourceFromItem(UINT16 item)
-	{
-		if (item == OS0_TIMBER) return ResourceKind::TIMBER;
-		if (item == OS0_STONE) return ResourceKind::STONE;
-		if (item == OS0_SCRAP) return ResourceKind::SCRAP;
-		return ResourceKind::SOIL;
-	}
-
-	UINT8 SectorResource(ResourceKind kind)
-	{
-		const UINT8 shift = gResourceShifts[static_cast<size_t>(kind)];
-		return static_cast<UINT8>((CurrentSectorFacilities() >> shift) &
-			RESOURCE_VALUE_MASK);
-	}
-
-	void SetSectorResource(ResourceKind kind, UINT8 value)
-	{
-		const UINT8 shift = gResourceShifts[static_cast<size_t>(kind)];
-		const UINT32 mask = RESOURCE_VALUE_MASK << shift;
-		UINT32& facilities = CurrentSectorFacilities();
-		facilities = (facilities & ~mask) |
-			((static_cast<UINT32>(std::min<UINT8>(value,
-				static_cast<UINT8>(RESOURCE_VALUE_MASK)))) << shift);
-	}
-
-	void AddSectorResource(ResourceKind kind, UINT8 amount)
-	{
-		SetSectorResource(kind, static_cast<UINT8>(std::min<UINT16>(
-			RESOURCE_VALUE_MASK, SectorResource(kind) + amount)));
+		return CurrentSectorEconomy().resource(CurrentSectorKey(), kind);
 	}
 
 	BOOLEAN HasUpgrade(SectorUpgrade const& upgrade)
 	{
-		return (CurrentSectorFacilities() & upgrade.flag) != 0;
+		return CurrentSectorEconomy().hasUpgrade(CurrentSectorKey(), upgrade.flag);
 	}
 
 	BOOLEAN CanBuildUpgrade(SectorUpgrade const& upgrade)
 	{
-		return !HasUpgrade(upgrade) &&
-			SectorResource(ResourceKind::TIMBER) >= upgrade.timber &&
-			SectorResource(ResourceKind::STONE) >= upgrade.stone &&
-			SectorResource(ResourceKind::SCRAP) >= upgrade.scrap &&
-			SectorResource(ResourceKind::SOIL) >= upgrade.soil;
+		auto const found = std::find_if(gSectorUpgrades.begin(),
+			gSectorUpgrades.end(), [&](SectorUpgrade const& candidate)
+			{ return candidate.flag == upgrade.flag; });
+		return found != gSectorUpgrades.end() &&
+			OS0CanBuildSectorUpgrade(CurrentSectorEconomy(), CurrentSectorKey(),
+				static_cast<size_t>(found - gSectorUpgrades.begin()));
 	}
 
 	BOOLEAN BuildSectorUpgrade(size_t index)
 	{
-		if (index >= gSectorUpgrades.size()) return FALSE;
-		SectorUpgrade const& upgrade = gSectorUpgrades[index];
-		if (!CanBuildUpgrade(upgrade)) return FALSE;
-		SetSectorResource(ResourceKind::TIMBER,
-			SectorResource(ResourceKind::TIMBER) - upgrade.timber);
-		SetSectorResource(ResourceKind::STONE,
-			SectorResource(ResourceKind::STONE) - upgrade.stone);
-		SetSectorResource(ResourceKind::SCRAP,
-			SectorResource(ResourceKind::SCRAP) - upgrade.scrap);
-		SetSectorResource(ResourceKind::SOIL,
-			SectorResource(ResourceKind::SOIL) - upgrade.soil);
-		CurrentSectorFacilities() |= upgrade.flag;
+		if (!OS0BuildSectorUpgrade(CurrentSectorEconomy(), CurrentSectorKey(),
+			index)) return FALSE;
 		RecordFeedbackEvent(ST::format("SECTOR UPGRADE {} {}",
-			gWorldSector.AsShortString(), upgrade.name));
+			gWorldSector.AsShortString(), gSectorUpgrades[index].name));
 		return TRUE;
 	}
 
@@ -974,36 +825,6 @@ namespace
 				gWorldSector.AsShortString()));
 		}
 		return recovered;
-	}
-
-	const char* ContextActionName(ContextAction action)
-	{
-		switch (action)
-		{
-			case ContextAction::INSPECT: return "INSPECT";
-			case ContextAction::CONTENTS: return "CONTENTS";
-			case ContextAction::BUILD: return "BUILD";
-			case ContextAction::CARRY: return "CARRY";
-			case ContextAction::TALK: return "TALK";
-			case ContextAction::ATTACK: return "ATTACK";
-			case ContextAction::STAND: return "STAND";
-			case ContextAction::CROUCH: return "CROUCH";
-			case ContextAction::PRONE: return "PRONE";
-			case ContextAction::STEALTH: return "STEALTH";
-			case ContextAction::WEAPON_MODE: return "WEAPON_MODE";
-			case ContextAction::RELOAD: return "RELOAD";
-			case ContextAction::SWAP_HANDS: return "SWAP_HANDS";
-			case ContextAction::UNLOAD: return "UNLOAD";
-			case ContextAction::DETAILS: return "DETAILS";
-			case ContextAction::EQUIP_ITEM: return "EQUIP_ITEM";
-			case ContextAction::MOVE_ITEM: return "MOVE_ITEM";
-			case ContextAction::PICK_UP: return "PICK_UP";
-			case ContextAction::DIG: return "DIG";
-			case ContextAction::SALVAGE: return "SALVAGE";
-			case ContextAction::CATALOG: return "CATALOG";
-			case ContextAction::TAKE_COVER: return "TAKE_COVER";
-		}
-		return "UNKNOWN";
 	}
 
 	void RecordFeedbackEvent(const ST::string& event)
@@ -1071,7 +892,7 @@ namespace
 				stamp, g_version_label, g_version_number,
 				gFeedbackCategories[gFeedbackCategory],
 				gWorldSector.AsShortString(), GetJA2Clock(), gWorldZoom,
-				gCursorAction);
+				ContextActionName(CursorState().action));
 			if (selected)
 			{
 				report += ST::format(
@@ -1081,15 +902,16 @@ namespace
 			}
 			report += ST::format(
 				"Inspected target: {}\nGrid: {} / level {} / tile {}\n"
-				"Panels: character={} context={} tools={} actions={} object={}\n\n"
+				"Panels: character={} radial={} loot={} equipment={} strategy={} "
+				"inspector={} toolbox={}\n\n"
 				"TESTER DESCRIPTION\n------------------\n{}\n\n"
 				"RECENT OS0 EVENTS\n-----------------\n",
 				gContextTitle, gInspectedGridNo, gInspectedLevel,
 				gInspectedTileIndex, gBagVisible,
-				gFloatingPanels[static_cast<size_t>(FloatingPanelId::CONTEXT)].visible,
-				gFloatingPanels[static_cast<size_t>(FloatingPanelId::TOOLS)].visible,
-				gFloatingPanels[static_cast<size_t>(FloatingPanelId::ACTIONS)].visible,
-				gFloatingPanels[static_cast<size_t>(FloatingPanelId::OBJECT_INVENTORY)].visible,
+				gContextVisible, gLootVisible, gEquipmentExplodedVisible,
+				gFloatingPanels[static_cast<size_t>(FloatingPanelId::SECTOR)].visible,
+				gFloatingPanels[static_cast<size_t>(FloatingPanelId::INSPECTOR)].visible,
+				gFloatingPanels[static_cast<size_t>(FloatingPanelId::TOOLBOX)].visible,
 				gFeedbackText.empty() ? "(No description entered.)" : gFeedbackText);
 
 			for (size_t i = 0; i < gFeedbackEventCount; ++i)
@@ -1099,7 +921,7 @@ namespace
 				report += gFeedbackEvents[index] + "\n";
 			}
 			report += "\nASSET CATALOG SNAPSHOT\n----------------------\n";
-			report += SerializeAssetCatalog();
+			report += OS0SerializeAssetCatalog();
 			report += "\nENGINE LOG (LAST 32 KB)\n-----------------------\n";
 			report += ReadEngineLogTail();
 			report += "\n";
@@ -1118,116 +940,6 @@ namespace
 		}
 	}
 
-	AssetCatalogRecord* FindAssetCatalogRecord(INT16 tileset, UINT16 tileIndex)
-	{
-		for (AssetCatalogRecord& record : gAssetCatalog)
-			if (record.tileset == tileset && record.tileIndex == tileIndex)
-				return &record;
-		return nullptr;
-	}
-
-	AssetCatalogRecord const* FindAssetCatalogRecordConst(INT16 tileset,
-		UINT16 tileIndex)
-	{
-		for (AssetCatalogRecord const& record : gAssetCatalog)
-			if (record.tileset == tileset && record.tileIndex == tileIndex)
-				return &record;
-		return nullptr;
-	}
-
-	ST::string SerializeAssetCatalog()
-	{
-		ST::string output =
-			"# Escape from Arulco asset catalog v1\n"
-			"# tileset tile category material role width height buildable label\n";
-		for (AssetCatalogRecord const& record : gAssetCatalog)
-		{
-			output += ST::format("{} {} {} {} {} {} {} {}\t{}\n",
-				record.tileset, record.tileIndex,
-				static_cast<UINT8>(record.category),
-				static_cast<UINT8>(record.material),
-				static_cast<UINT8>(record.role), record.width, record.height,
-				record.buildable ? 1 : 0, record.label);
-		}
-		return output;
-	}
-
-	BOOLEAN WriteAssetCatalog()
-	{
-		try
-		{
-			GCM->userPrivateFiles()->createDir("AssetCatalog");
-			ST::string const output = SerializeAssetCatalog();
-			AutoSGPFile file{
-				GCM->userPrivateFiles()->openForWriting(ASSET_CATALOG_PATH, true) };
-			file->write(output.c_str(), output.size());
-			return TRUE;
-		}
-		catch (...)
-		{
-			return FALSE;
-		}
-	}
-
-	void LoadAssetCatalog()
-	{
-		gAssetCatalog.clear();
-		auto merge = [](const ST::string& contents)
-		{
-			std::istringstream stream(contents.c_str());
-			std::string line;
-			while (std::getline(stream, line))
-			{
-				if (line.empty() || line[0] == '#') continue;
-				std::istringstream row(line);
-				int tileset, tile, category, material, role, width, height, buildable;
-				if (!(row >> tileset >> tile >> category >> material >> role >>
-					width >> height >> buildable)) continue;
-				std::string label;
-				std::getline(row, label);
-				const size_t first = label.find_first_not_of(" \t");
-				if (first != std::string::npos) label.erase(0, first);
-				else label = "UNNAMED ASSET";
-				if (tile < 0 || tile >= NUMBEROFTILES ||
-					category < 0 || category >= static_cast<int>(AssetCategory::COUNT) ||
-					material < 0 || material >= static_cast<int>(AssetMaterial::COUNT) ||
-					role < 0 || role >= static_cast<int>(AssetRole::COUNT)) continue;
-				AssetCatalogRecord parsed{ static_cast<INT16>(tileset),
-					static_cast<UINT16>(tile), static_cast<AssetCategory>(category),
-					static_cast<AssetMaterial>(material), static_cast<AssetRole>(role),
-					static_cast<UINT8>(std::clamp(width, 1, 12)),
-					static_cast<UINT8>(std::clamp(height, 1, 12)),
-					buildable != 0, ST::string(label) };
-				if (AssetCatalogRecord* existing = FindAssetCatalogRecord(
-					parsed.tileset, parsed.tileIndex)) *existing = parsed;
-				else gAssetCatalog.push_back(parsed);
-			}
-		};
-		try
-		{
-			if (GCM->doesGameResExists(BUILTIN_ASSET_CATALOG_PATH))
-			{
-				AutoSGPFile builtIn{
-					GCM->openGameResForReading(BUILTIN_ASSET_CATALOG_PATH) };
-				merge(builtIn->readStringToEnd());
-			}
-		}
-		catch (...)
-		{
-			RecordFeedbackEvent("BUILT-IN ASSET CATALOG LOAD FAILED");
-		}
-		try
-		{
-			AutoSGPFile user{
-				GCM->userPrivateFiles()->openForReading(ASSET_CATALOG_PATH) };
-			merge(user->readStringToEnd());
-		}
-		catch (...)
-		{
-			// The user catalog is created by the first SAVE; absence is normal.
-		}
-	}
-
 	void StopFeedbackEditing()
 	{
 		if (!gFeedbackEditing) return;
@@ -1239,8 +951,9 @@ namespace
 	BOOLEAN FeedbackKeyboardHook(InputAtom* event)
 	{
 		const FloatingPanel& panel =
-			gFloatingPanels[static_cast<size_t>(FloatingPanelId::FEEDBACK)];
-		if (!panel.visible || !gFeedbackEditing) return FALSE;
+			gFloatingPanels[static_cast<size_t>(FloatingPanelId::SECTOR)];
+		if (!panel.visible || gSectorPanelMode != SectorPanelMode::REPORT ||
+			!gFeedbackEditing) return FALSE;
 		if (event->usEvent == TEXT_INPUT)
 		{
 			for (char32_t c : event->codepoints)
@@ -1458,14 +1171,14 @@ namespace
 	{
 		if (gridNo < 0 || gridNo >= WORLD_MAX || tileIndex >= NUMBEROFTILES) return;
 		const UINT16 catalogTile = CanonicalAssetTileIndex(gridNo, level, tileIndex);
-		if (AssetCatalogRecord const* const existing = FindAssetCatalogRecordConst(
+		if (AssetCatalogRecord const* const existing = OS0FindAssetCatalogRecordConst(
 			static_cast<INT16>(giCurrentTilesetID), catalogTile))
 			gCatalogDraft = *existing;
 		else
 			gCatalogDraft = MakeDefaultCatalogRecord(gridNo, level, tileIndex);
 		gAssetCatalogReturnToLibrary = gGodLibraryVisible;
-		gAssetCatalogVisible = TRUE;
-		gGodLibraryVisible = FALSE;
+		gUIRuntime.show(OS0UIPanel::ASSET_CATALOG);
+		gUIRuntime.hide(OS0UIPanel::ASSET_LIBRARY);
 		PositionBagRegions();
 		SetBagRegionsEnabled(TRUE);
 		SetRenderFlags(RENDER_FLAG_FULL);
@@ -1487,41 +1200,28 @@ namespace
 
 	void RestoreWorldMoveShade()
 	{
-		if (!gWorldMoveSourceShaded) return;
-		if (LEVELNODE* const node = WorldLevelNodeAt(gWorldMoveSource, 0,
-			gWorldMoveTileIndex))
+		OS0CarryState& carry = CarryState();
+		if (!carry.sourceShaded) return;
+		if (LEVELNODE* const node = WorldLevelNodeAt(carry.source,
+			carry.sourceLevel, carry.tileIndex))
 		{
-			node->ubShadeLevel = gWorldMoveOldShade;
+			node->ubShadeLevel = carry.oldShade;
 		}
-		gWorldMoveSourceShaded = FALSE;
+		carry.sourceShaded = FALSE;
 	}
 
 	void ShadeWorldMoveSource()
 	{
 		RestoreWorldMoveShade();
-		if (LEVELNODE* const node = WorldLevelNodeAt(gWorldMoveSource, 0,
-			gWorldMoveTileIndex))
-		{
-			// Interactive-tile hover temporarily uses shade 0. Never preserve that
-			// highlight as the object's post-carry lighting value.
-			gWorldMoveOldShade = std::max(node->ubShadeLevel,
-				node->ubNaturalShadeLevel);
-			node->ubShadeLevel = SHADE_MIN;
-			gWorldMoveSourceShaded = TRUE;
-		}
+		// Never encode carry state by changing the map node's palette. That old
+		// shortcut left moved crates permanently grey when another hover/reset won
+		// the shade race. The coloured carried sprite is now the only preview.
 	}
 
 	void ClearWorldMoveState()
 	{
 		RestoreWorldMoveShade();
-		gWorldMovePending = FALSE;
-		gWorldMoveWalking = FALSE;
-		gWorldMoveSource = NOWHERE;
-		gWorldMoveDestination = NOWHERE;
-		gWorldMoveActionGrid = NOWHERE;
-		gWorldMoveTileIndex = NO_TILE;
-		gWorldMoveCarrier = nullptr;
-		gWorldMoveLifted = FALSE;
+		CarryState().reset();
 	}
 
 	GridNo FindCarryActionGrid(SOLDIERTYPE* carrier, GridNo destination)
@@ -1579,17 +1279,17 @@ namespace
 		if (!IsInspectedWorldAssetNear() || !IsInspectedWorldAssetMovable() ||
 			gInspectedTileIndex >= NUMBEROFTILES) return FALSE;
 		ClearWorldMoveState();
-		gCursorAction = 2;
-		gWorldMovePending = TRUE;
-		gWorldMoveSource = gInspectedGridNo;
-		gWorldMoveTileIndex = gInspectedTileIndex;
-		gWorldMoveCarrier = GetSelectedMan();
-		if (STRUCTURE const* const structure = WorldStructureAt(gWorldMoveSource, 0,
-			gWorldMoveTileIndex))
+		CursorState().action = ContextAction::CARRY;
+		OS0CarryState& carry = CarryState();
+		SOLDIERTYPE* const carrier = GetSelectedMan();
+		if (!carrier || !carry.begin(gInspectedGridNo, gInspectedLevel,
+			gInspectedTileIndex, Soldier2ID(carrier))) return FALSE;
+		if (STRUCTURE const* const structure = WorldStructureAt(carry.source,
+			carry.sourceLevel, carry.tileIndex))
 		{
 			WORLD_PHYSICS_PROFILE const physics = GetWorldPhysicsProfile(structure);
-			gWorldMoveLifted = physics.massKg <=
-				GetSoldierWorldCarryCapacityKg(gWorldMoveCarrier) * 0.55f;
+			carry.lifted = physics.massKg <=
+				GetSoldierWorldCarryCapacityKg(carrier) * 0.55f;
 		}
 		ShadeWorldMoveSource();
 		gLootVisible = FALSE;
@@ -1628,38 +1328,52 @@ namespace
 		BltVideoSurface(gInspectorPreview, FRAME_BUFFER, 0, 0, &source);
 	}
 
-	void RefreshObjectSymbol(UINT16 tileIndex)
+	void CaptureAnimatedMercPreview(SOLDIERTYPE const* soldier)
 	{
-		gObjectSymbolTileIndex = NO_TILE;
-		if (!gObjectSymbolSurface)
-			gObjectSymbolSurface = AddVideoSurface(64, 64, PIXEL_DEPTH);
-		gObjectSymbolSurface->Fill(Get16BPPColor(FROMRGB(3, 5, 5)));
+		constexpr UINT16 width = 48;
+		constexpr UINT16 height = 62;
+		if (!soldier) return;
+		if (!gAnimatedMercPreview)
+		{
+			gAnimatedMercPreview = AddVideoSurface(width, height, PIXEL_DEPTH);
+			gAnimatedMercPreview->Fill(Get16BPPColor(FROMRGB(4, 7, 7)));
+		}
+		INT16 anchorX;
+		INT16 anchorY;
+		if (!GetActorDisplayAnchor(soldier, anchorX, anchorY)) return;
+		const INT16 sourceX = std::clamp<INT16>(anchorX - width / 2, 0,
+			std::max<INT16>(0, SCREEN_WIDTH - width));
+		const INT16 sourceY = std::clamp<INT16>(anchorY - height + 7, 0,
+			std::max<INT16>(0, SCREEN_HEIGHT - height));
+		if (sourceX < gsVIEWPORT_START_X || sourceX + width > gsVIEWPORT_END_X ||
+			sourceY < gsVIEWPORT_WINDOW_START_Y ||
+			sourceY + height > gsVIEWPORT_WINDOW_END_Y) return;
+		// Keep the last clean tactical frame if the movable window currently covers
+		// the actor; otherwise the panel would recursively capture itself.
+		if (gBagVisible && sourceX < gBagX + PANE_W && sourceX + width > gBagX &&
+			sourceY < gBagY + BAG_H && sourceY + height > gBagY) return;
+		const SGPBox source{
+			static_cast<UINT16>(sourceX), static_cast<UINT16>(sourceY), width, height
+		};
+		BltVideoSurface(gAnimatedMercPreview, FRAME_BUFFER, 0, 0, &source);
+		gAnimatedMercPreviewSoldier = soldier;
+	}
+
+	void DrawWorldItemSprite(OBJECTTYPE const& object, INT16 centreX,
+		INT16 centreY)
+	{
+		if (object.usItem == NOTHING) return;
+		const UINT16 tileIndex = GetTileGraphicForItem(GCM->getItem(object.usItem));
 		if (tileIndex >= NUMBEROFTILES) return;
 		TILE_ELEMENT const& tile = gTileDatabase[tileIndex];
 		if (!tile.hTileSurface) return;
 		ETRLEObject const& frame =
 			tile.hTileSurface->SubregionProperties(tile.usRegionIndex);
-		const INT16 drawX = static_cast<INT16>(32 - frame.usWidth / 2 -
+		const INT16 x = static_cast<INT16>(centreX - frame.usWidth / 2 -
 			frame.sOffsetX);
-		const INT16 drawY = static_cast<INT16>(57 - frame.usHeight -
+		const INT16 y = static_cast<INT16>(centreY - frame.usHeight / 2 -
 			frame.sOffsetY);
-		BltVideoObject(gObjectSymbolSurface, tile.hTileSurface,
-			tile.usRegionIndex, drawX, drawY);
-		gObjectSymbolTileIndex = tileIndex;
-	}
-
-	void DrawObjectSymbol(INT16 x, INT16 y, INT16 size)
-	{
-		if (!gObjectSymbolSurface || gObjectSymbolTileIndex >= NUMBEROFTILES) return;
-		const SGPBox source{ 0, 0, 64, 64 };
-		const SGPBox destination{
-			static_cast<UINT16>(std::max<INT16>(0, x)),
-			static_cast<UINT16>(std::max<INT16>(0, y)),
-			static_cast<UINT16>(size), static_cast<UINT16>(size)
-		};
-		BltStretchVideoSurface(FRAME_BUFFER, gObjectSymbolSurface,
-			&source, &destination);
-		OutlineBox(x, y, size, size, Get16BPPColor(FROMRGB(118, 0, 0)));
+		BltVideoObject(FRAME_BUFFER, tile.hTileSurface, tile.usRegionIndex, x, y);
 	}
 
 	void StartExplodedView(GridNo gridNo, UINT16 tileIndex, BOOLEAN force)
@@ -1709,7 +1423,7 @@ namespace
 
 	void CloseContextMenu()
 	{
-		gContextVisible = FALSE;
+		gUIRuntime.hide(OS0UIPanel::CONTEXT);
 		gObjectActionFanVisible = FALSE;
 		gCharacterActionFanVisible = FALSE;
 		gHoverVisible = FALSE;
@@ -1724,40 +1438,54 @@ namespace
 		BOOLEAN enabled = TRUE)
 	{
 		if (gContextEntryCount >= gContextEntries.size()) return;
-		gContextEntries[gContextEntryCount++] = { action, label, enabled };
-	}
-
-	void AddPanelAction(ContextAction action, const ST::string& label,
-		BOOLEAN enabled = TRUE)
-	{
-		if (gPanelActionEntryCount >= gPanelActionEntries.size()) return;
-		gPanelActionEntries[gPanelActionEntryCount++] = { action, label, enabled };
-	}
-
-	UINT16 ContextActionIconFrame(ContextAction action)
-	{
-		switch (action)
+		const ContextEntry entry{ action, label, enabled };
+		size_t insertAt = gContextEntryCount;
+		while (insertAt > 0 &&
+			static_cast<UINT8>(ContextActionCategory(
+				gContextEntries[insertAt - 1].action)) >
+			static_cast<UINT8>(ContextActionCategory(action)))
 		{
-			case ContextAction::CONTENTS:
-			case ContextAction::PICK_UP:
-			case ContextAction::EQUIP_ITEM:
-			case ContextAction::MOVE_ITEM: return 18;
-			case ContextAction::CARRY:
-			case ContextAction::STAND:
-			case ContextAction::TAKE_COVER: return 3;
-			case ContextAction::CROUCH: return 6;
-			case ContextAction::PRONE: return 9;
-			case ContextAction::TALK: return 21;
-			case ContextAction::ATTACK:
-			case ContextAction::WEAPON_MODE:
-			case ContextAction::RELOAD:
-			case ContextAction::UNLOAD: return 24;
-			case ContextAction::DIG:
-			case ContextAction::SALVAGE:
-			case ContextAction::BUILD: return 39;
-			case ContextAction::CATALOG: return 12;
-			case ContextAction::STEALTH: return 0;
-			default: return 12;
+			gContextEntries[insertAt] = gContextEntries[insertAt - 1];
+			--insertAt;
+		}
+		gContextEntries[insertAt] = entry;
+		++gContextEntryCount;
+	}
+
+	UINT16 ActionCategoryColour(ActionCategory category)
+	{
+		switch (category)
+		{
+			case ActionCategory::INFO: return Get16BPPColor(FROMRGB(150, 150, 136));
+			case ActionCategory::GEAR: return Get16BPPColor(FROMRGB(184, 126, 32));
+			case ActionCategory::MOVEMENT: return Get16BPPColor(FROMRGB(68, 142, 76));
+			case ActionCategory::STANCE: return Get16BPPColor(FROMRGB(102, 118, 62));
+			case ActionCategory::COMBAT: return Get16BPPColor(FROMRGB(205, 12, 12));
+			case ActionCategory::MEDICAL: return Get16BPPColor(FROMRGB(194, 194, 194));
+			case ActionCategory::SOCIAL: return Get16BPPColor(FROMRGB(70, 116, 164));
+			case ActionCategory::WORLD: return Get16BPPColor(FROMRGB(126, 82, 42));
+			case ActionCategory::DEBUG: return Get16BPPColor(FROMRGB(156, 38, 156));
+			case ActionCategory::COUNT: break;
+		}
+		return Get16BPPColor(FROMRGB(118, 0, 0));
+	}
+
+	void DrawContextActionIcon(ContextAction action, INT16 x, INT16 y)
+	{
+		if (ContextActionUsesDoorIcons(action) && gGodDoorIcons)
+			BltVideoObject(FRAME_BUFFER, gGodDoorIcons, 0, x, y);
+		else if (gGodNewIcons)
+			BltVideoObject(FRAME_BUFFER, gGodNewIcons,
+				ContextActionIconFrame(action), x, y);
+
+		const UINT16 category = ActionCategoryColour(ContextActionCategory(action));
+		ColorFillVideoSurfaceArea(FRAME_BUFFER, x, y + 21, x + 20, y + 22, category);
+		if (action == ContextAction::AUTO_FIRST_AID)
+		{
+			ColorFillVideoSurfaceArea(FRAME_BUFFER, x + 9, y + 5,
+				x + 12, y + 18, category);
+			ColorFillVideoSurfaceArea(FRAME_BUFFER, x + 4, y + 10,
+				x + 17, y + 13, category);
 		}
 	}
 
@@ -1783,7 +1511,7 @@ namespace
 	{
 		SalvageProfile result{ "WORLD ASSET / FIXED", ResourceKind::SCRAP, 0, FALSE };
 		STRUCTURE const* const structure = WorldStructureAt(gridNo, level, tileIndex);
-		if (AssetCatalogRecord const* const custom = FindAssetCatalogRecordConst(
+		if (AssetCatalogRecord const* const custom = OS0FindAssetCatalogRecordConst(
 			static_cast<INT16>(giCurrentTilesetID),
 			CanonicalAssetTileIndex(gridNo, level, tileIndex)))
 		{
@@ -1860,7 +1588,7 @@ namespace
 		UINT16 tileIndex, BOOLEAN* catalogued = nullptr)
 	{
 		const UINT16 canonical = CanonicalAssetTileIndex(gridNo, level, tileIndex);
-		if (AssetCatalogRecord const* const record = FindAssetCatalogRecordConst(
+		if (AssetCatalogRecord const* const record = OS0FindAssetCatalogRecordConst(
 			static_cast<INT16>(giCurrentTilesetID), canonical))
 		{
 			if (catalogued) *catalogued = TRUE;
@@ -1937,33 +1665,10 @@ namespace
 	{
 		if (tool == FieldToolKind::NONE) return TRUE;
 		const UINT16 item = FieldToolItem(tool);
-		return soldier && item != NOTHING && FindUsableObj(soldier, item) != NO_SLOT;
-	}
-
-	INT16 AssetDurabilityMaximum(AssetMaterial material)
-	{
-		switch (material)
-		{
-			case AssetMaterial::WOOD:
-			case AssetMaterial::ORGANIC: return 70;
-			case AssetMaterial::STONE:   return 160;
-			case AssetMaterial::METAL:   return 210;
-			case AssetMaterial::SAND:
-			case AssetMaterial::EARTH:   return 110;
-			default:                     return 90;
-		}
-	}
-
-	INT16 CurrentAssetDurability(GridNo gridNo, UINT16 tileIndex,
-		AssetMaterial material)
-	{
-		const auto state = std::find_if(gAssetDamage.begin(), gAssetDamage.end(),
-			[&](AssetDamageState const& value)
-			{
-				return value.gridNo == gridNo && value.tileIndex == tileIndex;
-			});
-		return state == gAssetDamage.end() ? AssetDurabilityMaximum(material) :
-			std::max<INT16>(0, state->remaining);
+		return soldier && item != NOTHING &&
+			((gpItemPointer && gpItemPointerSoldier == soldier &&
+				gpItemPointer->usItem == item) ||
+			 FindUsableObj(soldier, item) != NO_SLOT);
 	}
 
 	void EnsureDebugFieldTools(SOLDIERTYPE* soldier)
@@ -1986,7 +1691,7 @@ namespace
 	{
 		if (amount == 0 || kind == ResourceKind::COUNT) return;
 		OBJECTTYPE resource{};
-		CreateItems(ResourceItem(kind), 100,
+		CreateItems(OS0ResourceItem(kind), 100,
 			std::min<UINT8>(amount, MAX_OBJECTS_PER_SLOT), &resource);
 		AddItemToPool(gridNo, &resource, HIDDEN_IN_OBJECT, level, 0, -1);
 	}
@@ -2022,7 +1727,8 @@ namespace
 			static_cast<UINT32>(gWorldSector.AsByte()) * 3266489917u;
 		SalvageProfile const asset = DescribeWorldAsset(gridNo, level, tileIndex);
 		UINT8 primary = static_cast<UINT8>(1 + hash % 3);
-		if (CurrentSectorFacilities() & OS0_UPGRADE_DEPOT) ++primary;
+		if (CurrentSectorEconomy().hasUpgrade(CurrentSectorKey(),
+			OS0_SECTOR_UPGRADE_DEPOT)) ++primary;
 		AddResourceItemToPool(gridNo, level, asset.resource, primary);
 		AddResourceItemToPool(gridNo, level,
 			(hash & 1) ? ResourceKind::SCRAP : ResourceKind::SOIL,
@@ -2054,31 +1760,29 @@ namespace
 		if (itemIndex < 0 || static_cast<size_t>(itemIndex) >= gWorldItems.size())
 			return FALSE;
 		WORLDITEM& worldItem = GetWorldItem(itemIndex);
-		if (!worldItem.fExists || !IsResourceItem(worldItem.o.usItem)) return FALSE;
-		ResourceKind const kind = ResourceFromItem(worldItem.o.usItem);
+		if (!worldItem.fExists || !OS0IsResourceItem(worldItem.o.usItem)) return FALSE;
+		ResourceKind const kind = OS0ResourceFromItem(worldItem.o.usItem);
 		const UINT8 amount = worldItem.o.ubNumberOfObjects;
-		if (amount == 0 || SectorResource(kind) + amount > RESOURCE_VALUE_MASK)
-			return FALSE;
-		AddSectorResource(kind, amount);
+		if (!OS0DepositResources(CurrentSectorEconomy(), CurrentSectorKey(),
+			kind, amount)) return FALSE;
 		RemoveItemFromPool(worldItem);
 		RecordFeedbackEvent(ST::format("STOCKPILE +{} {}", amount,
-			ResourceName(kind)));
+			OS0ResourceName(kind)));
 		return TRUE;
 	}
 
 	BOOLEAN StoreResourceInventoryItem(SOLDIERTYPE* soldier, INT8 slot)
 	{
 		if (!soldier || slot < 0 || slot >= NUM_INV_SLOTS ||
-			!IsResourceItem(soldier->inv[slot].usItem)) return FALSE;
+			!OS0IsResourceItem(soldier->inv[slot].usItem)) return FALSE;
 		OBJECTTYPE& object = soldier->inv[slot];
-		ResourceKind const kind = ResourceFromItem(object.usItem);
+		ResourceKind const kind = OS0ResourceFromItem(object.usItem);
 		const UINT8 amount = object.ubNumberOfObjects;
-		if (amount == 0 || SectorResource(kind) + amount > RESOURCE_VALUE_MASK)
-			return FALSE;
-		AddSectorResource(kind, amount);
+		if (!OS0DepositResources(CurrentSectorEconomy(), CurrentSectorKey(),
+			kind, amount)) return FALSE;
 		DeleteObj(&object);
 		RecordFeedbackEvent(ST::format("STOCKPILE +{} {} FROM PACK", amount,
-			ResourceName(kind)));
+			OS0ResourceName(kind)));
 		return TRUE;
 	}
 
@@ -2086,7 +1790,9 @@ namespace
 	{
 		// Vanilla has no shovel item ID. CROWBAR is the save-compatible field-tool
 		// fallback until the dedicated OS//0 shovel asset is externalized.
-		return soldier && FindUsableObj(soldier, CROWBAR) != NO_SLOT;
+		return soldier && ((gpItemPointer && gpItemPointerSoldier == soldier &&
+			gpItemPointer->usItem == CROWBAR) ||
+			FindUsableObj(soldier, CROWBAR) != NO_SLOT);
 	}
 
 	BOOLEAN CanDigTerrainAt(SOLDIERTYPE const* soldier, GridNo gridNo)
@@ -2135,7 +1841,8 @@ namespace
 		if (!removed) return FALSE;
 
 		UINT8 amount = profile.amount;
-		if (CurrentSectorFacilities() & OS0_UPGRADE_WORKSHOP)
+		if (CurrentSectorEconomy().hasUpgrade(CurrentSectorKey(),
+			OS0_SECTOR_UPGRADE_WORKSHOP))
 			amount = std::min<UINT8>(MAX_OBJECTS_PER_SLOT,
 				static_cast<UINT8>(amount + 1));
 		AddResourceItemToPool(dropGrid, level, profile.resource, amount);
@@ -2148,12 +1855,11 @@ namespace
 		gInspectedGridNo = dropGrid;
 		gInspectedLevel = level;
 		gInspectedTileIndex = NO_TILE;
-		gContextTitle = ST::format("SALVAGE / {}", ResourceName(profile.resource));
+		gContextTitle = ST::format("SALVAGE / {}", OS0ResourceName(profile.resource));
 		gContentsMode = ContentsMode::WORLD;
 		gLootVisible = TRUE;
-		gFloatingPanels[static_cast<size_t>(FloatingPanelId::OBJECT_INVENTORY)].visible = TRUE;
 		RecordFeedbackEvent(ST::format("SALVAGE {} +{} {} grid {}",
-			profile.displayName, amount, ResourceName(profile.resource), dropGrid));
+			profile.displayName, amount, OS0ResourceName(profile.resource), dropGrid));
 		return TRUE;
 	}
 
@@ -2216,7 +1922,6 @@ namespace
 		gLootTileIndex = NO_TILE;
 		gContentsMode = ContentsMode::WORLD;
 		gLootVisible = TRUE;
-		gFloatingPanels[static_cast<size_t>(FloatingPanelId::OBJECT_INVENTORY)].visible = TRUE;
 		return TRUE;
 	}
 
@@ -2287,129 +1992,45 @@ namespace
 		soldier->usUIMovementMode = RUNNING;
 		if (!EVENT_InternalGetNewSoldierPath(soldier, destination, RUNNING,
 			TRUE, TRUE)) return FALSE;
-		gCoverCommandSoldier = soldier;
-		gCoverCommandDestination = destination;
+		OS0GetTacticalSession().state().coverOrders.issue({ soldier->ubID,
+			destination, static_cast<UINT8>(soldier->bLevel),
+			OS0CoverStance::AUTO });
 		RecordFeedbackEvent(ST::format("AI COVER {} -> {}", soldier->name,
 			destination));
 		return TRUE;
 	}
 
-	void UpdateCoverCommand()
+	void UpdateCoverCommands()
 	{
-		if (!gCoverCommandSoldier) return;
-		if (!gCoverCommandSoldier->bActive || gCoverCommandSoldier->bLife < OKLIFE)
+		OS0CoverOrderSystem& system =
+			OS0GetTacticalSession().state().coverOrders;
+		std::vector<OS0CoverOrder> const orders = system.orders();
+		for (OS0CoverOrder const& order : orders)
 		{
-			gCoverCommandSoldier = nullptr;
-			gCoverCommandDestination = NOWHERE;
-			return;
-		}
-		if (gCoverCommandSoldier->sGridNo != gCoverCommandDestination) return;
-		const INT8 coverHeight = NearbyCoverHeight(gCoverCommandDestination,
-			gCoverCommandSoldier->bLevel);
-		const INT8 stance = coverHeight > 0 && coverHeight < 2 ?
-			ANIM_PRONE : ANIM_CROUCH;
-		if (IsValidStance(gCoverCommandSoldier, stance))
-			ChangeSoldierStance(gCoverCommandSoldier, stance);
-		RecordFeedbackEvent(ST::format("AI COVER ARRIVED / {}",
-			stance == ANIM_PRONE ? "PRONE" : "CROUCH"));
-		gCoverCommandSoldier = nullptr;
-		gCoverCommandDestination = NOWHERE;
-	}
-
-	void RefreshPanelActions()
-	{
-		gPanelActionEntryCount = 0;
-		SOLDIERTYPE* const subject = gInspectedSoldier;
-		SOLDIERTYPE* const selected = GetSelectedMan();
-		if (subject)
-		{
-			const BOOLEAN own = subject->bTeam == OUR_TEAM;
-			AddPanelAction(ContextAction::INSPECT, "INSPECT / SHEET");
-			AddPanelAction(ContextAction::CONTENTS,
-				own ? "OPEN CHARACTER" : "LOOT / CONTENTS",
-				CanAccessSoldierContents(subject));
-			if (own)
+			SOLDIERTYPE* const soldier = ID2Soldier(order.soldier);
+			if (!soldier || !soldier->bActive || soldier->bLife < OKLIFE ||
+				soldier->sSector != gWorldSector || soldier->fBetweenSectors ||
+				soldier->bLevel != order.level)
 			{
-				AddPanelAction(ContextAction::STAND, "STANCE / STAND");
-				AddPanelAction(ContextAction::CROUCH, "STANCE / CROUCH");
-				AddPanelAction(ContextAction::PRONE, "STANCE / PRONE");
-				AddPanelAction(ContextAction::STEALTH,
-					subject->bStealthMode ? "STEALTH / OFF" : "STEALTH / ON");
-				const OBJECTTYPE& hand = subject->inv[HANDPOS];
-				if (hand.usItem != NOTHING &&
-					GCM->getItem(hand.usItem)->getItemClass() == IC_GUN)
-				{
-					AddPanelAction(ContextAction::WEAPON_MODE, "WEAPON MODE");
-					AddPanelAction(ContextAction::RELOAD, "RELOAD WEAPON");
-				}
+				system.cancel(order.soldier);
+				continue;
 			}
-			else
+			if (soldier->sGridNo != order.destination)
 			{
-				AddPanelAction(ContextAction::TALK, "TALK", subject->bLife >= OKLIFE);
-				const BOOLEAN armed = selected &&
-					selected->inv[HANDPOS].usItem != NOTHING &&
-					GCM->getItem(selected->inv[HANDPOS].usItem)->isWeapon();
-				AddPanelAction(ContextAction::ATTACK, "ATTACK", armed);
+				if (soldier->sFinalDestination != order.destination)
+					system.cancel(order.soldier);
+				continue;
 			}
-			return;
-		}
-
-		if (gInspectedGridNo < 0 || gInspectedGridNo >= WORLD_MAX) return;
-		const BOOLEAN near = IsInspectedWorldAssetNear();
-		const BOOLEAN hasItems = GetItemPool(gInspectedGridNo, gInspectedLevel) != nullptr;
-		const BOOLEAN hasAsset = gInspectedTileIndex < NUMBEROFTILES;
-		const BOOLEAN hasTerrain = gInspectedLevel == 0 &&
-			gpWorldLevelData[gInspectedGridNo].pLandHead != nullptr;
-		AddPanelAction(ContextAction::INSPECT, "INSPECT / INFO");
-		if (hasItems || hasAsset)
-			AddPanelAction(ContextAction::CONTENTS, "OPEN OBJECT INVENTORY", near);
-		if (hasItems)
-			AddPanelAction(ContextAction::PICK_UP,
-				near ? "PICK UP" : "APPROACH & PICK UP");
-		if (hasAsset)
-		{
-			AddPanelAction(ContextAction::CATALOG, "GOD / CATALOG ASSET");
-			STRUCTURE const* const structure = WorldStructureAt(gInspectedGridNo,
-				gInspectedLevel, gInspectedTileIndex);
-			if (structure)
-			{
-				WORLD_PHYSICS_PROFILE const physics = GetWorldPhysicsProfile(structure);
-				const BOOLEAN movable = near && IsInspectedWorldAssetMovable();
-				AddPanelAction(ContextAction::CARRY,
-					!physics.portableObject ? "CARRY / FIXED" :
-					movable ? "CARRY / REPOSITION" : "CARRY / TOO HEAVY",
-					movable);
-				AssetCatalogRecord const* const catalog = FindAssetCatalogRecordConst(
-					static_cast<INT16>(giCurrentTilesetID), CanonicalAssetTileIndex(
-						gInspectedGridNo, gInspectedLevel, gInspectedTileIndex));
-				AddPanelAction(ContextAction::BUILD,
-					catalog && catalog->buildable ?
-						"BLUEPRINT / PLACEABLE" : "TOOLS / REQUIREMENTS");
-			}
-			SalvageProfile const salvage = DescribeWorldAsset(gInspectedGridNo,
-				gInspectedLevel, gInspectedTileIndex);
-			if (salvage.salvageable)
-			{
-				const FieldToolKind required = RequiredFieldTool(gInspectedGridNo,
-					gInspectedLevel, gInspectedTileIndex);
-				const BOOLEAN tool = HasFieldTool(selected, required);
-				AddPanelAction(ContextAction::SALVAGE,
-					!tool ? ST::format("NEED {}", FieldToolName(required)) :
-					ST::format("DISMANTLE / +{} {}", salvage.amount,
-						ResourceName(salvage.resource)),
-					CanSalvageWorldAsset(selected, gInspectedGridNo,
-						gInspectedLevel, gInspectedTileIndex));
-			}
-		}
-		if (hasTerrain && (!hasAsset || !WorldStructureAt(gInspectedGridNo,
-			gInspectedLevel, gInspectedTileIndex)))
-		{
-			const BOOLEAN tool = HasDiggingTool(selected);
-			const BOOLEAN diggable = CanDigTerrainAt(selected, gInspectedGridNo);
-			AddPanelAction(ContextAction::DIG,
-				!tool ? "DIG / NEED FIELD SHOVEL" :
-				diggable ? "DIG / REMOVE SURFACE" : "DIG / GROUND EXPOSED",
-				diggable);
+			const INT8 coverHeight = NearbyCoverHeight(order.destination,
+				soldier->bLevel);
+			INT8 stance = coverHeight > 0 && coverHeight < 2 ?
+				ANIM_PRONE : ANIM_CROUCH;
+			if (order.desiredStance == OS0CoverStance::CROUCH) stance = ANIM_CROUCH;
+			else if (order.desiredStance == OS0CoverStance::PRONE) stance = ANIM_PRONE;
+			if (IsValidStance(soldier, stance)) ChangeSoldierStance(soldier, stance);
+			RecordFeedbackEvent(ST::format("AI COVER ARRIVED {} / {}",
+				soldier->name, stance == ANIM_PRONE ? "PRONE" : "CROUCH"));
+			system.cancel(order.soldier);
 		}
 	}
 
@@ -2420,24 +2041,22 @@ namespace
 			constexpr INT16 iconSize = 26;
 			struct RingPoint { INT16 x; INT16 y; };
 			constexpr std::array<RingPoint, 12> ring{{
-				{  0, -76 }, { 38, -65 }, { 66, -38 }, { 76,   0 },
-				{ 66,  38 }, { 38,  65 }, {  0,  76 }, {-38,  65 },
-				{-66,  38 }, {-76,   0 }, {-66, -38 }, {-38, -65 }
+				{   0,-122 }, {  61,-106 }, { 106, -61 }, { 122,   0 },
+				{ 106,  61 }, {  61, 106 }, {   0, 122 }, { -61, 106 },
+				{-106,  61 }, {-122,   0 }, {-106, -61 }, { -61,-106 }
 			}};
 			INT16 anchorX;
 			INT16 anchorY;
-			GetGridNoScreenPos(gContextSoldier->sGridNo, gContextSoldier->bLevel,
-				&anchorX, &anchorY);
-			OS0MapWorldToDisplayScreen(&anchorX, &anchorY);
+			if (!GetActorDisplayAnchor(gContextSoldier, anchorX, anchorY)) return;
 			gContextX = std::clamp<INT16>(anchorX,
-				gsVIEWPORT_START_X + 92, gsVIEWPORT_END_X - 92);
-			gContextY = std::clamp<INT16>(anchorY - 12,
-				gsVIEWPORT_WINDOW_START_Y + 92,
-				gsVIEWPORT_WINDOW_END_Y - 92);
-			gContextBlock.RegionTopLeftX = gContextX - 92;
-			gContextBlock.RegionTopLeftY = gContextY - 92;
-			gContextBlock.RegionBottomRightX = gContextX + 92;
-			gContextBlock.RegionBottomRightY = gContextY + 92;
+				gsVIEWPORT_START_X + 138, gsVIEWPORT_END_X - 138);
+			gContextY = std::clamp<INT16>(anchorY - 36,
+				gsVIEWPORT_WINDOW_START_Y + 138,
+				gsVIEWPORT_WINDOW_END_Y - 138);
+			gContextBlock.RegionTopLeftX = gContextX - 138;
+			gContextBlock.RegionTopLeftY = gContextY - 138;
+			gContextBlock.RegionBottomRightX = gContextX + 138;
+			gContextBlock.RegionBottomRightY = gContextY + 138;
 			for (size_t i = 0; i < gContextRegions.size(); ++i)
 			{
 				if (i >= gContextEntryCount) continue;
@@ -2450,7 +2069,10 @@ namespace
 				gContextRegions[i].RegionTopLeftY = y;
 				gContextRegions[i].RegionBottomRightX = x + iconSize;
 				gContextRegions[i].RegionBottomRightY = y + iconSize;
-				gContextRegions[i].SetFastHelpText(gContextEntries[i].label);
+				gContextRegions[i].SetFastHelpText(ST::format("[{}] {}\n{}",
+					ActionCategoryName(ContextActionCategory(gContextEntries[i].action)),
+					gContextEntries[i].label,
+					ContextActionExplanation(gContextEntries[i].action)));
 			}
 			return;
 		}
@@ -2501,7 +2123,10 @@ namespace
 				gContextRegions[i].RegionTopLeftY = y;
 				gContextRegions[i].RegionBottomRightX = x + iconSize;
 				gContextRegions[i].RegionBottomRightY = y + iconSize;
-				gContextRegions[i].SetFastHelpText(gContextEntries[i].label);
+				gContextRegions[i].SetFastHelpText(ST::format("[{}] {}\n{}",
+					ActionCategoryName(ContextActionCategory(gContextEntries[i].action)),
+					gContextEntries[i].label,
+					ContextActionExplanation(gContextEntries[i].action)));
 			}
 			return;
 		}
@@ -2554,8 +2179,8 @@ namespace
 		if (!gEquipmentExplodedVisible || !gEquipmentSoldier) return;
 		struct EquipmentPoint { INT16 x; INT16 y; };
 		constexpr std::array<EquipmentPoint, 7> offsets{{
-			{ -17, -151 }, { -91, -116 }, { 57, -116 }, { -17, -109 },
-			{ -17, -68 }, { -99, -68 }, { 65, -68 }
+			{ -17, -106 }, { -61, -87 }, { 27, -87 }, { -17, -70 },
+			{ -17, -32 }, { -68, -51 }, { 34, -51 }
 		}};
 		INT16 anchorX;
 		INT16 anchorY;
@@ -2563,7 +2188,7 @@ namespace
 		gEquipmentCentreX = std::clamp<INT16>(anchorX,
 			gsVIEWPORT_START_X + 116, gsVIEWPORT_END_X - 116);
 		gEquipmentCentreY = std::clamp<INT16>(anchorY,
-			gsVIEWPORT_WINDOW_START_Y + 157,
+			gsVIEWPORT_WINDOW_START_Y + 112,
 			gsVIEWPORT_WINDOW_END_Y - 34);
 		for (size_t i = 0; i < gEquipmentRegions.size(); ++i)
 		{
@@ -2574,10 +2199,10 @@ namespace
 			gEquipmentRegions[i].RegionBottomRightX = x + 34;
 			gEquipmentRegions[i].RegionBottomRightY = y + 25;
 		}
-		gEquipmentPackRegion.RegionTopLeftX = gEquipmentCentreX + 79;
-		gEquipmentPackRegion.RegionTopLeftY = gEquipmentCentreY - 32;
-		gEquipmentPackRegion.RegionBottomRightX = gEquipmentCentreX + 125;
-		gEquipmentPackRegion.RegionBottomRightY = gEquipmentCentreY - 7;
+		gEquipmentPackRegion.RegionTopLeftX = gEquipmentCentreX + 48;
+		gEquipmentPackRegion.RegionTopLeftY = gEquipmentCentreY - 17;
+		gEquipmentPackRegion.RegionBottomRightX = gEquipmentCentreX + 94;
+		gEquipmentPackRegion.RegionBottomRightY = gEquipmentCentreY + 8;
 	}
 
 	void PositionItemTransferIntentRegions()
@@ -2586,21 +2211,16 @@ namespace
 		INT16 anchorY;
 		if (!gpItemPointer ||
 			!GetActorDisplayAnchor(gItemTransferTarget, anchorX, anchorY)) return;
-		for (size_t i = 0; i < gItemTransferIntents.size(); ++i)
+		for (size_t i = 0; i < gOS0ItemTransferIntents.size(); ++i)
 		{
 			const INT16 x = std::clamp<INT16>(
-				anchorX + gItemTransferIntents[i].offsetX,
+				anchorX + gOS0ItemTransferIntents[i].offsetX,
 				gsVIEWPORT_START_X + 2, gsVIEWPORT_END_X - 30);
 			const INT16 y = std::clamp<INT16>(
-				anchorY + gItemTransferIntents[i].offsetY,
+				anchorY + gOS0ItemTransferIntents[i].offsetY,
 				gsVIEWPORT_WINDOW_START_Y + 2, gsVIEWPORT_WINDOW_END_Y - 30);
 			MoveRegion(gItemTransferIntentRegions[i], x, y);
 		}
-	}
-
-	BOOLEAN IsPocketSlot(INT8 slot)
-	{
-		return slot >= BIGPOCK1POS && slot <= SMALLPOCK8POS;
 	}
 
 	BOOLEAN GetActorDisplayAnchor(SOLDIERTYPE const* soldier, INT16& x, INT16& y)
@@ -2618,6 +2238,45 @@ namespace
 			y = static_cast<INT16>(y + soldier->sBoundingBoxHeight);
 		}
 		OS0MapWorldToDisplayScreen(&x, &y);
+		const INT16 rawX = x;
+		const INT16 rawY = y;
+		if (soldier->ubID >= gActorAnchors.size()) return TRUE;
+		ActorAnchorState* const state = &gActorAnchors[soldier->ubID];
+		const UINT32 now = GetJA2Clock();
+		if (!state->valid || state->soldier != soldier)
+		{
+			*state = { soldier, rawX * 256, rawY * 256, now, TRUE };
+		}
+		else if (state->updatedAt != now)
+		{
+			const UINT32 dt = now - state->updatedAt;
+			const INT32 targetX = rawX * 256;
+			const INT32 targetY = rawY * 256;
+			const INT32 dx = targetX - state->x256;
+			const INT32 dy = targetY - state->y256;
+			if (gfScrollPending || g_scroll_inertia || dt > 250 ||
+				std::abs(dx) > 150 * 256 || std::abs(dy) > 120 * 256)
+			{
+				// Camera scrolling moves every world-space anchor at once.  Smoothing
+				// that delta makes an attached radial/equipment view visibly lag behind
+				// its actor, so camera motion is applied atomically.  Animation-only
+				// sub-pixel movement keeps the low-pass path below.
+				state->x256 = targetX;
+				state->y256 = targetY;
+			}
+			else
+			{
+				// Fixed-point low-pass: follows animation sub-steps while removing the
+				// one-tile snapping visible in actor-attached widgets.
+				const INT32 alpha = std::clamp<INT32>(static_cast<INT32>(dt) * 10,
+					64, 256);
+				state->x256 += dx * alpha / 256;
+				state->y256 += dy * alpha / 256;
+			}
+			state->updatedAt = now;
+		}
+		x = static_cast<INT16>((state->x256 + 128) / 256);
+		y = static_cast<INT16>((state->y256 + 128) / 256);
 		return TRUE;
 	}
 
@@ -2631,12 +2290,13 @@ namespace
 		};
 		PositionEquipmentRegions();
 		PositionItemTransferIntentRegions();
-		// The large character sheet is only part of character creation.  In the
-		// world, pockets unfold from the actor and therefore need no modal panel.
-		setVisible(gBagBlock, gBagVisible && gTutorialActive);
-		setVisible(gBagGrabber, gBagVisible && gTutorialActive);
-		// Keep close control active as long as the panel is visible.
-		setVisible(gBagClose, gBagVisible && gTutorialActive);
+		// Character creation and the optional RPG inventory share one real,
+		// movable window.  It is never opened merely because a merc is selected.
+		setVisible(gBagBlock, gBagVisible);
+		setVisible(gBagGrabber, gBagVisible && !gTutorialActive);
+		// Creation is modal and fixed in screen space; the optional gameplay
+		// character sheet remains movable and closable.
+		setVisible(gBagClose, gBagVisible && !gTutorialActive);
 		setVisible(gContextBlock, gContextVisible);
 		setVisible(gGodLibraryBlock, gGodLibraryVisible);
 		setVisible(gGodLibraryGrabber, gGodLibraryVisible);
@@ -2654,33 +2314,29 @@ namespace
 		for (MOUSE_REGION& r : gAssetCatalogRegions)
 			setVisible(r, gAssetCatalogVisible);
 		const BOOLEAN showContentInventory = gBagVisible && !gContextVisible;
-		const FloatingPanel& feedbackPanel =
-			gFloatingPanels[static_cast<size_t>(FloatingPanelId::FEEDBACK)];
 		const BOOLEAN showContentLoot = gLootVisible && !gContextVisible;
 		for (size_t i = 0; i < gFloatingPanels.size(); ++i)
 		{
-			const BOOLEAN visible = gFloatingPanels[i].visible &&
-				(gTutorialActive ? i == static_cast<size_t>(FloatingPanelId::FEEDBACK) :
-					i == static_cast<size_t>(FloatingPanelId::SECTOR));
+			const BOOLEAN hasPanelContent =
+				i != static_cast<size_t>(FloatingPanelId::INSPECTOR) || gHoverVisible;
+			const BOOLEAN visible = !gTutorialActive && !gAimAutoCollapsed &&
+				gFloatingPanels[i].visible && hasPanelContent;
 			setVisible(gFloatingPanelBlocks[i], visible);
 			setVisible(gFloatingPanelGrabbers[i], visible);
 			setVisible(gFloatingPanelCloses[i], visible);
 		}
+		const FloatingPanel& toolbox =
+			gFloatingPanels[static_cast<size_t>(FloatingPanelId::TOOLBOX)];
+		for (MOUSE_REGION& r : gToolboxRegions)
+			setVisible(r, toolbox.visible && !gContextVisible && !gTutorialActive);
 		for (size_t i = 0; i < gPanelDockRegions.size(); ++i)
 		{
-			const BOOLEAN tutorialFeedback = gTutorialActive &&
-				i == static_cast<size_t>(FloatingPanelId::FEEDBACK) + 1;
-			setVisible(gPanelDockRegions[i], tutorialFeedback && !gAimAutoCollapsed);
+			setVisible(gPanelDockRegions[i], !gTutorialActive && !gAimAutoCollapsed);
 		}
-		for (MOUSE_REGION& r : gToolRegions) setVisible(r, FALSE);
-		for (size_t i = 0; i < gActionPanelRegions.size(); ++i)
-			setVisible(gActionPanelRegions[i], FALSE);
 		for (MOUSE_REGION& r : gFeedbackRegions)
-			setVisible(r, !gContextVisible &&
-				((gTutorialActive && feedbackPanel.visible) ||
-				 (!gTutorialActive &&
-				  gFloatingPanels[static_cast<size_t>(FloatingPanelId::SECTOR)].visible &&
-				  gSectorPanelMode == SectorPanelMode::REPORT)));
+			setVisible(r, !gTutorialActive && !gContextVisible &&
+				gFloatingPanels[static_cast<size_t>(FloatingPanelId::SECTOR)].visible &&
+				gSectorPanelMode == SectorPanelMode::REPORT);
 		const FloatingPanel& sectorPanel =
 			gFloatingPanels[static_cast<size_t>(FloatingPanelId::SECTOR)];
 		for (MOUSE_REGION& r : gSectorUpgradeRegions)
@@ -2706,18 +2362,14 @@ namespace
 		{
 			MOUSE_REGION& r = gSlotRegions[i];
 			r.ChangeCursor(gpItemPointer ? EXTERN_CURSOR : CURSOR_NORMAL);
-			const BOOLEAN spatialPocket = !gTutorialActive &&
-				IsPocketSlot(gSlots[i].slot);
 			if (enabled && !gStackSplitVisible && gBagVisible &&
-				(!gTutorialActive || gTutorialStep == 4) &&
 				!gContextVisible &&
 				showContentInventory &&
-				(gTutorialActive || spatialPocket) &&
+				(!gTutorialActive || gTutorialStep == 4) &&
 				CanAccessSoldierContents(gInventorySoldier ?
 					gInventorySoldier : GetSelectedMan())) r.Enable();
 			else r.Disable();
 		}
-		for (MOUSE_REGION& r : gObjectSlotRegions) setVisible(r, FALSE);
 		for (MOUSE_REGION& r : gLootRegions)
 		{
 			setVisible(r, gLootVisible && !gContextVisible && showContentLoot);
@@ -2735,7 +2387,7 @@ namespace
 		for (MOUSE_REGION& r : gItemTransferIntentRegions)
 			setVisible(r, gpItemPointer && gItemTransferTarget &&
 				CanAccessSoldierContents(gItemTransferTarget) && !gContextVisible);
-		if (enabled && gTutorialActive && !gContextVisible && !feedbackPanel.visible)
+		if (enabled && gTutorialActive && !gContextVisible)
 		{
 			gTutorialContinue.Enable();
 			for (MOUSE_REGION& r : gTutorialStats)
@@ -2779,48 +2431,11 @@ namespace
 		MoveRegion(gBagClose, gBagX + PANE_W - 16, gBagY + 1);
 		gInventoryX = gBagX;
 		gInventoryY = gBagY;
-		FloatingPanel& objectPanel =
-			gFloatingPanels[static_cast<size_t>(FloatingPanelId::OBJECT_INVENTORY)];
-		gLootX = objectPanel.x;
-		gLootY = objectPanel.y;
-		INT16 actorX = gsVIEWPORT_END_X / 2;
-		INT16 actorY = gsVIEWPORT_WINDOW_END_Y / 2;
-		GetActorDisplayAnchor(gInventorySoldier ? gInventorySoldier : GetSelectedMan(),
-			actorX, actorY);
-		const INT16 pocketBaseX = std::clamp<INT16>(actorX + 48,
-			gsVIEWPORT_START_X + 4, std::max<INT16>(gsVIEWPORT_START_X + 4,
-				gsVIEWPORT_END_X - 146));
-		const INT16 pocketBaseY = std::clamp<INT16>(actorY - 96,
-			gsVIEWPORT_WINDOW_START_Y + 4,
-			std::max<INT16>(gsVIEWPORT_WINDOW_START_Y + 4,
-				gsVIEWPORT_WINDOW_END_Y - 102));
 		for (size_t i = 0; i < gSlots.size(); ++i)
 		{
 			SlotLayout const& slot = gSlots[i];
-			if (!gTutorialActive && IsPocketSlot(slot.slot))
-			{
-				INT16 x;
-				INT16 y;
-				if (slot.slot >= BIGPOCK1POS && slot.slot <= BIGPOCK4POS)
-				{
-					const INT16 pocket = slot.slot - BIGPOCK1POS;
-					x = pocketBaseX + (pocket % 2) * 68;
-					y = pocketBaseY + (pocket / 2) * 30;
-				}
-				else
-				{
-					const INT16 pocket = slot.slot - SMALLPOCK1POS;
-					x = pocketBaseX + (pocket % 4) * 35;
-					y = pocketBaseY + 62 + (pocket / 4) * 28;
-				}
-				MoveRegion(gSlotRegions[i], x, y);
-			}
-			else
-			{
-				MoveRegion(gSlotRegions[i], gInventoryX + slot.x,
-					gInventoryY + slot.y);
-			}
-			MoveRegion(gObjectSlotRegions[i], gLootX + slot.x, gLootY + slot.y);
+			MoveRegion(gSlotRegions[i], gInventoryX + slot.x,
+				gInventoryY + slot.y);
 		}
 		MoveRegion(gTutorialContinue, gBagX + CONTINUE_X, gBagY + BAG_H - 24);
 		for (size_t i = 0; i < gTutorialStats.size(); ++i)
@@ -2874,6 +2489,14 @@ namespace
 			MoveRegion(gFloatingPanelGrabbers[i], panel.x, panel.y);
 			gFloatingPanelGrabbers[i].RegionBottomRightX = panel.x + panel.w;
 			MoveRegion(gFloatingPanelCloses[i], panel.x + panel.w - 16, panel.y + 1);
+		}
+		const FloatingPanel& toolboxPanel =
+			gFloatingPanels[static_cast<size_t>(FloatingPanelId::TOOLBOX)];
+		for (size_t i = 0; i < gToolboxRegions.size(); ++i)
+		{
+			const INT16 x = static_cast<INT16>(toolboxPanel.x + 9 + (i % 3) * 39);
+			const INT16 y = static_cast<INT16>(toolboxPanel.y + 23 + (i / 3) * 31);
+			MoveRegion(gToolboxRegions[i], x, y);
 		}
 		MoveRegion(gGodLibraryBlock, gGodLibraryX, gGodLibraryY);
 		gGodLibraryBlock.RegionBottomRightX = gGodLibraryX + GOD_LIBRARY_W;
@@ -2933,35 +2556,23 @@ namespace
 		}
 		for (size_t i = 0; i < gPanelDockRegions.size(); ++i)
 		{
-			const INT16 dockX = PanelDockStartX() +
-				static_cast<INT16>(i) * CommandModuleWidth();
-			MoveRegion(gPanelDockRegions[i], dockX, gOrbY);
-			gPanelDockRegions[i].RegionBottomRightX = std::min<INT16>(
-				gsVIEWPORT_END_X, dockX + CommandModuleWidth());
-			gPanelDockRegions[i].RegionBottomRightY = gOrbY + COMMAND_BAR_H;
+			OS0UIRect const dock =
+				gUILayout.command(OS0CommandForDockSlot(i));
+			MoveRegion(gPanelDockRegions[i], dock.x, dock.y);
+			gPanelDockRegions[i].RegionBottomRightX = dock.x + dock.w;
+			gPanelDockRegions[i].RegionBottomRightY = dock.y + dock.h;
 		}
-		MoveRegion(gOrbRegion, 0, gOrbY);
-		gOrbRegion.RegionBottomRightX = COLLAPSED_OS0_W;
+		OS0UIRect const tacticalDock =
+			gUILayout.command(OS0UICommand::TACTICAL);
+		MoveRegion(gOrbRegion, tacticalDock.x, tacticalDock.y);
+		gOrbRegion.RegionBottomRightX = tacticalDock.x + tacticalDock.w;
 		gOrbRegion.RegionBottomRightY = gOrbY + COMMAND_BAR_H;
-		const FloatingPanel& tools =
-			gFloatingPanels[static_cast<size_t>(FloatingPanelId::TOOLS)];
-		for (size_t i = 0; i < gToolRegions.size(); ++i)
-			MoveRegion(gToolRegions[i], tools.x + 7,
-				tools.y + 21 + static_cast<INT16>(i) * 15);
-		const FloatingPanel& actions =
-			gFloatingPanels[static_cast<size_t>(FloatingPanelId::ACTIONS)];
-		for (size_t i = 0; i < gActionPanelRegions.size(); ++i)
-			MoveRegion(gActionPanelRegions[i], actions.x + 7,
-				actions.y + 21 + static_cast<INT16>(i) * 18);
-		const FloatingPanel& feedback =
-			gFloatingPanels[static_cast<size_t>(FloatingPanelId::FEEDBACK)];
 		const FloatingPanel& sector =
 			gFloatingPanels[static_cast<size_t>(FloatingPanelId::SECTOR)];
-		const BOOLEAN integratedReport = !gTutorialActive;
-		const INT16 reportX = integratedReport ? sector.x : feedback.x;
-		const INT16 reportY = integratedReport ? sector.y + 22 : feedback.y;
-		const INT16 reportW = integratedReport ? sector.w : feedback.w;
-		const INT16 reportH = integratedReport ? sector.h - 22 : feedback.h;
+		const INT16 reportX = sector.x;
+		const INT16 reportY = sector.y + 22;
+		const INT16 reportW = sector.w;
+		const INT16 reportH = sector.h - 22;
 		MoveRegion(gFeedbackRegions[0], reportX + 8, reportY + 24);
 		MoveRegion(gFeedbackRegions[1], reportX + 8, reportY + 49);
 		MoveRegion(gFeedbackRegions[2], reportX + reportW - 126,
@@ -3067,7 +2678,7 @@ namespace
 	void BagCloseCallback(MOUSE_REGION*, UINT32 reason)
 	{
 		if (!(reason & MSYS_CALLBACK_REASON_POINTER_UP)) return;
-		gBagVisible = FALSE;
+		gUIRuntime.hide(OS0UIPanel::INVENTORY);
 		// Keep a short guard so the same click that closes the panel cannot
 		// instantly reopen it through stale panel-side input.
 		gPanelInteractionGuardUntil = GetJA2Clock() + 180;
@@ -3104,57 +2715,19 @@ namespace
 		const size_t index = static_cast<size_t>(region->GetUserData<0>());
 		if (index >= gFloatingPanels.size()) return;
 		gFloatingPanels[index].visible = FALSE;
-		if (index == static_cast<size_t>(FloatingPanelId::OBJECT_INVENTORY))
-		{
-			gLootVisible = FALSE;
-			gItemDetailsVisible = FALSE;
-		}
-		if (index == static_cast<size_t>(FloatingPanelId::FEEDBACK))
-			StopFeedbackEditing();
 		if (index == static_cast<size_t>(FloatingPanelId::SECTOR))
-		{
-			gCommandBarExpanded = FALSE;
-			SaveUILayout();
-		}
+			StopFeedbackEditing();
+		SaveUILayout();
 		SetBagRegionsEnabled(TRUE);
 		SetRenderFlags(RENDER_FLAG_FULL);
 	}
 
 	void PanelDockCallback(MOUSE_REGION* region, UINT32 reason)
 	{
-		if (!(reason & MSYS_CALLBACK_REASON_POINTER_UP)) return;
+		if (!(reason & MSYS_CALLBACK_REASON_POINTER_UP) || gTutorialActive) return;
 		const size_t index = static_cast<size_t>(region->GetUserData<0>());
-		if (gTutorialActive &&
-			index != static_cast<size_t>(FloatingPanelId::FEEDBACK) + 1) return;
-		if (index == 0)
-		{
-			gBagVisible = !gBagVisible;
-			if (gBagVisible && CompactArtworkWorkspace())
-			{
-				for (FloatingPanel& panel : gFloatingPanels) panel.visible = FALSE;
-			}
-			ClampWindowPositions();
-		}
-		else if (index <= gFloatingPanels.size())
-		{
-			FloatingPanel& panel = gFloatingPanels[index - 1];
-			if (index == static_cast<size_t>(FloatingPanelId::OBJECT_INVENTORY) + 1 &&
-				gLootGridNo == NOWHERE &&
-				!(gInspectedSoldier && CanAccessSoldierContents(gInspectedSoldier))) return;
-			panel.visible = !panel.visible;
-			if (!gTutorialActive && panel.visible && CompactArtworkWorkspace() &&
-				(index == static_cast<size_t>(FloatingPanelId::OBJECT_INVENTORY) + 1 ||
-				 index == static_cast<size_t>(FloatingPanelId::SECTOR) + 1 ||
-				 index == static_cast<size_t>(FloatingPanelId::FEEDBACK) + 1))
-				gBagVisible = FALSE;
-			if (index == static_cast<size_t>(FloatingPanelId::OBJECT_INVENTORY) + 1)
-				gLootVisible = panel.visible && IsInspectedWorldAssetNear();
-			if (index == static_cast<size_t>(FloatingPanelId::FEEDBACK) + 1 &&
-				!panel.visible) StopFeedbackEditing();
-		}
-		PositionBagRegions();
-		SetBagRegionsEnabled(TRUE);
-		SetRenderFlags(RENDER_FLAG_FULL);
+		if (index >= gPanelDockRegions.size()) return;
+		ActivateToolboxModule(OS0CommandForDockSlot(index));
 	}
 
 	void FeedbackCallback(MOUSE_REGION* region, UINT32 reason)
@@ -3248,108 +2821,21 @@ namespace
 		SetRenderFlags(RENDER_FLAG_FULL);
 	}
 
-	void ApplyCursorTool(UINT8 action)
+	void ApplyCursorTool(ContextAction action)
 	{
-		gCursorAction = action;
-		switch (action)
+		CursorState().action = action;
+		CursorState().attackMode = action == ContextAction::ATTACK;
+		switch (ContextActionCursor(action))
 		{
-			case 0: guiPendingOverrideEvent = A_CHANGE_TO_MOVE;     break;
-			case 1: guiPendingOverrideEvent = M_CHANGE_TO_HANDMODE; break;
-			case 2: guiPendingOverrideEvent = M_CHANGE_TO_HANDMODE; break;
-			case 3: guiPendingOverrideEvent = LC_CHANGE_TO_LOOK;    break;
-			case 4: guiPendingOverrideEvent = T_CHANGE_TO_TALKING;  break;
-			case 5: guiPendingOverrideEvent = M_CHANGE_TO_ACTION;   break;
+			case OS0CursorMode::MOVE:   guiPendingOverrideEvent = A_CHANGE_TO_MOVE;     break;
+			case OS0CursorMode::HAND:   guiPendingOverrideEvent = M_CHANGE_TO_HANDMODE; break;
+			case OS0CursorMode::LOOK:   guiPendingOverrideEvent = LC_CHANGE_TO_LOOK;    break;
+			case OS0CursorMode::TALK:   guiPendingOverrideEvent = T_CHANGE_TO_TALKING;  break;
+			case OS0CursorMode::ATTACK: guiPendingOverrideEvent = M_CHANGE_TO_ACTION;   break;
+			case OS0CursorMode::NONE:   break;
 		}
-		if (action != 2) ClearWorldMoveState();
+		if (action != ContextAction::CARRY) ClearWorldMoveState();
 		SetRenderFlags(RENDER_FLAG_FULL);
-	}
-
-	void ToolPanelCallback(MOUSE_REGION* region, UINT32 reason)
-	{
-		if (!(reason & MSYS_CALLBACK_REASON_POINTER_UP)) return;
-		const size_t index = static_cast<size_t>(region->GetUserData<0>());
-		if (index < 6)
-		{
-			ApplyCursorTool(static_cast<UINT8>(index));
-		}
-		else if (index < 10)
-		{
-			OperationsActionCallback(&gOpsActionRegions[index - 6], reason);
-		}
-	}
-
-	void ActionPanelCallback(MOUSE_REGION* region, UINT32 reason)
-	{
-		if (!(reason & MSYS_CALLBACK_REASON_POINTER_UP)) return;
-		const size_t index = static_cast<size_t>(region->GetUserData<0>());
-		if (index >= gPanelActionEntryCount || !gPanelActionEntries[index].enabled) return;
-		gContextEntryCount = gPanelActionEntryCount;
-		for (size_t i = 0; i < gPanelActionEntryCount; ++i)
-			gContextEntries[i] = gPanelActionEntries[i];
-		gContextSoldier = gInspectedSoldier;
-		gContextGridNo = gInspectedSoldier ? gInspectedSoldier->sGridNo : gInspectedGridNo;
-		gContextLevel = gInspectedSoldier ? gInspectedSoldier->bLevel : gInspectedLevel;
-		gContextTileIndex = gInspectedTileIndex;
-		gContextInventorySlot = NO_SLOT;
-		gContextWorldItemIndex = -1;
-		gContextVisible = TRUE;
-		ContextActionCallback(region, reason);
-
-		const ContextAction action = gPanelActionEntries[index].action;
-		if (action == ContextAction::CONTENTS && !gInspectedSoldier)
-		{
-			FloatingPanel& objectPanel =
-				gFloatingPanels[static_cast<size_t>(FloatingPanelId::OBJECT_INVENTORY)];
-			objectPanel.visible = gLootVisible;
-		}
-		RefreshPanelActions();
-		PositionBagRegions();
-		SetBagRegionsEnabled(TRUE);
-	}
-
-	INT8 PreferredEquipmentSlot(SOLDIERTYPE const* soldier, OBJECTTYPE const& object)
-	{
-		if (!soldier || object.usItem == NOTHING) return NO_SLOT;
-		ItemModel const* const item = GCM->getItem(object.usItem);
-		if (item->isWeapon()) return HANDPOS;
-		if (item->isArmour())
-		{
-			switch (item->asArmour()->getArmourClass())
-			{
-				case ARMOURCLASS_HELMET:   return HELMETPOS;
-				case ARMOURCLASS_VEST:     return VESTPOS;
-				case ARMOURCLASS_LEGGINGS: return LEGPOS;
-				default:                   return NO_SLOT;
-			}
-		}
-		if (item->isFace())
-		{
-			return soldier->inv[HEAD1POS].usItem == NOTHING ? HEAD1POS : HEAD2POS;
-		}
-		return NO_SLOT;
-	}
-
-	BOOLEAN EquipObject(SOLDIERTYPE* soldier, OBJECTTYPE* object, INT8 returnSlot)
-	{
-		if (!soldier || !object) return FALSE;
-		const INT8 target = PreferredEquipmentSlot(soldier, *object);
-		if (target == NO_SLOT) return FALSE;
-		if (target == returnSlot)
-		{
-			return PlaceObject(soldier, returnSlot, object);
-		}
-		if (!PlaceObject(soldier, target, object)) return FALSE;
-
-		// PlaceObject returns displaced equipment in object. Put it where the
-		// right-clicked item came from, then fall back to another valid pocket.
-		if (object->usItem != NOTHING)
-		{
-			if (returnSlot == NO_SLOT || !PlaceObject(soldier, returnSlot, object))
-			{
-				AutoPlaceObject(soldier, object, FALSE);
-			}
-		}
-		return TRUE;
 	}
 
 	void OpenInventoryItemContext(SOLDIERTYPE* soldier, INT8 slot)
@@ -3362,6 +2848,7 @@ namespace
 		gContextLevel = soldier->bLevel;
 		gContextTileIndex = NO_TILE;
 		gContextInventorySlot = slot;
+		gObjectActionFanVisible = TRUE;
 		ItemModel const* const item = GCM->getItem(soldier->inv[slot].usItem);
 		gContextTitle = item->getName();
 
@@ -3369,7 +2856,7 @@ namespace
 		AddContextEntry(ContextAction::DETAILS, "DETAILS / ATTACHMENTS");
 		if (own)
 		{
-			if (IsResourceItem(soldier->inv[slot].usItem))
+			if (OS0IsResourceItem(soldier->inv[slot].usItem))
 				AddContextEntry(ContextAction::PICK_UP, "DEPOSIT IN SECTOR STOCKPILE");
 			else
 				AddContextEntry(ContextAction::EQUIP_ITEM, "EQUIP / USE");
@@ -3420,11 +2907,12 @@ namespace
 		gContextLevel = gLootLevel;
 		gContextTileIndex = gLootTileIndex;
 		gContextWorldItemIndex = itemIndex;
+		gObjectActionFanVisible = TRUE;
 		ItemModel const* const item = GCM->getItem(worldItem.o.usItem);
 		gContextTitle = item->getName();
 		const BOOLEAN near = IsInspectedWorldAssetNear();
 		AddContextEntry(ContextAction::DETAILS, "DETAILS / ATTACHMENTS");
-		const BOOLEAN resource = IsResourceItem(worldItem.o.usItem);
+		const BOOLEAN resource = OS0IsResourceItem(worldItem.o.usItem);
 		AddContextEntry(ContextAction::PICK_UP,
 			resource ? "DEPOSIT IN SECTOR STOCKPILE" :
 				(near ? "PACK / PICK UP" : "APPROACH & PICK UP"), near);
@@ -3465,8 +2953,29 @@ namespace
 			gContextSoldier : selected;
 		switch (action)
 		{
+			case ContextAction::MOVE:
+				ApplyCursorTool(ContextAction::MOVE);
+				break;
+			case ContextAction::USE:
+				if (gContextSoldier)
+				{
+					OS0OpenCharacterPanel(gContextSoldier);
+				}
+				else if (gContextGridNo >= 0 && gContextGridNo < WORLD_MAX)
+				{
+					const GridNo gridNo = gContextGridNo;
+					const UINT8 level = gContextLevel;
+					const UINT16 tileIndex = gContextTileIndex;
+					CloseContextMenu();
+					OS0ActivateWorldObject(gridNo, level, tileIndex);
+					return;
+				}
+				else
+				{
+					ApplyCursorTool(ContextAction::USE);
+				}
+				break;
 			case ContextAction::INSPECT:
-				gFloatingPanels[static_cast<size_t>(FloatingPanelId::CONTEXT)].visible = TRUE;
 				gMode = ComputerMode::INFO;
 				break;
 			case ContextAction::CONTENTS:
@@ -3521,7 +3030,9 @@ namespace
 				guiPendingOverrideEvent = T_CHANGE_TO_TALKING;
 				break;
 			case ContextAction::ATTACK:
-				guiPendingOverrideEvent = M_CHANGE_TO_ACTION;
+				// Enter the same persistent attack state used by the middle-click
+				// cursor cycle. Hover must not immediately replace it with INSPECT.
+				ApplyCursorTool(ContextAction::ATTACK);
 				break;
 			case ContextAction::STAND:
 				if (subject && subject->bTeam == OUR_TEAM)
@@ -3547,8 +3058,13 @@ namespace
 					if (worldItem.fExists && worldItem.o.usItem != NOTHING)
 					{
 						OBJECTTYPE object = worldItem.o;
+						if (!OS0CanAcceptCarriedObject(selected, object))
+						{
+							RecordFeedbackEvent("LOAD LIMIT 125% / ITEM LEFT IN WORLD");
+							break;
+						}
 						RemoveItemFromPool(worldItem);
-						EquipObject(selected, &object, NO_SLOT);
+						OS0EquipObject(selected, &object, NO_SLOT);
 						if (object.usItem != NOTHING)
 							AddItemToPool(gContextGridNo, &object, VISIBLE,
 								gContextLevel, 0, -1);
@@ -3564,7 +3080,7 @@ namespace
 						GetObjFrom(&subject->inv[gContextInventorySlot], 0, &object);
 						if (object.usItem != NOTHING)
 						{
-							EquipObject(subject, &object, gContextInventorySlot);
+							OS0EquipObject(subject, &object, gContextInventorySlot);
 							if (object.usItem != NOTHING)
 								PlaceObject(subject, gContextInventorySlot, &object);
 						}
@@ -3629,8 +3145,6 @@ namespace
 					gItemDetailsVisible = TRUE;
 					gContentsMode = ContentsMode::WORLD;
 					gLootVisible = TRUE;
-					gFloatingPanels[static_cast<size_t>(
-						FloatingPanelId::OBJECT_INVENTORY)].visible = TRUE;
 				}
 				break;
 			}
@@ -3642,8 +3156,13 @@ namespace
 					if (worldItem.fExists && worldItem.o.usItem != NOTHING)
 					{
 						OBJECTTYPE object = worldItem.o;
+						if (!OS0CanAcceptCarriedObject(selected, object))
+						{
+							RecordFeedbackEvent("LOAD LIMIT 125% / ITEM LEFT IN WORLD");
+							break;
+						}
 						RemoveItemFromPool(worldItem);
-						EquipObject(selected, &object, NO_SLOT);
+						OS0EquipObject(selected, &object, NO_SLOT);
 						if (object.usItem != NOTHING)
 							AddItemToPool(gContextGridNo, &object, VISIBLE,
 								gContextLevel, 0, -1);
@@ -3656,7 +3175,7 @@ namespace
 					GetObjFrom(&subject->inv[gContextInventorySlot], 0, &object);
 					if (object.usItem != NOTHING)
 					{
-						EquipObject(subject, &object, gContextInventorySlot);
+						OS0EquipObject(subject, &object, gContextInventorySlot);
 						if (object.usItem != NOTHING)
 							PlaceObject(subject, gContextInventorySlot, &object);
 					}
@@ -3716,15 +3235,27 @@ namespace
 						WORLDITEM const& worldItem = GetWorldItem(itemIndex);
 						if (worldItem.fExists && worldItem.o.usItem != NOTHING)
 						{
-							if (IsResourceItem(worldItem.o.usItem))
+							if (OS0IsResourceItem(worldItem.o.usItem))
 							{
 								StoreResourceWorldItem(itemIndex);
 								break;
 							}
 							// Let JA2 own approach path, animation, AP cost, traps and
 							// inventory overflow. OS//0 only selects the exact object.
-							SoldierPickupItem(selected, itemIndex, gContextGridNo,
-								ITEM_IGNORE_Z_LEVEL);
+							const BOOLEAN accepted =
+								OS0CanAcceptCarriedObject(selected, worldItem.o);
+							if (accepted)
+								SoldierPickupItem(selected, itemIndex, gContextGridNo,
+									ITEM_IGNORE_Z_LEVEL);
+							else
+								RecordFeedbackEvent(
+									"LOAD LIMIT 125% / PICKUP REJECTED");
+							if (accepted)
+							{
+								gInspectedGridNo = NOWHERE;
+								gInspectedTileIndex = NO_TILE;
+								gLootVisible = FALSE;
+							}
 						}
 					}
 				}
@@ -3738,21 +3269,22 @@ namespace
 					gInspectedLevel = 0;
 					gInspectedTileIndex = NO_TILE;
 					CaptureInspectorPreview(gInspectedGridNo, 0);
-					RefreshPanelActions();
 				}
 				break;
 			case ContextAction::SALVAGE:
-				if (selected && SalvageWorldAsset(selected, gContextGridNo,
-					gContextLevel, gContextTileIndex))
-				{
-					RefreshPanelActions();
-				}
+				if (selected) SalvageWorldAsset(selected, gContextGridNo,
+					gContextLevel, gContextTileIndex);
 				break;
 			case ContextAction::CATALOG:
 				OpenAssetCatalog(gContextGridNo, gContextLevel, gContextTileIndex);
 				break;
 			case ContextAction::TAKE_COVER:
 				CommandRunToCover(subject);
+				break;
+			case ContextAction::AUTO_FIRST_AID:
+				if (CanAutoBandage(FALSE)) BeginAutoBandage();
+				break;
+			case ContextAction::COUNT:
 				break;
 		}
 		CloseContextMenu();
@@ -3837,7 +3369,7 @@ namespace
 			!gEquipmentExplodedVisible || !gEquipmentSoldier) return;
 		gInventorySoldier = gEquipmentSoldier;
 		gInventoryVisible = TRUE;
-		gBagVisible = !gBagVisible;
+		gUIRuntime.toggle(OS0UIPanel::INVENTORY);
 		PositionBagRegions();
 		SetBagRegionsEnabled(TRUE);
 		SetRenderFlags(RENDER_FLAG_FULL);
@@ -3851,33 +3383,122 @@ namespace
 		EndItemPointer();
 	}
 
+	INT8 ItemTransferIntentSlot(SOLDIERTYPE const* actor, ItemTransferIntent intent)
+	{
+		if (!actor || !gpItemPointer || gpItemPointer->usItem == NOTHING)
+			return NO_SLOT;
+		switch (intent)
+		{
+			case ItemTransferIntent::PRIMARY_HAND: return HANDPOS;
+			case ItemTransferIntent::SECONDARY_HAND: return SECONDHANDPOS;
+			case ItemTransferIntent::BODY:
+			{
+				const INT8 slot = OS0PreferredEquipmentSlot(actor, *gpItemPointer);
+				return slot == HANDPOS || slot == SECONDHANDPOS ? NO_SLOT : slot;
+			}
+			case ItemTransferIntent::PACK:
+			case ItemTransferIntent::DROP: return NO_SLOT;
+		}
+		return NO_SLOT;
+	}
+
+	BOOLEAN ItemTransferIntentAllowed(SOLDIERTYPE* actor, ItemTransferIntent intent)
+	{
+		if (!actor || !gpItemPointer || !CanAccessSoldierContents(actor)) return FALSE;
+		if (intent == ItemTransferIntent::DROP) return TRUE;
+		if (!OS0CanAcceptCarriedObject(actor, *gpItemPointer)) return FALSE;
+		if (intent == ItemTransferIntent::PACK) return TRUE;
+		const INT8 slot = ItemTransferIntentSlot(actor, intent);
+		if (slot == NO_SLOT) return FALSE;
+		OBJECTTYPE preview = *gpItemPointer;
+		return CanItemFitInPosition(actor, &preview, slot, FALSE);
+	}
+
+	ST::string ItemTransferIntentLabel(SOLDIERTYPE* actor, ItemTransferIntent intent)
+	{
+		if (!actor || !gpItemPointer) return "NO TARGET";
+		if (intent == ItemTransferIntent::PACK)
+			return ST::format("PACK / LOAD {}% -> {}%", CalculateCarriedWeight(actor),
+				CalculateCarriedWeight(actor) + OS0AddedCarryPercent(actor, *gpItemPointer));
+		if (intent == ItemTransferIntent::DROP) return "DROP AT FEET / WORLD ITEM";
+		const INT8 slot = ItemTransferIntentSlot(actor, intent);
+		if (intent == ItemTransferIntent::BODY && slot == NO_SLOT)
+			return "BODY / ITEM IS NOT WEARABLE";
+		if (slot == HANDPOS || slot == SECONDHANDPOS)
+		{
+			ItemModel const* const item = GCM->getItem(gpItemPointer->usItem);
+			const char* const hand = slot == HANDPOS ? "HAND 1" : "HAND 2";
+			if (slot == SECONDHANDPOS && item->isTwoHanded())
+				return "HAND 2 / BLOCKED BY TWO-HAND ITEM";
+			if (actor->inv[slot].usItem != NOTHING)
+				return ST::format("{} / SWAP {}", hand,
+					GCM->getItem(actor->inv[slot].usItem)->getName());
+			return ST::format("{} / {}", hand,
+				item->isTwoHanded() ? "TWO-HAND GRIP" : "TAKE ITEM");
+		}
+		if (slot != NO_SLOT)
+		{
+			auto const found = std::find(gExplodedEquipmentSlots.begin(),
+				gExplodedEquipmentSlots.end(), slot);
+			const char* const slotName = found == gExplodedEquipmentSlots.end() ?
+				"BODY" : gExplodedEquipmentLabels[static_cast<size_t>(
+					std::distance(gExplodedEquipmentSlots.begin(), found))];
+			return ST::format("EQUIP {} / {}", slotName,
+				actor->inv[slot].usItem == NOTHING ? "FREE" : "SWAP");
+		}
+		return "INCOMPATIBLE";
+	}
+
+	BOOLEAN PlacePointerInActorSlot(SOLDIERTYPE* actor, INT8 slot)
+	{
+		if (!actor || !gpItemPointer || slot == NO_SLOT) return FALSE;
+		OBJECTTYPE preview = *gpItemPointer;
+		if (!CanItemFitInPosition(actor, &preview, slot, FALSE) ||
+			!PlaceObject(actor, slot, gpItemPointer)) return FALSE;
+
+		// A swap leaves the displaced item on the cursor. Return it to the source
+		// slot or pack it; only a genuine no-space result becomes a world object.
+		if (gpItemPointer->usItem != NOTHING)
+		{
+			const BOOLEAN sourceSlotUsable = actor == gpItemPointerSoldier &&
+				gbItemPointerSrcSlot >= 0 && gbItemPointerSrcSlot < NUM_INV_SLOTS &&
+				gbItemPointerSrcSlot != slot &&
+				actor->inv[gbItemPointerSrcSlot].usItem == NOTHING;
+			if (sourceSlotUsable)
+				PlaceObject(actor, gbItemPointerSrcSlot, gpItemPointer);
+			if (gpItemPointer->usItem != NOTHING)
+				AutoPlaceObject(actor, gpItemPointer, FALSE);
+			if (gpItemPointer->usItem != NOTHING) DropPointerAtActor(actor);
+		}
+		if (gpItemPointer && gpItemPointer->ubNumberOfObjects == 0) EndItemPointer();
+		return TRUE;
+	}
+
 	void ItemTransferIntentCallback(MOUSE_REGION* region, UINT32 reason)
 	{
 		if (!(reason & MSYS_CALLBACK_REASON_POINTER_UP) || !gpItemPointer ||
 			!gItemTransferTarget || !CanAccessSoldierContents(gItemTransferTarget)) return;
 		const size_t index = static_cast<size_t>(region->GetUserData<0>());
-		if (index >= gItemTransferIntents.size()) return;
+		if (index >= gOS0ItemTransferIntents.size()) return;
 		SOLDIERTYPE* const actor = gItemTransferTarget;
-		switch (gItemTransferIntents[index].intent)
+		const ItemTransferIntent intent = gOS0ItemTransferIntents[index].intent;
+		if (!ItemTransferIntentAllowed(actor, intent))
 		{
-			case ItemTransferIntent::HANDS:
-			{
-				const INT8 hand = actor->inv[HANDPOS].usItem == NOTHING ? HANDPOS :
-					actor->inv[SECONDHANDPOS].usItem == NOTHING ? SECONDHANDPOS : HANDPOS;
-				if (!PlaceObject(actor, hand, gpItemPointer))
-				{
-					if (!AutoPlaceObject(actor, gpItemPointer, TRUE))
-						DropPointerAtActor(actor);
-				}
-				else if (gpItemPointer && gpItemPointer->ubNumberOfObjects > 0 &&
-					!AutoPlaceObject(actor, gpItemPointer, TRUE))
-				{
-					// Occupied hands return the displaced object to the pointer.  If
-					// there is nowhere sensible to keep it, it becomes a real world item.
-					DropPointerAtActor(actor);
-				}
+			RecordFeedbackEvent(ST::format("TRANSFER BLOCKED / {}",
+				ItemTransferIntentLabel(actor, intent)));
+			return;
+		}
+		switch (intent)
+		{
+			case ItemTransferIntent::PRIMARY_HAND:
+				PlacePointerInActorSlot(actor, HANDPOS);
 				break;
-			}
+			case ItemTransferIntent::SECONDARY_HAND:
+				PlacePointerInActorSlot(actor, SECONDHANDPOS);
+				break;
+			case ItemTransferIntent::BODY:
+				PlacePointerInActorSlot(actor, ItemTransferIntentSlot(actor, intent));
+				break;
 			case ItemTransferIntent::PACK:
 				if (!AutoPlaceObject(actor, gpItemPointer, TRUE) ||
 					(gpItemPointer && gpItemPointer->ubNumberOfObjects > 0))
@@ -3931,39 +3552,10 @@ namespace
 		}
 		else if ((reason & MSYS_CALLBACK_REASON_POINTER_UP) && gpItemPointer)
 		{
-			if (PlaceObject(soldier, slot, gpItemPointer) &&
-				gpItemPointer->ubNumberOfObjects == 0)
-			{
-				EndItemPointer();
-			}
-		}
-	}
-
-	void ObjectSoldierSlotCallback(MOUSE_REGION* region, UINT32 reason)
-	{
-		if (GetJA2Clock() < gPanelInteractionGuardUntil) return;
-		SOLDIERTYPE* const body = gInspectedSoldier;
-		SOLDIERTYPE* const selected = GetSelectedMan();
-		if (!body || body->bTeam == OUR_TEAM || !selected ||
-			!CanAccessSoldierContents(body)) return;
-		const INT8 slot = static_cast<INT8>(region->GetUserData<0>());
-		if ((reason & MSYS_CALLBACK_REASON_RBUTTON_UP) && !gpItemPointer &&
-			body->inv[slot].usItem != NOTHING)
-		{
-			OpenInventoryItemContext(body, slot);
-		}
-		else if ((reason & MSYS_CALLBACK_REASON_POINTER_DWN) && !gpItemPointer &&
-			body->inv[slot].usItem != NOTHING)
-		{
-			OBJECTTYPE looted{};
-			GetObjFrom(&body->inv[slot], 0, &looted);
-			if (looted.usItem != NOTHING)
-				InternalBeginItemPointer(selected, &looted, NO_SLOT);
-		}
-		else if ((reason & MSYS_CALLBACK_REASON_POINTER_UP) && gpItemPointer)
-		{
-			if (PlaceObject(body, slot, gpItemPointer) &&
-				gpItemPointer->ubNumberOfObjects == 0) EndItemPointer();
+			if (!OS0CanAcceptCarriedObject(soldier, *gpItemPointer))
+				RecordFeedbackEvent("LOAD LIMIT 125% / SLOT REJECTED");
+			else if (!PlacePointerInActorSlot(soldier, slot))
+				RecordFeedbackEvent("ITEM / SLOT RELATION NOT COMPATIBLE");
 		}
 	}
 
@@ -3993,11 +3585,13 @@ namespace
 			WORLDITEM& worldItem = GetWorldItem(itemIndex);
 			if (!worldItem.fExists || worldItem.o.usItem == NOTHING) return;
 
-			if (IsResourceItem(worldItem.o.usItem))
+			if (OS0IsResourceItem(worldItem.o.usItem))
 				StoreResourceWorldItem(itemIndex);
-			else
+			else if (OS0CanAcceptCarriedObject(selected, worldItem.o))
 				SoldierPickupItem(selected, itemIndex, gLootGridNo,
 					ITEM_IGNORE_Z_LEVEL);
+			else
+				RecordFeedbackEvent("LOAD LIMIT 125% / PICKUP REJECTED");
 			fInterfacePanelDirty = DIRTYLEVEL2;
 			SetRenderFlags(RENDER_FLAG_FULL);
 			return;
@@ -4047,8 +3641,8 @@ namespace
 	void ApplyTutorialName()
 	{
 		SOLDIERTYPE* const soldier = GetSelectedMan();
-		if (!soldier || gTutorialName.empty()) return;
-		const ST::string name = gTutorialName.left(16);
+		if (!soldier || gCreatorModel.callsign().empty()) return;
+		const ST::string name = gCreatorModel.callsign().left(16);
 		soldier->name = name;
 		MERCPROFILESTRUCT& profile = GetProfile(soldier->ubProfile);
 		profile.zNickname = name;
@@ -4060,17 +3654,18 @@ namespace
 		SOLDIERTYPE* const soldier = GetSelectedMan();
 		if (!soldier) return;
 		MERCPROFILESTRUCT& profile = GetProfile(soldier->ubProfile);
-		soldier->bLifeMax      = profile.bLifeMax      = gTutorialStatValues[0];
-		soldier->bLife         = profile.bLife         = gTutorialStatValues[0];
-		soldier->bAgility      = profile.bAgility      = gTutorialStatValues[1];
-		soldier->bDexterity    = profile.bDexterity    = gTutorialStatValues[2];
-		soldier->bStrength     = profile.bStrength     = gTutorialStatValues[3];
-		soldier->bWisdom       = profile.bWisdom       = gTutorialStatValues[4];
-		soldier->bLeadership   = profile.bLeadership   = gTutorialStatValues[5];
-		soldier->bMarksmanship = profile.bMarksmanship = gTutorialStatValues[6];
-		soldier->bMedical      = profile.bMedical      = gTutorialStatValues[7];
-		soldier->bMechanical   = profile.bMechanical   = gTutorialStatValues[8];
-		soldier->bExplosive    = profile.bExplosive    = gTutorialStatValues[9];
+		auto const& stats = gCreatorModel.stats();
+		soldier->bLifeMax      = profile.bLifeMax      = stats[0];
+		soldier->bLife         = profile.bLife         = stats[0];
+		soldier->bAgility      = profile.bAgility      = stats[1];
+		soldier->bDexterity    = profile.bDexterity    = stats[2];
+		soldier->bStrength     = profile.bStrength     = stats[3];
+		soldier->bWisdom       = profile.bWisdom       = stats[4];
+		soldier->bLeadership   = profile.bLeadership   = stats[5];
+		soldier->bMarksmanship = profile.bMarksmanship = stats[6];
+		soldier->bMedical      = profile.bMedical      = stats[7];
+		soldier->bMechanical   = profile.bMechanical   = stats[8];
+		soldier->bExplosive    = profile.bExplosive    = stats[9];
 	}
 
 	void ApplyTutorialTraits()
@@ -4079,10 +3674,11 @@ namespace
 		if (!soldier) return;
 		MERCPROFILESTRUCT& profile = GetProfile(soldier->ubProfile);
 		// These are freely selected specialties, not a predefined class.
-		profile.bSkillTrait = static_cast<INT8>(gTutorialTraits[0]);
-		profile.bSkillTrait2 = static_cast<INT8>(gTutorialTraits[1]);
-		soldier->ubSkillTrait1 = static_cast<UINT8>(gTutorialTraits[0]);
-		soldier->ubSkillTrait2 = static_cast<UINT8>(gTutorialTraits[1]);
+		auto const& traits = gCreatorModel.traits();
+		profile.bSkillTrait = static_cast<INT8>(traits[0]);
+		profile.bSkillTrait2 = static_cast<INT8>(traits[1]);
+		soldier->ubSkillTrait1 = static_cast<UINT8>(traits[0]);
+		soldier->ubSkillTrait2 = static_cast<UINT8>(traits[1]);
 	}
 
 	BOOLEAN TutorialKeyboardHook(InputAtom* event)
@@ -4091,28 +3687,21 @@ namespace
 		if (event->usEvent == TEXT_INPUT)
 		{
 			for (char32_t c : event->codepoints)
-			{
-				if (gTutorialName.to_utf32().size() >= 16) break;
-				if (c >= U' ' && c != U'<' && c != U'>') gTutorialName += c;
-			}
+				gCreatorModel.appendCallsign(c);
 			SetRenderFlags(RENDER_FLAG_FULL);
 			return TRUE;
 		}
 		if (event->usEvent != KEY_DOWN && event->usEvent != KEY_REPEAT) return FALSE;
 		if (event->usParam == SDLK_BACKSPACE)
 		{
-			ST::utf32_buffer chars = gTutorialName.to_utf32();
-			if (!chars.empty())
-			{
-				gTutorialName = ST::string::from_utf32(chars.data(), chars.size() - 1);
-			}
+			gCreatorModel.backspaceCallsign();
 			SetRenderFlags(RENDER_FLAG_FULL);
 			return TRUE;
 		}
-		if (event->usParam == SDLK_RETURN && !gTutorialName.empty())
+		if (event->usParam == SDLK_RETURN && !gCreatorModel.callsign().empty())
 		{
 			ApplyTutorialName();
-			gTutorialStep = 2;
+			gUIRuntime.advanceCreator();
 			gInventoryVisible = TRUE;
 			gInventorySoldier = GetSelectedMan();
 			for (MOUSE_REGION& r : gTutorialStats) r.Enable();
@@ -4130,14 +3719,13 @@ namespace
 		switch (gTutorialStep)
 		{
 			case 0:
-				gTutorialStep = 1;
-				gTutorialName.clear();
+				gUIRuntime.advanceCreator();
 				SetUIKeyboardHook(TutorialKeyboardHook);
 				break;
 			case 1:
-				if (gTutorialName.empty()) return;
+				if (gCreatorModel.callsign().empty()) return;
 				ApplyTutorialName();
-				gTutorialStep = 2;
+				gUIRuntime.advanceCreator();
 				gInventoryVisible = TRUE;
 				gInventorySoldier = GetSelectedMan();
 				for (MOUSE_REGION& r : gTutorialStats) r.Enable();
@@ -4145,7 +3733,7 @@ namespace
 				break;
 			case 2:
 				ApplyTutorialStats();
-				gTutorialStep = 3;
+				gUIRuntime.advanceCreator();
 				for (MOUSE_REGION& r : gTutorialStats) r.Disable();
 				for (MOUSE_REGION& r : gTutorialTraitRegions) r.Enable();
 				break;
@@ -4153,32 +3741,32 @@ namespace
 				ApplyTutorialTraits();
 				EnsureDebugFieldTools(GetSelectedMan());
 				gFieldToolIssued = TRUE;
-				gTutorialStep = 4;
-				gMode = ComputerMode::CONTENTS;
+				// Inventory is a gameplay tool, not a compulsory creator page.
+				// Continue directly to the control briefing and leave it closed on entry.
+				gUIRuntime.advanceCreator();
+				gMode = ComputerMode::INFO;
 				gContentsMode = ContentsMode::SOLDIER;
-				gInventoryVisible = TRUE;
+				gInventoryVisible = FALSE;
 				gInventorySoldier = GetSelectedMan();
 				for (MOUSE_REGION& r : gTutorialTraitRegions) r.Disable();
 				break;
 			case 4:
-				gTutorialStep = 5;
+				// Compatibility with a creator state left at the old equipment page.
+				gTutorialStep = static_cast<UINT8>(OS0CreatorStage::CONTROLS);
 				gMode = ComputerMode::INFO;
 				gInventoryVisible = FALSE;
 				break;
 			case 5:
-				gTutorialActive = FALSE;
-				gBagVisible = FALSE;
+				gUIRuntime.advanceCreator();
+				OS0GetTacticalSession().state().creatorCompleted = TRUE;
+				gfDoVideoScroll = gVideoScrollBeforeCreator;
 				gMode = ComputerMode::CONTENTS;
 				gContentsMode = ContentsMode::SOLDIER;
 				gInspectedSoldier = GetSelectedMan();
 				gInventorySoldier = gInspectedSoldier;
 				gInventoryVisible = gInventorySoldier != nullptr;
-				gFloatingPanels[static_cast<size_t>(FloatingPanelId::CONTEXT)].visible = FALSE;
-				gFloatingPanels[static_cast<size_t>(FloatingPanelId::ACTIONS)].visible = FALSE;
-				gFloatingPanels[static_cast<size_t>(FloatingPanelId::TOOLS)].visible = FALSE;
 				ClampWindowPositions();
 				SaveUILayout();
-				RefreshPanelActions();
 				SetUIKeyboardHook(nullptr);
 				SetBagRegionsEnabled(TRUE);
 				break;
@@ -4202,20 +3790,7 @@ namespace
 		if (!(reason & MSYS_CALLBACK_REASON_POINTER_UP)) return;
 		const size_t stat = static_cast<size_t>(region->GetUserData<0>());
 		const BOOLEAN increase = region->GetUserData<1>() != 0;
-		if (stat >= gTutorialStatValues.size()) return;
-		if (increase)
-		{
-			if (gTutorialStatPoints >= 5 && gTutorialStatValues[stat] <= 80)
-			{
-				gTutorialStatValues[stat] += 5;
-				gTutorialStatPoints -= 5;
-			}
-		}
-		else if (gTutorialStatValues[stat] >= 40)
-		{
-			gTutorialStatValues[stat] -= 5;
-			gTutorialStatPoints += 5;
-		}
+		gCreatorModel.adjustStat(stat, increase ? 1 : -1);
 		SetRenderFlags(RENDER_FLAG_FULL);
 	}
 
@@ -4224,28 +3799,7 @@ namespace
 		if (!(reason & MSYS_CALLBACK_REASON_POINTER_UP)) return;
 		const size_t index = static_cast<size_t>(region->GetUserData<0>());
 		if (index >= gTutorialTraitValues.size()) return;
-		const SkillTrait trait = gTutorialTraitValues[index];
-		for (SkillTrait& selected : gTutorialTraits)
-		{
-			if (selected == trait)
-			{
-				selected = NO_SKILLTRAIT;
-				SetRenderFlags(RENDER_FLAG_FULL);
-				return;
-			}
-		}
-		for (SkillTrait& selected : gTutorialTraits)
-		{
-			if (selected == NO_SKILLTRAIT)
-			{
-				selected = trait;
-				SetRenderFlags(RENDER_FLAG_FULL);
-				return;
-			}
-		}
-		// With both slots occupied, the newest choice replaces the older one.
-		gTutorialTraits[0] = gTutorialTraits[1];
-		gTutorialTraits[1] = trait;
+		gCreatorModel.toggleTrait(gTutorialTraitValues[index]);
 		SetRenderFlags(RENDER_FLAG_FULL);
 	}
 
@@ -4304,11 +3858,95 @@ namespace
 
 	void OrbCallback(MOUSE_REGION*, UINT32 reason)
 	{
-		if (!(reason & MSYS_CALLBACK_REASON_POINTER_UP)) return;
-		FloatingPanel& computer =
-			gFloatingPanels[static_cast<size_t>(FloatingPanelId::SECTOR)];
-		computer.visible = !computer.visible;
-		gCommandBarExpanded = computer.visible;
+		if (reason & MSYS_CALLBACK_REASON_RBUTTON_UP)
+		{
+			FloatingPanel& strategy =
+				gFloatingPanels[static_cast<size_t>(FloatingPanelId::SECTOR)];
+			strategy.visible = !strategy.visible;
+		}
+		else if (reason & MSYS_CALLBACK_REASON_POINTER_UP)
+		{
+			FloatingPanel& toolbox =
+				gFloatingPanels[static_cast<size_t>(FloatingPanelId::TOOLBOX)];
+			toolbox.visible = !toolbox.visible;
+		}
+		else return;
+		PositionBagRegions();
+		SaveUILayout();
+		SetBagRegionsEnabled(TRUE);
+		SetRenderFlags(RENDER_FLAG_FULL);
+	}
+
+	void ToolboxModuleCallback(MOUSE_REGION* region, UINT32 reason)
+	{
+		if (!(reason & MSYS_CALLBACK_REASON_POINTER_UP) || gTutorialActive) return;
+		const ToolboxModule module = static_cast<ToolboxModule>(
+			region->GetUserData<0>());
+		if (module >= ToolboxModule::COUNT) return;
+		ActivateToolboxModule(module);
+	}
+
+	void ActivateToolboxModule(ToolboxModule module)
+	{
+		SOLDIERTYPE* const selected = GetSelectedMan();
+		switch (module)
+		{
+			case ToolboxModule::TACTICAL:
+				OS0CancelCursorAction();
+				CloseContextMenu();
+				break;
+			case ToolboxModule::CHARACTER:
+				if (selected)
+				{
+					gInventorySoldier = selected;
+					gInventoryVisible = TRUE;
+					gUIRuntime.toggle(OS0UIPanel::INVENTORY);
+					if (gBagVisible && CompactArtworkWorkspace())
+					{
+						gFloatingPanels[static_cast<size_t>(
+							FloatingPanelId::SECTOR)].visible = FALSE;
+						gFloatingPanels[static_cast<size_t>(
+							FloatingPanelId::TOOLBOX)].visible = FALSE;
+					}
+				}
+				break;
+			case ToolboxModule::STEALTH:
+				if (selected)
+					OS0ExecuteCharacterQuickAction(selected,
+						OS0CharacterQuickAction::STEALTH);
+				break;
+			case ToolboxModule::OBJECT:
+				gFloatingPanels[static_cast<size_t>(FloatingPanelId::INSPECTOR)].visible =
+					!gFloatingPanels[static_cast<size_t>(FloatingPanelId::INSPECTOR)].visible;
+				break;
+			case ToolboxModule::WORLD:
+				ApplyCursorTool(ContextAction::INSPECT);
+				gFloatingPanels[static_cast<size_t>(FloatingPanelId::INSPECTOR)].visible = TRUE;
+				break;
+			case ToolboxModule::ASSETS:
+				gDebugLibraryMode = DebugLibraryMode::ASSETS;
+				gUIRuntime.show(OS0UIPanel::ASSET_LIBRARY);
+				break;
+			case ToolboxModule::TERRAIN:
+				if (selected) EnsureDebugFieldTools(selected);
+				ApplyCursorTool(ContextAction::USE);
+				break;
+			case ToolboxModule::STRATEGY:
+			{
+				FloatingPanel& strategy =
+					gFloatingPanels[static_cast<size_t>(FloatingPanelId::SECTOR)];
+				strategy.visible = !strategy.visible;
+				break;
+			}
+			case ToolboxModule::SANDBOX:
+				if (selected) EnsureDebugFieldTools(selected);
+				gDebugLibraryMode = DebugLibraryMode::ICONS;
+				gUIRuntime.show(OS0UIPanel::ASSET_LIBRARY);
+				break;
+			case ToolboxModule::COUNT: return;
+		}
+		RecordFeedbackEvent(ST::format("TOOLBOX MODULE {}",
+			static_cast<UINT8>(module)));
 		PositionBagRegions();
 		SaveUILayout();
 		SetBagRegionsEnabled(TRUE);
@@ -4324,8 +3962,9 @@ namespace
 		}
 		if (!gGodNewIcons) return;
 		constexpr std::array<UINT16, COMMAND_MODULE_COUNT> frames{{
-			24, 21, 12, 39, 18, 18, 42, 21
+			24, 18, 0, 21, 12, 42, 39, 21, 18
 		}};
+		if (index >= frames.size()) return;
 		BltVideoObject(FRAME_BUFFER, gGodNewIcons, frames[index], x, y);
 	}
 
@@ -4335,11 +3974,17 @@ namespace
 		const UINT16 dark = Get16BPPColor(FROMRGB(8, 10, 9));
 		const UINT16 red = Get16BPPColor(FROMRGB(118, 0, 0));
 		const UINT16 bright = Get16BPPColor(FROMRGB(205, 12, 12));
+		// Paint the complete dock every frame. It lives below the world viewport,
+		// so camera scrolling can never borrow stale pixels from it.
+		ColorFillVideoSurfaceArea(FRAME_BUFFER, 0, gOrbY,
+			gsVIEWPORT_END_X, SCREEN_HEIGHT - 1, black);
+		ColorFillVideoSurfaceArea(FRAME_BUFFER, 0, gOrbY,
+			gsVIEWPORT_END_X, gOrbY, red);
 		// The dock has become a single physical field-computer object.  All
 		// non-world systems live in its movable OS window; gameplay actions stay on
 		// characters and world assets.
 		const BOOLEAN open =
-			gFloatingPanels[static_cast<size_t>(FloatingPanelId::SECTOR)].visible;
+			gFloatingPanels[static_cast<size_t>(FloatingPanelId::TOOLBOX)].visible;
 		ColorFillVideoSurfaceArea(FRAME_BUFFER, 3, gOrbY + 3,
 			COLLAPSED_OS0_W - 3, gOrbY + COMMAND_BAR_H - 3, black);
 		OutlineBox(3, gOrbY + 3, COLLAPSED_OS0_W - 5,
@@ -4355,71 +4000,103 @@ namespace
 		SetFontBackground(FONT_MCOLOR_BLACK);
 		SetFontForeground(open ? FONT_WHITE : FONT_MCOLOR_RED);
 		MPrint(38, gOrbY + 14, "0");
-		gOrbRegion.SetFastHelpText("OS//0 FIELD COMPUTER / MAP / TEAM / BASE / REPORT");
-		InvalidateRegion(0, gOrbY, COLLAPSED_OS0_W,
-			gOrbY + COMMAND_BAR_H);
-		return;
-		ColorFillVideoSurfaceArea(FRAME_BUFFER, 0, gOrbY,
-			gsVIEWPORT_END_X - 1, gOrbY + COMMAND_BAR_H - 1, black);
-		ColorFillVideoSurfaceArea(FRAME_BUFFER, 0, gOrbY,
-			gsVIEWPORT_END_X - 1, gOrbY + 1, bright);
-		if (!gCommandBarExpanded || gAimAutoCollapsed)
+		gOrbRegion.SetFastHelpText(
+			"OS//0 TOOLBOX / LEFT: MODULES / RIGHT: MAP, TEAM, BASE, REPORT");
+		if (!gTutorialActive && !gAimAutoCollapsed)
 		{
-			OutlineBox(3, gOrbY + 4, COLLAPSED_OS0_W - 6,
-				COMMAND_BAR_H - 7, red);
-			DrawCommandIcon(0, 7, gOrbY + 9);
-			SetFont(TINYFONT1);
-			SetFontBackground(FONT_MCOLOR_BLACK);
-			SetFontForeground(FONT_MCOLOR_RED);
-			MPrint(28, gOrbY + 8, "OS0");
-			SetFontForeground(FONT_MCOLOR_DKGRAY);
-			MPrint(28, gOrbY + 20, ">>");
-			InvalidateRegion(0, gOrbY, gsVIEWPORT_END_X,
-				gOrbY + COMMAND_BAR_H);
-			return;
+			constexpr std::array<const char*, PANEL_DOCK_COUNT> labels{{
+				"CHARACTER / RPG INVENTORY", "STEALTH / CAMOUFLAGE",
+				"OBJECT INSPECTOR", "WORLD FIELD EDITING", "ASSET DATABASE",
+				"TERRAIN TOOLS", "STRATEGY / MAP / TEAM / REPORT",
+				"SANDBOX / ICON LIBRARY"
+			}};
+			for (size_t i = 0; i < gPanelDockRegions.size(); ++i)
+			{
+				MOUSE_REGION& region = gPanelDockRegions[i];
+				const INT16 x = region.RegionTopLeftX;
+				const INT16 w = region.W();
+				const BOOLEAN hot = gusMouseXPos >= x &&
+					gusMouseXPos <= region.RegionBottomRightX &&
+					gusMouseYPos >= gOrbY;
+				DrawCommandIcon(i + 1, x + std::max<INT16>(2, (w - 20) / 2),
+					gOrbY + 8);
+				if (hot) DrawIconCorners(x + 2, gOrbY + 3,
+					std::max<INT16>(8, w - 4), COMMAND_BAR_H - 6, bright);
+				else ColorFillVideoSurfaceArea(FRAME_BUFFER,
+					x, gOrbY + 5, x, gOrbY + COMMAND_BAR_H - 6, dark);
+				region.SetFastHelpText(labels[i]);
+			}
 		}
+		InvalidateRegion(0, gOrbY, gsVIEWPORT_END_X, SCREEN_HEIGHT);
+	}
 
-		const std::array<const char*, COMMAND_MODULE_COUNT> titles{{
-			"OS0", "CHARACTER", "WORLD", "TOOLS",
-			"ACTIONS", "INVENTORY", "SECTOR", "FEEDBACK"
-		}};
-		const std::array<const char*, COMMAND_MODULE_COUNT> subtitles{{
-			"COLLAPSE", "STATS + GEAR", "TARGET INFO", "CURSOR + FIELD",
-			"COMMANDS", "LOOT SYSTEM", "BASE BUILD", "PLAYTEST"
-		}};
-		const INT16 cellW = CommandModuleWidth();
+	void DrawToolbox()
+	{
+		FloatingPanel const& panel =
+			gFloatingPanels[static_cast<size_t>(FloatingPanelId::TOOLBOX)];
+		if (!panel.visible || gTutorialActive || gAimAutoCollapsed) return;
+		const UINT16 black = Get16BPPColor(FROMRGB(2, 3, 3));
+		const UINT16 red = Get16BPPColor(FROMRGB(118, 0, 0));
+		const UINT16 bright = Get16BPPColor(FROMRGB(205, 12, 12));
+		ColorFillVideoSurfaceArea(FRAME_BUFFER, panel.x, panel.y,
+			panel.x + panel.w - 1, panel.y + panel.h - 1, black);
+		ColorFillVideoSurfaceArea(FRAME_BUFFER, panel.x, panel.y,
+			panel.x + 28, panel.y + 1, bright);
+		ColorFillVideoSurfaceArea(FRAME_BUFFER, panel.x + panel.w - 29, panel.y,
+			panel.x + panel.w - 1, panel.y + 1, bright);
 		SetFont(TINYFONT1);
 		SetFontBackground(FONT_MCOLOR_BLACK);
-		for (size_t i = 0; i < COMMAND_MODULE_COUNT; ++i)
+		SetFontForeground(FONT_MCOLOR_RED);
+		MPrint(panel.x + 7, panel.y + 7, "OS//0 TOOLBOX");
+		MPrint(panel.x + panel.w - 13, panel.y + 7, "X");
+		constexpr std::array<const char*, 9> labels{{
+			"TACTICAL / RETURN HELD ITEM", "CHARACTER + INVENTORY",
+			"STEALTH TOGGLE", "OBJECT INSPECTOR", "WORLD FIELD EDITING",
+			"ASSET DATABASE", "TERRAIN TOOLS", "STRATEGY / MAP / TEAM",
+			"SANDBOX / ICON LIBRARY"
+		}};
+		constexpr std::array<UINT16, 9> frames{{
+			24, 18, 0, 21, 12, 42, 39, 21, 18
+		}};
+		ST::string hotLabel = gpItemPointer ? "ITEM HELD / TACTICAL RETURNS IT" :
+			"9 LIVE MODULES";
+		for (size_t i = 0; i < gToolboxRegions.size(); ++i)
 		{
-			const INT16 x = static_cast<INT16>(i) * cellW;
-			const INT16 right = i + 1 == COMMAND_MODULE_COUNT ?
-				gsVIEWPORT_END_X : std::min<INT16>(gsVIEWPORT_END_X, x + cellW);
-			BOOLEAN active = i == 0;
-			if (i == 1) active = gBagVisible;
-			else if (i >= 2)
-				active = gFloatingPanels[i - 2].visible;
-			const BOOLEAN available = !gTutorialActive || i == 0 || i == 7;
-			if (active)
-				ColorFillVideoSurfaceArea(FRAME_BUFFER, x + 1, gOrbY + 3,
-					right - 2, gOrbY + COMMAND_BAR_H - 2, dark);
-			ColorFillVideoSurfaceArea(FRAME_BUFFER, right - 1, gOrbY + 3,
-				right - 1, gOrbY + COMMAND_BAR_H - 2, red);
-			DrawCommandIcon(i, x + 5, gOrbY + 9);
-			if (active) OutlineBox(x + 3, gOrbY + 6, 22, 22, bright);
-			SetFontForeground(!available ? FONT_MCOLOR_DKGRAY :
-				active ? FONT_MCOLOR_RED : FONT_MCOLOR_LTGRAY);
-			MPrint(x + 28, gOrbY + 7, titles[i]);
-			SetFontForeground(available ? FONT_MCOLOR_DKGRAY : FONT_MCOLOR_BLACK);
-			MPrint(x + 28, gOrbY + 20, subtitles[i]);
+			MOUSE_REGION const& region = gToolboxRegions[i];
+			const INT16 x = region.RegionTopLeftX;
+			const INT16 y = region.RegionTopLeftY;
+			const BOOLEAN hot = gusMouseXPos >= x && gusMouseXPos <= x + 30 &&
+				gusMouseYPos >= y && gusMouseYPos <= y + 26;
+			BOOLEAN active = FALSE;
+			switch (static_cast<ToolboxModule>(i))
+			{
+				case ToolboxModule::CHARACTER: active = gEquipmentExplodedVisible; break;
+				case ToolboxModule::STEALTH: active = GetSelectedMan() &&
+					GetSelectedMan()->bStealthMode; break;
+				case ToolboxModule::OBJECT: active =
+					gFloatingPanels[static_cast<size_t>(FloatingPanelId::INSPECTOR)].visible; break;
+				case ToolboxModule::WORLD: active =
+					CursorState().action == ContextAction::INSPECT; break;
+				case ToolboxModule::ASSETS: active = gGodLibraryVisible &&
+					gDebugLibraryMode == DebugLibraryMode::ASSETS; break;
+				case ToolboxModule::TERRAIN: active =
+					CursorState().action == ContextAction::USE; break;
+				case ToolboxModule::STRATEGY: active =
+					gFloatingPanels[static_cast<size_t>(FloatingPanelId::SECTOR)].visible; break;
+				case ToolboxModule::SANDBOX: active = gGodLibraryVisible &&
+					gDebugLibraryMode == DebugLibraryMode::ICONS; break;
+				default: break;
+			}
+			if (gGodNewIcons)
+				BltVideoObject(FRAME_BUFFER, gGodNewIcons, frames[i], x + 5, y + 3);
+			if (active || hot) DrawIconCorners(x, y, 30, 26,
+				hot ? bright : red);
+			gToolboxRegions[i].SetFastHelpText(labels[i]);
+			if (hot) hotLabel = labels[i];
 		}
-		if (gWorldZoom > 1)
-		{
-			SetFontForeground(FONT_WHITE);
-			MPrint(4, gOrbY + 27, "Z2");
-		}
-		InvalidateRegion(0, gOrbY, gsVIEWPORT_END_X,
-			gOrbY + COMMAND_BAR_H);
+		SetFontForeground(FONT_MCOLOR_DKGRAY);
+		MPrint(panel.x + 7, panel.y + panel.h - 12, hotLabel.left(22));
+		InvalidateRegion(panel.x, panel.y, panel.x + panel.w, panel.y + panel.h);
 	}
 
 	void DrawArtworkBrand()
@@ -4444,26 +4121,6 @@ namespace
 		SetFontForeground(FONT_MCOLOR_DKGRAY);
 		MPrint(x + 70, y + 22, "TACTICAL SURVIVAL / OS0");
 		InvalidateRegion(x, y, x + BRAND_W, y + BRAND_H);
-	}
-
-	void EnsurePortrait(SOLDIERTYPE* soldier)
-	{
-		if (!soldier || soldier->ubProfile == gPortraitProfile) return;
-		if (gPortrait) DeleteVideoObject(gPortrait);
-		gPortrait = nullptr;
-		gPortraitProfile = soldier->ubProfile;
-		// Randomly generated enemies and civilians use NO_PROFILE (200). Calling
-		// GetProfile for them aborts the process; their panel uses the pixel
-		// silhouette instead of pretending they have a mercenary portrait.
-		if (soldier->ubProfile >= NUM_PROFILES) return;
-		try
-		{
-			gPortrait = Load33Portrait(GetProfile(soldier->ubProfile));
-		}
-		catch (...)
-		{
-			gPortrait = nullptr;
-		}
 	}
 
 	void OutlineBox(INT16 x, INT16 y, INT16 w, INT16 h, UINT16 colour)
@@ -4495,16 +4152,20 @@ namespace
 
 	void DrawOS0Shell()
 	{
-		const UINT16 red = Get16BPPColor(FROMRGB(118, 0, 0));
-		const UINT16 bright = Get16BPPColor(FROMRGB(205, 12, 12));
+		const UINT16 red = Get16BPPColor(FROMRGB(205, 12, 12));
+		const UINT16 muted = Get16BPPColor(FROMRGB(78, 5, 5));
 		const UINT16 dark = Get16BPPColor(FROMRGB(3, 5, 5));
 		ColorFillVideoSurfaceArea(FRAME_BUFFER, gBagX, gBagY,
 			gBagX + PANE_W - 1, gBagY + BAG_H - 1, dark);
-		OutlineBox(gBagX, gBagY, PANE_W, BAG_H, red);
-		OutlineBox(gBagX + 2, gBagY + 2, PANE_W - 4, BAG_H - 4,
+		OutlineBox(gBagX, gBagY, PANE_W, BAG_H, muted);
+		ColorFillVideoSurfaceArea(FRAME_BUFFER, gBagX, gBagY,
+			gBagX + 30, gBagY + 1, red);
+		ColorFillVideoSurfaceArea(FRAME_BUFFER, gBagX + PANE_W - 31, gBagY,
+			gBagX + PANE_W - 1, gBagY + 1, red);
+		ColorFillVideoSurfaceArea(FRAME_BUFFER, gBagX + 1, gBagY + 18,
+			gBagX + PANE_W - 2, gBagY + 18, muted);
+		DrawIconCorners(gBagX + 4, gBagY + 22, PANE_W - 8, BAG_H - 27,
 			Get16BPPColor(FROMRGB(35, 13, 10)));
-		ColorFillVideoSurfaceArea(FRAME_BUFFER, gBagX + 1, gBagY + 17,
-			gBagX + PANE_W - 2, gBagY + 17, bright);
 	}
 
 	void DrawFloatingPanelShell(FloatingPanel const& panel, FloatingPanelId id,
@@ -4527,13 +4188,9 @@ namespace
 		SetFontBackground(FONT_MCOLOR_BLACK);
 		SetFontForeground(FONT_MCOLOR_RED);
 		const std::array<size_t, static_cast<size_t>(FloatingPanelId::COUNT)> icons{{
-			2, 3, 4, 5, 6, 7
+			6, 2, 0
 		}};
-		if ((id == FloatingPanelId::CONTEXT || id == FloatingPanelId::ACTIONS) &&
-			!gInspectedSoldier && gObjectSymbolTileIndex < NUMBEROFTILES)
-			DrawObjectSymbol(panel.x + 4, panel.y + 2, 15);
-		else
-			DrawCommandIcon(icons[static_cast<size_t>(id)], panel.x + 5, panel.y + 1);
+		DrawCommandIcon(icons[static_cast<size_t>(id)], panel.x + 5, panel.y + 1);
 		MPrint(panel.x + 28, panel.y + 5, title);
 		MPrint(panel.x + panel.w - 13, panel.y + 5, "X");
 	}
@@ -4589,7 +4246,10 @@ namespace
 				SetFontForeground(FONT_MCOLOR_LTGRAY);
 				MPrint(panel.x + 13, y + 19,
 					built ? upgrade.benefit : ST::format("W{} S{} R{} E{} / {}",
-						upgrade.timber, upgrade.stone, upgrade.scrap, upgrade.soil,
+						upgrade.cost[static_cast<size_t>(ResourceKind::TIMBER)],
+						upgrade.cost[static_cast<size_t>(ResourceKind::STONE)],
+						upgrade.cost[static_cast<size_t>(ResourceKind::SCRAP)],
+						upgrade.cost[static_cast<size_t>(ResourceKind::SOIL)],
 						upgrade.benefit));
 			}
 			SetFontForeground(FONT_MCOLOR_DKGRAY);
@@ -4734,63 +4394,6 @@ namespace
 		InvalidateRegion(panel.x, panel.y, panel.x + panel.w, panel.y + panel.h);
 	}
 
-	void DrawFeedbackPanel()
-	{
-		FloatingPanel const& panel =
-			gFloatingPanels[static_cast<size_t>(FloatingPanelId::FEEDBACK)];
-		if (!panel.visible) return;
-		DrawFloatingPanelShell(panel, FloatingPanelId::FEEDBACK,
-			"PLAYTEST / FEEDBACK REPORT");
-		const UINT16 red = Get16BPPColor(FROMRGB(118, 0, 0));
-		const UINT16 brightRed = Get16BPPColor(FROMRGB(205, 12, 12));
-		OutlineBox(panel.x + 8, panel.y + 24, panel.w - 16, 18, red);
-		OutlineBox(panel.x + 8, panel.y + 49, panel.w - 16, 104,
-			gFeedbackEditing ? brightRed : red);
-		SetFont(TINYFONT1);
-		SetFontBackground(FONT_MCOLOR_BLACK);
-		SetFontForeground(FONT_MCOLOR_RED);
-		MPrint(panel.x + 13, panel.y + 29,
-			ST::format("CATEGORY  < {} >", gFeedbackCategories[gFeedbackCategory]));
-		SetFontForeground(FONT_MCOLOR_LTGRAY);
-		if (gFeedbackText.empty())
-		{
-			MPrint(panel.x + 14, panel.y + 59,
-				"CLICK HERE. DESCRIBE WHAT YOU DID,");
-			MPrint(panel.x + 14, panel.y + 72,
-				"WHAT HAPPENED, AND WHAT YOU EXPECTED.");
-		}
-		else
-		{
-			ST::utf32_buffer const chars = gFeedbackText.to_utf32();
-			size_t cursor = chars.size() > 250 ? chars.size() - 250 : 0;
-			for (INT16 line = 0; line < 6 && cursor < chars.size(); ++line)
-			{
-				const size_t limit = std::min(chars.size(), cursor + 50);
-				size_t end = cursor;
-				while (end < limit && chars[end] != U'\n') ++end;
-				ST::string const text = end > cursor ?
-					ST::string::from_utf32(chars.data() + cursor, end - cursor) : ST::string{};
-				MPrint(panel.x + 14, panel.y + 58 + line * 14, text);
-				cursor = end < chars.size() && chars[end] == U'\n' ? end + 1 : end;
-			}
-		}
-		SetFontForeground(gFeedbackEditing ? FONT_WHITE : FONT_MCOLOR_LTGRAY);
-		MPrint(panel.x + 10, panel.y + 160, gFeedbackStatus.left(55));
-		if (!gFeedbackLastFile.empty())
-		{
-			SetFontForeground(FONT_MCOLOR_LTGRAY);
-			MPrint(panel.x + 10, panel.y + 173, gFeedbackLastFile.left(55));
-		}
-		OutlineBox(panel.x + 8, panel.y + panel.h - 28, 76, 19, red);
-		OutlineBox(panel.x + panel.w - 126, panel.y + panel.h - 28, 118, 19,
-			brightRed);
-		SetFontForeground(FONT_MCOLOR_LTGRAY);
-		MPrint(panel.x + 26, panel.y + panel.h - 23, "CLEAR");
-		SetFontForeground(FONT_WHITE);
-		MPrint(panel.x + panel.w - 108, panel.y + panel.h - 23, "SAVE REPORT");
-		InvalidateRegion(panel.x, panel.y, panel.x + panel.w, panel.y + panel.h);
-	}
-
 	void TutorialText(INT16 x, INT16 y, const ST::string& text, UINT8 color = FONT_WHITE)
 	{
 		SetFont(TINYFONT1);
@@ -4816,7 +4419,8 @@ namespace
 				break;
 			case 1:
 				TutorialText(15, 31, "IDENTITY / ENTER YOUR CALLSIGN", FONT_MCOLOR_RED);
-				TutorialText(15, 51, ST::format("> {}_", gTutorialName), FONT_WHITE);
+				TutorialText(15, 51,
+					ST::format("> {}_", gCreatorModel.callsign()), FONT_WHITE);
 				TutorialText(15, 69, "Type a name. ENTER or CONFIRM continues.");
 				TutorialText(CONTINUE_X + 8, BAG_H - 17, "CONFIRM", FONT_MCOLOR_RED);
 				break;
@@ -4826,7 +4430,7 @@ namespace
 				SetFontBackground(FONT_MCOLOR_BLACK);
 				SetFontForeground(FONT_WHITE);
 				MPrint(gInventoryX + PANE_W - 105, gInventoryY + 9,
-					ST::format("POINTS {}", gTutorialStatPoints));
+					ST::format("POINTS {}", gCreatorModel.points()));
 				for (size_t i = 0; i < gTutorialStatNames.size(); ++i)
 				{
 					const INT16 baseX = gBagX + (i < 5 ? 0 : 230);
@@ -4837,7 +4441,8 @@ namespace
 					SetFontForeground(FONT_MCOLOR_RED);
 					MPrint(baseX + 96, baseY + y, "-");
 					SetFontForeground(FONT_WHITE);
-					MPrint(baseX + 113, baseY + y, ST::format("{}", gTutorialStatValues[i]));
+					MPrint(baseX + 113, baseY + y,
+						ST::format("{}", gCreatorModel.stats()[i]));
 					SetFontForeground(FONT_MCOLOR_RED);
 					MPrint(baseX + 147, baseY + y, "+");
 				}
@@ -4851,8 +4456,9 @@ namespace
 				{
 					const BOOLEAN right = i >= 8;
 					const INT16 row = static_cast<INT16>(right ? i - 8 : i);
-					const BOOLEAN selected = gTutorialTraits[0] == gTutorialTraitValues[i] ||
-						gTutorialTraits[1] == gTutorialTraitValues[i];
+					auto const& traits = gCreatorModel.traits();
+					const BOOLEAN selected = traits[0] == gTutorialTraitValues[i] ||
+						traits[1] == gTutorialTraitValues[i];
 					SetFontForeground(selected ? FONT_MCOLOR_RED : FONT_WHITE);
 					MPrint(gBagX + (right ? 230 : 0) + 15,
 						gBagY + 27 + row * 14,
@@ -4863,17 +4469,11 @@ namespace
 				TutorialText(CONTINUE_X + 5, BAG_H - 17, "CONFIRM SKILLS", FONT_MCOLOR_RED);
 				break;
 			case 4:
-				TutorialText(15, 27, "FIELD EQUIPMENT", FONT_MCOLOR_RED);
-				TutorialText(15, 45, "Click an item to attach it to the mouse.");
-				TutorialText(15, 57, "Drop it into a slot, onto a unit, or into the world.");
-				TutorialText(15, 69, "Double-click a body or container to inspect its loot.");
-				TutorialText(CONTINUE_X + 8, BAG_H - 17, "NEXT", FONT_MCOLOR_RED);
-				break;
 			case 5:
 				TutorialText(15, 25, "LIVE CONTROL", FONT_MCOLOR_RED);
 				TutorialText(15, 42, "LEFT: move / select       DOUBLE: inspect");
 				TutorialText(15, 55, "RIGHT: context actions    MIDDLE: cycle action");
-				TutorialText(15, 68, "SHIFT + MIDDLE: cancel action / center operator");
+				TutorialText(15, 68, "SHIFT+MIDDLE: cancel / CTRL+MIDDLE: center");
 				TutorialText(15, 81, "Use PICK UP on nearby objects. Reach the red marker.");
 				TutorialText(CONTINUE_X + 3, BAG_H - 17, "ENTER ARULCO", FONT_MCOLOR_RED);
 				break;
@@ -4894,15 +4494,21 @@ namespace
 	void DrawCharacterSummary(SOLDIERTYPE* soldier)
 	{
 		if (!soldier) return;
-		EnsurePortrait(soldier);
-		if (gPortrait)
-			BltVideoObject(FRAME_BUFFER, gPortrait, 0, gBagX + 9, gBagY + 22);
+		if (gAnimatedMercPreview && gAnimatedMercPreviewSoldier == soldier)
+		{
+			BltVideoSurface(FRAME_BUFFER, gAnimatedMercPreview,
+				gBagX + 8, gBagY + 21, nullptr);
+			DrawIconCorners(gBagX + 7, gBagY + 20, 50, 64,
+				Get16BPPColor(FROMRGB(92, 8, 8)));
+		}
 
 		SetFont(TINYFONT1);
 		SetFontBackground(FONT_MCOLOR_BLACK);
 		SetFontForeground(FONT_WHITE);
 		MPrint(gBagX + 8, gBagY + 5,
 			ST::format("CHARACTER / {}", soldier->name).left(25));
+		SetFontForeground(FONT_MCOLOR_DKGRAY);
+		MPrint(gBagX + 10, gBagY + 74, "LIVE");
 
 		const std::array<const char*, 10> labels{{
 			"HP", "AGI", "DEX", "STR", "WIS",
@@ -4967,6 +4573,11 @@ namespace
 		MPrint(gInventoryX + INVENTORY_X + 8, gInventoryY + 5, "GEAR");
 		MPrint(gInventoryX + INVENTORY_X + 121, gInventoryY + 5, "BODY");
 		MPrint(gInventoryX + INVENTORY_X + 180, gInventoryY + 5, "PACK / POCKETS");
+		SetFontForeground(FONT_MCOLOR_LTGRAY);
+		MPrint(gInventoryX + INVENTORY_X + 48, gInventoryY + 83,
+			"HAND 1 / MAIN");
+		MPrint(gInventoryX + INVENTORY_X + 48, gInventoryY + 110,
+			"HAND 2 / OFF");
 		DrawCharacterSummary(soldier);
 		if (!CanAccessSoldierContents(soldier))
 		{
@@ -4985,17 +4596,23 @@ namespace
 			{
 				const SlotLayout& slot = gSlots[i];
 				const OBJECTTYPE& object = soldier->inv[slot.slot];
-				ST::string help;
+				ST::string help = ST::format("{} / EMPTY\nDrop a compatible item here.",
+					OS0InventorySlotName(slot.slot));
 				if (object.usItem != NOTHING)
 				{
 					ItemModel const* const item = GCM->getItem(object.usItem);
-					help = ST::format("{}\nZustand: {}%   Anzahl: {}\n"
-						"Rechtsklick: anlegen",
-						item->getName(), object.bStatus[0], object.ubNumberOfObjects);
+					help = ST::format("{} / {}\nCondition: {}%   Count: {}\n"
+						"RMB: relational actions",
+						OS0InventorySlotName(slot.slot), item->getName(), object.bStatus[0],
+						object.ubNumberOfObjects);
 					INVRenderItem(FRAME_BUFFER, soldier, object,
 						gInventoryX + slot.x, gInventoryY + slot.y, slot.w, slot.h,
 						DIRTYLEVEL2, 0, SGP_TRANSPARENT);
 				}
+				if (slot.slot == SECONDHANDPOS &&
+					soldier->inv[HANDPOS].usItem != NOTHING &&
+					GCM->getItem(soldier->inv[HANDPOS].usItem)->isTwoHanded())
+					help = "HAND 2 / RESERVED\nPrimary item requires both hands.";
 				if (help != gSlotHelp[i])
 				{
 					gSlotHelp[i] = help;
@@ -5017,23 +4634,12 @@ namespace
 			gLootWorldItems.fill(-1);
 			std::array<ST::string, 12> nextHelp;
 			const UINT16 red = Get16BPPColor(FROMRGB(205, 12, 12));
-			const UINT16 muted = Get16BPPColor(FROMRGB(92, 8, 8));
-			const UINT16 dark = Get16BPPColor(FROMRGB(4, 7, 7));
 			INT16 anchorX;
 			INT16 anchorY;
 			GetGridNoScreenPos(gLootGridNo, gLootLevel, &anchorX, &anchorY);
 			OS0MapWorldToDisplayScreen(&anchorX, &anchorY);
-			if (gObjectSymbolTileIndex < NUMBEROFTILES)
-				DrawObjectSymbol(anchorX - 22, anchorY - 34, 44);
-			else
-			{
-				ColorFillVideoSurfaceArea(FRAME_BUFFER, anchorX - 18, anchorY - 30,
-					anchorX + 17, anchorY + 5, dark);
-				if (gGodNewIcons)
-					BltVideoObject(FRAME_BUFFER, gGodNewIcons, 18,
-						anchorX - 10, anchorY - 22);
-			}
-			OutlineBox(anchorX - 23, anchorY - 35, 46, 46, red);
+			// The real container is already visible in the world. Do not paint a
+			// scaled dark-backed duplicate over it.
 
 			size_t slot = 0;
 			for (ITEM_POOL* item = GetItemPool(gLootGridNo, gLootLevel);
@@ -5049,14 +4655,10 @@ namespace
 				const INT16 y = region.RegionTopLeftY;
 				const INT16 cx = x + 29;
 				const INT16 cy = y + 14;
-				ColorFillVideoSurfaceArea(FRAME_BUFFER,
-					std::min(anchorX, cx), cy, std::max(anchorX, cx), cy, muted);
-				ColorFillVideoSurfaceArea(FRAME_BUFFER, x, y, x + 58, y + 27, dark);
 				const BOOLEAN hot = gusMouseXPos >= x && gusMouseXPos <= x + 58 &&
 					gusMouseYPos >= y && gusMouseYPos <= y + 27;
-				OutlineBox(x, y, 59, 28, hot ? red : muted);
-				INVRenderItem(FRAME_BUFFER, GetSelectedMan(), worldItem.o,
-					x + 2, y + 2, 55, 24, DIRTYLEVEL2, 0, SGP_TRANSPARENT);
+				if (hot) DrawIconCorners(x, y, 59, 28, red);
+				DrawWorldItemSprite(worldItem.o, cx, cy);
 				gLootWorldItems[slot] = item->iItemIndex;
 				ItemModel const* const model = GCM->getItem(worldItem.o.usItem);
 				nextHelp[slot] = ST::format("{} / {}% / x{}\n"
@@ -5073,209 +4675,18 @@ namespace
 					gLootRegions[i].SetFastHelpText(nextHelp[i]);
 				}
 			}
-			SetFont(TINYFONT1);
-			SetFontBackground(FONT_MCOLOR_BLACK);
-			SetFontForeground(slot == 0 ? FONT_MCOLOR_DKGRAY : FONT_MCOLOR_RED);
-			MPrint(std::clamp<INT16>(anchorX - 55, gsVIEWPORT_START_X,
-				gsVIEWPORT_END_X - 112),
-				std::clamp<INT16>(anchorY + 13, gsVIEWPORT_WINDOW_START_Y,
-					gsVIEWPORT_WINDOW_END_Y - 12),
-				slot == 0 ? "EMPTY OBJECT" : "OBJECT CONTENTS");
+			if (slot == 0)
+			{
+				// Empty containers collapse back into their world sprite. Never leave a
+				// black pseudo-window or an EMPTY label floating over the map.
+				gLootVisible = FALSE;
+			}
 			SetBagRegionsEnabled(TRUE);
 			InvalidateRegion(gsVIEWPORT_START_X, gsVIEWPORT_WINDOW_START_Y,
 				gsVIEWPORT_END_X, gsVIEWPORT_WINDOW_END_Y);
 			return;
 		}
 		gLootWorldItems.fill(-1);
-		std::array<ST::string, 12> nextHelp;
-		const UINT16 red = Get16BPPColor(FROMRGB(205, 12, 12));
-		const UINT16 mutedRed = Get16BPPColor(FROMRGB(92, 8, 8));
-		const UINT16 slotDark = Get16BPPColor(FROMRGB(12, 17, 17));
-		ColorFillVideoSurfaceArea(FRAME_BUFFER, gLootX, gLootY,
-			gLootX + PANE_W - 1, gLootY + BAG_H - 1,
-			Get16BPPColor(FROMRGB(4, 7, 7)));
-		OutlineBox(gLootX, gLootY, PANE_W, BAG_H, red);
-		OutlineBox(gLootX + 7, gLootY + 17, PANE_W - 14, TAB_Y - 20, mutedRed);
-		if (gItemDetailsVisible && gItemDetailsObject.usItem != NOTHING)
-		{
-			ItemModel const* const item = GCM->getItem(gItemDetailsObject.usItem);
-			SetFont(TINYFONT1);
-			SetFontBackground(FONT_MCOLOR_BLACK);
-			SetFontForeground(FONT_MCOLOR_RED);
-			MPrint(gLootX + 12, gLootY + 5,
-				ST::format("ITEM / {}", gItemDetailsName).left(56));
-			MPrint(gLootX + PANE_W - 13, gLootY + 5, "X");
-			OutlineBox(gLootX + 14, gLootY + 27, 92, 72, red);
-			INVRenderItem(FRAME_BUFFER, GetSelectedMan(), gItemDetailsObject,
-				gLootX + 18, gLootY + 31, 84, 64, DIRTYLEVEL2, 0,
-				SGP_TRANSPARENT);
-			SetFontForeground(FONT_WHITE);
-			MPrint(gLootX + 121, gLootY + 29, item->getName().left(30));
-			SetFontForeground(FONT_MCOLOR_LTGRAY);
-			MPrint(gLootX + 121, gLootY + 47,
-				ST::format("CONDITION {} / COUNT {}",
-					gItemDetailsObject.bStatus[0],
-					gItemDetailsObject.ubNumberOfObjects));
-			if (item->getItemClass() == IC_GUN)
-				MPrint(gLootX + 121, gLootY + 62,
-					ST::format("AMMO {}", gItemDetailsObject.ubGunShotsLeft));
-			SetFontForeground(FONT_MCOLOR_RED);
-			MPrint(gLootX + 121, gLootY + 83, "ATTACHMENTS");
-			INT16 attachmentLine = 0;
-			for (UINT8 i = 0; i < MAX_ATTACHMENTS; ++i)
-			{
-				if (gItemDetailsObject.usAttachItem[i] == NOTHING) continue;
-				SetFontForeground(FONT_MCOLOR_LTGRAY);
-				MPrint(gLootX + 121, gLootY + 98 + attachmentLine * 14,
-					ST::format("{} / {}", GCM->getItem(
-						gItemDetailsObject.usAttachItem[i])->getName(),
-						gItemDetailsObject.bAttachStatus[i]).left(43));
-				++attachmentLine;
-			}
-			if (attachmentLine == 0)
-			{
-				SetFontForeground(FONT_MCOLOR_DKGRAY);
-				MPrint(gLootX + 121, gLootY + 98, "NONE");
-			}
-			SetFontForeground(FONT_MCOLOR_DKGRAY);
-			MPrint(gLootX + 14, gLootY + BAG_H - 23,
-				"OS0 NATIVE DETAIL VIEW / NO VANILLA MODAL");
-			InvalidateRegion(gLootX, gLootY, gLootX + PANE_W, gLootY + BAG_H);
-			return;
-		}
-		if (gLootGridNo < 0 || gLootGridNo >= WORLD_MAX)
-		{
-			SetFont(TINYFONT1);
-			SetFontBackground(FONT_MCOLOR_BLACK);
-			SetFontForeground(FONT_MCOLOR_RED);
-			MPrint(gLootX + 15, gLootY + 30, "CONTAINER SIGNAL LOST");
-			return;
-		}
-		SetFont(TINYFONT1);
-		SetFontBackground(FONT_MCOLOR_BLACK);
-		SetFontForeground(FONT_MCOLOR_RED);
-		MPrint(gLootX + 12, gLootY + 5,
-			ST::format("OBJECT INVENTORY / {}", gContextTitle).left(56));
-		MPrint(gLootX + PANE_W - 13, gLootY + 5, "X");
-		if (!gLootVisible)
-		{
-			SetFontForeground(FONT_MCOLOR_RED);
-			MPrint(gLootX + 15, gLootY + 42, "CONTENTS LOCKED / MOVE WITHIN 2 TILES");
-			SetFontForeground(FONT_MCOLOR_LTGRAY);
-			MPrint(gLootX + 15, gLootY + 60, "RIGHT CLICK: CONTEXT / APPROACH");
-			return;
-		}
-		OutlineBox(gLootX + PANE_W - 57, gLootY + 23, 45, 43, red);
-		// The selected asset is rendered once into an owned off-screen surface.
-		// Windows can safely reuse that pixel icon without retaining a volatile
-		// world-level node or animated tile pointer.
-		if (gObjectSymbolTileIndex < NUMBEROFTILES)
-			DrawObjectSymbol(gLootX + PANE_W - 54, gLootY + 26, 37);
-
-		size_t slot = 0;
-		for (ITEM_POOL* item = GetItemPool(gLootGridNo, gLootLevel);
-			item && slot < gLootWorldItems.size(); item = item->pNext)
-		{
-			if (item->iItemIndex < 0 ||
-				static_cast<size_t>(item->iItemIndex) >= gWorldItems.size()) continue;
-			WORLDITEM& worldItem = GetWorldItem(item->iItemIndex);
-			if (!worldItem.fExists || worldItem.o.usItem == NOTHING ||
-				worldItem.o.usItem == OWNERSHIP || worldItem.o.usItem == ACTION_ITEM) continue;
-
-			const INT16 x = gLootX + 14 + static_cast<INT16>(slot % 6) * 62;
-			const INT16 y = gLootY + 25 + static_cast<INT16>(slot / 6) * 31;
-			ColorFillVideoSurfaceArea(FRAME_BUFFER, x + 1, y + 1,
-				x + 57, y + 26, slotDark);
-			OutlineBox(x, y, 59, 28, red);
-			INVRenderItem(FRAME_BUFFER, GetSelectedMan(), worldItem.o,
-				x + 2, y + 2, 55, 24, DIRTYLEVEL2, 0, SGP_TRANSPARENT);
-			gLootWorldItems[slot] = item->iItemIndex;
-			ItemModel const* const itemModel = GCM->getItem(worldItem.o.usItem);
-			nextHelp[slot] = ST::format("{}\nZustand: {}%   Anzahl: {}\n"
-				"Doppelklick: einpacken   Rechtsklick: anlegen",
-				itemModel->getName(), worldItem.o.bStatus[0],
-				worldItem.o.ubNumberOfObjects);
-			++slot;
-		}
-		for (size_t i = 0; i < gLootRegions.size(); ++i)
-		{
-			if (nextHelp[i] != gLootHelp[i])
-			{
-				gLootHelp[i] = nextHelp[i];
-				gLootRegions[i].SetFastHelpText(nextHelp[i]);
-			}
-		}
-
-		if (slot == 0)
-		{
-			SetFontForeground(FONT_MCOLOR_LTGRAY);
-			MPrint(gLootX + 15, gLootY + 35, "EMPTY");
-		}
-		SetFontForeground(FONT_MCOLOR_RED);
-		MPrint(gLootX + 12, gLootY + BAG_H - 30,
-			"DOUBLE: PACK   RIGHT: EQUIP   DRAG: MOVE");
-	}
-
-	void DrawSpatialBackpack()
-	{
-		SOLDIERTYPE* const soldier = gInventorySoldier ?
-			gInventorySoldier : GetSelectedMan();
-		if (!gBagVisible || !soldier || !CanAccessSoldierContents(soldier)) return;
-		PositionBagRegions();
-		INT16 anchorX;
-		INT16 anchorY;
-		if (!GetActorDisplayAnchor(soldier, anchorX, anchorY)) return;
-		const UINT16 red = Get16BPPColor(FROMRGB(205, 12, 12));
-		const UINT16 muted = Get16BPPColor(FROMRGB(92, 8, 8));
-		const INT16 bagX = std::clamp<INT16>(anchorX + 22,
-			gsVIEWPORT_START_X + 2, gsVIEWPORT_END_X - 31);
-		const INT16 bagY = std::clamp<INT16>(anchorY - 40,
-			gsVIEWPORT_WINDOW_START_Y + 2, gsVIEWPORT_WINDOW_END_Y - 37);
-		if (gGodNewIcons)
-			BltVideoObject(FRAME_BUFFER, gGodNewIcons, 18, bagX + 5, bagY + 7);
-		const BOOLEAN packHot = gusMouseXPos >= bagX && gusMouseXPos <= bagX + 30 &&
-			gusMouseYPos >= bagY && gusMouseYPos <= bagY + 35;
-		if (packHot) DrawIconCorners(bagX, bagY, 30, 35, red);
-
-		for (size_t i = 0; i < gSlots.size(); ++i)
-		{
-			SlotLayout const& slot = gSlots[i];
-			if (!IsPocketSlot(slot.slot)) continue;
-			MOUSE_REGION const& region = gSlotRegions[i];
-			const INT16 x = region.RegionTopLeftX;
-			const INT16 y = region.RegionTopLeftY;
-			const INT16 cx = x + slot.w / 2;
-			const INT16 cy = y + slot.h / 2;
-			ColorFillVideoSurfaceArea(FRAME_BUFFER,
-				std::min<INT16>(bagX + 15, cx), cy,
-				std::max<INT16>(bagX + 15, cx), cy, muted);
-			const BOOLEAN hot = gusMouseXPos >= x && gusMouseXPos <= x + slot.w &&
-				gusMouseYPos >= y && gusMouseYPos <= y + slot.h;
-			if (hot) DrawIconCorners(x, y, slot.w, slot.h, red);
-			OBJECTTYPE const& object = soldier->inv[slot.slot];
-			ST::string help = "EMPTY POCKET / DROP ITEM HERE";
-			if (object.usItem != NOTHING)
-			{
-				ItemModel const* const item = GCM->getItem(object.usItem);
-				help = ST::format("{} / {}% / x{}\nDRAG, SWAP OR RIGHT-CLICK",
-					item->getName(), object.bStatus[0], object.ubNumberOfObjects);
-				INVRenderItem(FRAME_BUFFER, soldier, object, x, y, slot.w, slot.h,
-					DIRTYLEVEL2, 0, SGP_TRANSPARENT);
-			}
-			else
-			{
-				ColorFillVideoSurfaceArea(FRAME_BUFFER, cx - 1, cy - 1,
-					cx + 1, cy + 1, muted);
-			}
-			if (help != gSlotHelp[i])
-			{
-				gSlotHelp[i] = help;
-				gSlotRegions[i].SetFastHelpText(help);
-			}
-		}
-		SetBagRegionsEnabled(TRUE);
-		InvalidateRegion(gsVIEWPORT_START_X, gsVIEWPORT_WINDOW_START_Y,
-			gsVIEWPORT_END_X, gsVIEWPORT_WINDOW_END_Y);
 	}
 
 	void DrawBag()
@@ -5285,17 +4696,7 @@ namespace
 		if (gTutorialActive)
 		{
 			if (!gBagVisible) return;
-			if (gTutorialStep == 4)
-			{
-				DrawGearMode(inventorySoldier);
-				TutorialText(12, BAG_H - 32, "DRAG ITEMS / RIGHT CLICK FOR ACTIONS",
-					FONT_MCOLOR_LTGRAY);
-				TutorialText(CONTINUE_X + 8, BAG_H - 17, "NEXT", FONT_MCOLOR_RED);
-			}
-			else
-			{
-				DrawTutorial();
-			}
+			DrawTutorial();
 			InvalidateRegion(gBagX, gBagY, gBagX + PANE_W, gBagY + BAG_H);
 			return;
 		}
@@ -5315,13 +4716,16 @@ namespace
 
 	void DrawExplodedEquipment()
 	{
-		if (!gEquipmentExplodedVisible || !gEquipmentSoldier ||
+		if (!gEquipmentExplodedVisible || gContextVisible || !gEquipmentSoldier ||
 			!CanAccessSoldierContents(gEquipmentSoldier)) return;
 		PositionEquipmentRegions();
 		const UINT16 red = Get16BPPColor(FROMRGB(205, 12, 12));
 		const UINT16 mutedRed = Get16BPPColor(FROMRGB(92, 8, 8));
 		constexpr std::array<UINT16, 7> slotGlyphs{{
 			12, 12, 12, 18, 3, 24, 24
+		}};
+		constexpr std::array<const char*, 7> slotTags{{
+			"HELM", "FACE 1", "FACE 2", "VEST", "LEGS", "HAND 1", "HAND 2"
 		}};
 		INT16 anchorX;
 		INT16 anchorY;
@@ -5342,10 +4746,15 @@ namespace
 				std::max(slotCentreY, bodyY), mutedRed);
 			const BOOLEAN hot = gusMouseXPos >= x && gusMouseXPos <= x + 34 &&
 				gusMouseYPos >= y && gusMouseYPos <= y + 25;
-			if (hot) DrawIconCorners(x, y, 34, 25, red);
+			DrawIconCorners(x, y, 34, 25, hot ? red : mutedRed);
 			const INT8 slot = gExplodedEquipmentSlots[i];
 			OBJECTTYPE const& object = gEquipmentSoldier->inv[slot];
 			ST::string help = gExplodedEquipmentLabels[i];
+			SetFont(TINYFONT1);
+			SetFontBackground(FONT_MCOLOR_BLACK);
+			SetFontForeground((slot == HANDPOS || slot == SECONDHANDPOS) ?
+				FONT_MCOLOR_RED : FONT_MCOLOR_LTGRAY);
+			MPrint(x + 2, y - 8, slotTags[i]);
 			if (object.usItem != NOTHING)
 			{
 				ItemModel const* const item = GCM->getItem(object.usItem);
@@ -5360,6 +4769,15 @@ namespace
 					BltVideoObject(FRAME_BUFFER, gGodNewIcons, slotGlyphs[i],
 						x + 7, y + 3);
 			}
+			if (slot == SECONDHANDPOS &&
+				gEquipmentSoldier->inv[HANDPOS].usItem != NOTHING &&
+				GCM->getItem(gEquipmentSoldier->inv[HANDPOS].usItem)->isTwoHanded())
+			{
+				help = "HAND 2 / RESERVED BY TWO-HAND ITEM";
+				DrawIconCorners(x, y, 34, 25, Get16BPPColor(FROMRGB(52, 52, 52)));
+				SetFontForeground(FONT_MCOLOR_DKGRAY);
+				MPrint(x + 9, y + 9, "2H");
+			}
 			if (help != gEquipmentHelp[i])
 			{
 				gEquipmentHelp[i] = help;
@@ -5373,17 +4791,18 @@ namespace
 			BltVideoObject(FRAME_BUFFER, gGodNewIcons, 18, packX + 13, packY + 3);
 		const BOOLEAN packHot = gusMouseXPos >= packX && gusMouseXPos <= packX + 46 &&
 			gusMouseYPos >= packY && gusMouseYPos <= packY + 25;
-		if (packHot) DrawIconCorners(packX, packY, 46, 25,
-			gBagVisible ? red : mutedRed);
+		DrawIconCorners(packX, packY, 46, 25,
+			packHot ? red : mutedRed);
 		gEquipmentPackRegion.SetFastHelpText(
-			"BACKPACK / REAL SOLDIER POCKETS / CLICK TO TOGGLE");
+			ST::format("BACKPACK / LOAD {}% / HARD LIMIT 125% / CLICK TO TOGGLE",
+				CalculateCarriedWeight(gEquipmentSoldier)));
 		InvalidateRegion(gEquipmentCentreX - 118, gEquipmentCentreY - 155,
 			gEquipmentCentreX + 128, gEquipmentCentreY + 4);
 	}
 
 	void DrawItemTransferIntents()
 	{
-		if (!gpItemPointer || !gItemTransferTarget ||
+		if (gContextVisible || !gpItemPointer || !gItemTransferTarget ||
 			!CanAccessSoldierContents(gItemTransferTarget)) return;
 		PositionItemTransferIntentRegions();
 		INT16 anchorX;
@@ -5391,7 +4810,7 @@ namespace
 		if (!GetActorDisplayAnchor(gItemTransferTarget, anchorX, anchorY)) return;
 		const UINT16 red = Get16BPPColor(FROMRGB(205, 12, 12));
 		const UINT16 muted = Get16BPPColor(FROMRGB(92, 8, 8));
-		for (size_t i = 0; i < gItemTransferIntents.size(); ++i)
+		for (size_t i = 0; i < gOS0ItemTransferIntents.size(); ++i)
 		{
 			MOUSE_REGION const& region = gItemTransferIntentRegions[i];
 			const INT16 x = region.RegionTopLeftX;
@@ -5402,12 +4821,18 @@ namespace
 				std::max(anchorX, cx), cy, muted);
 			const BOOLEAN hot = gusMouseXPos >= x && gusMouseXPos <= x + 28 &&
 				gusMouseYPos >= y && gusMouseYPos <= y + 28;
-			if (hot) DrawIconCorners(x, y, 28, 28, red);
+			const BOOLEAN allowed = ItemTransferIntentAllowed(gItemTransferTarget,
+				gOS0ItemTransferIntents[i].intent);
+			DrawIconCorners(x, y, 28, 28,
+				!allowed ? Get16BPPColor(FROMRGB(42, 42, 42)) :
+				(hot ? red : muted));
 			if (gGodNewIcons)
 				BltVideoObject(FRAME_BUFFER, gGodNewIcons,
-					gItemTransferIntents[i].iconFrame, x + 4, y + 4);
-			gItemTransferIntentRegions[i].SetFastHelpText(
-				gItemTransferIntents[i].label);
+					gOS0ItemTransferIntents[i].iconFrame, x + 4, y + 4);
+			const ST::string relation = ItemTransferIntentLabel(gItemTransferTarget,
+				gOS0ItemTransferIntents[i].intent);
+			gItemTransferIntentRegions[i].SetFastHelpText(ST::format("{}\n{}",
+				relation, allowed ? "CLICK TO APPLY" : "NOT COMPATIBLE"));
 			if (hot)
 			{
 				SetFont(TINYFONT1);
@@ -5416,7 +4841,7 @@ namespace
 				MPrint(std::clamp<INT16>(x - 18, gsVIEWPORT_START_X,
 					gsVIEWPORT_END_X - 95),
 					std::max<INT16>(gsVIEWPORT_WINDOW_START_Y, y - 11),
-					gItemTransferIntents[i].label);
+					relation.left(32));
 			}
 		}
 		InvalidateRegion(gsVIEWPORT_START_X, gsVIEWPORT_WINDOW_START_Y,
@@ -5469,15 +4894,48 @@ namespace
 			gStackSplitX + 224, gStackSplitY + 82);
 	}
 
+	void DrawContextHoverExplanation(size_t index, BOOLEAN characterFan)
+	{
+		if (index >= gContextEntryCount) return;
+		ContextEntry const& entry = gContextEntries[index];
+		constexpr INT16 width = 300;
+		constexpr INT16 height = 35;
+		const INT16 x = std::clamp<INT16>(gContextX - width / 2,
+			gsVIEWPORT_START_X,
+			std::max<INT16>(gsVIEWPORT_START_X, gsVIEWPORT_END_X - width));
+		const INT16 below = characterFan ? gContextY + 147 :
+			gContextBlock.RegionBottomRightY + 6;
+		const INT16 above = characterFan ? gContextY - 184 :
+			gContextBlock.RegionTopLeftY - height - 6;
+		const INT16 y = below + height <= gsVIEWPORT_WINDOW_END_Y ? below :
+			std::max<INT16>(gsVIEWPORT_WINDOW_START_Y, above);
+		const UINT16 dark = Get16BPPColor(FROMRGB(2, 3, 3));
+		const UINT16 category = ActionCategoryColour(
+			ContextActionCategory(entry.action));
+		ColorFillVideoSurfaceArea(FRAME_BUFFER, x, y, x + width - 1,
+			y + height - 1, dark);
+		ColorFillVideoSurfaceArea(FRAME_BUFFER, x, y, x + width - 1, y + 1,
+			category);
+		SetFont(TINYFONT1);
+		SetFontBackground(FONT_MCOLOR_BLACK);
+		SetFontForeground(FONT_MCOLOR_RED);
+		MPrint(x + 5, y + 5, ST::format("{} / {}",
+			ActionCategoryName(ContextActionCategory(entry.action)),
+			entry.label).left(47));
+		SetFontForeground(entry.enabled ? FONT_WHITE : FONT_MCOLOR_DKGRAY);
+		MPrint(x + 5, y + 18,
+			ST::string(ContextActionExplanation(entry.action)).left(50));
+		InvalidateRegion(x, y, x + width, y + height);
+	}
+
 	void DrawCharacterActionFan()
 	{
 		PositionContextRegions();
 		constexpr INT16 iconSize = 26;
 		const UINT16 red = Get16BPPColor(FROMRGB(205, 12, 12));
 		const UINT16 mutedRed = Get16BPPColor(FROMRGB(92, 8, 8));
-		const UINT16 dark = Get16BPPColor(FROMRGB(4, 7, 7));
 		const UINT16 disabled = Get16BPPColor(FROMRGB(38, 38, 38));
-		ST::string activeLabel = gContextTitle;
+		size_t hovered = gContextEntryCount;
 		for (size_t i = 0; i < gContextEntryCount; ++i)
 		{
 			MOUSE_REGION const& region = gContextRegions[i];
@@ -5491,33 +4949,18 @@ namespace
 			ColorFillVideoSurfaceArea(FRAME_BUFFER, iconCentreX,
 				std::min(gContextY, iconCentreY), iconCentreX,
 				std::max(gContextY, iconCentreY), mutedRed);
-			ColorFillVideoSurfaceArea(FRAME_BUFFER, x, y,
-				x + iconSize - 1, y + iconSize - 1, dark);
 			const BOOLEAN hot = gusMouseXPos >= x && gusMouseXPos <= x + iconSize &&
 				gusMouseYPos >= y && gusMouseYPos <= y + iconSize;
-			OutlineBox(x, y, iconSize, iconSize,
-				!gContextEntries[i].enabled ? disabled : hot ? red : mutedRed);
-			if (gGodNewIcons)
-				BltVideoObject(FRAME_BUFFER, gGodNewIcons,
-					ContextActionIconFrame(gContextEntries[i].action), x + 3, y + 3);
-			if (hot) activeLabel = gContextEntries[i].label;
+			if (hot) hovered = i;
+			if (hot || !gContextEntries[i].enabled)
+				DrawIconCorners(x, y, iconSize, iconSize,
+					!gContextEntries[i].enabled ? disabled : red);
+			DrawContextActionIcon(gContextEntries[i].action, x + 3, y + 3);
 		}
-
-		EnsurePortrait(gContextSoldier);
-		ColorFillVideoSurfaceArea(FRAME_BUFFER, gContextX - 25, gContextY - 23,
-			gContextX + 24, gContextY + 22, dark);
-		OutlineBox(gContextX - 25, gContextY - 23, 50, 46, red);
-		if (gPortrait)
-			BltVideoObject(FRAME_BUFFER, gPortrait, 0, gContextX - 24, gContextY - 22);
-		ColorFillVideoSurfaceArea(FRAME_BUFFER, gContextX - 78, gContextY + 29,
-			gContextX + 77, gContextY + 43, dark);
-		OutlineBox(gContextX - 78, gContextY + 29, 156, 15, mutedRed);
-		SetFont(TINYFONT1);
-		SetFontBackground(FONT_MCOLOR_BLACK);
-		SetFontForeground(FONT_WHITE);
-		MPrint(gContextX - 73, gContextY + 33, activeLabel.left(27));
-		InvalidateRegion(gContextX - 96, gContextY - 96,
-			gContextX + 96, gContextY + 96);
+		if (hovered < gContextEntryCount)
+			DrawContextHoverExplanation(hovered, TRUE);
+		InvalidateRegion(gContextX - 140, gContextY - 140,
+			gContextX + 140, gContextY + 140);
 	}
 
 	void DrawContextMenu()
@@ -5533,47 +4976,25 @@ namespace
 			PositionContextRegions();
 			constexpr INT16 iconSize = 26;
 			const UINT16 red = Get16BPPColor(FROMRGB(205, 12, 12));
-			const UINT16 mutedRed = Get16BPPColor(FROMRGB(92, 8, 8));
-			const UINT16 dark = Get16BPPColor(FROMRGB(4, 7, 7));
 			const UINT16 disabled = Get16BPPColor(FROMRGB(38, 38, 38));
-			const INT16 centreX = static_cast<INT16>(
-				(gContextBlock.RegionTopLeftX + gContextBlock.RegionBottomRightX) / 2);
-			const INT16 symbolY = static_cast<INT16>(gContextBlock.RegionBottomRightY - 27);
-			INT16 anchorX = centreX;
-			INT16 anchorY = symbolY + 14;
-			if (gContextGridNo >= 0 && gContextGridNo < WORLD_MAX)
-			{
-				GetGridNoScreenPos(gContextGridNo, gContextLevel, &anchorX, &anchorY);
-				OS0MapWorldToDisplayScreen(&anchorX, &anchorY);
-			}
 			SetFont(TINYFONT1);
 			SetFontBackground(FONT_MCOLOR_BLACK);
 			SetFontForeground(FONT_MCOLOR_RED);
 			MPrint(gContextX + 3, gContextY + 4, gContextTitle.left(29));
 
-			// The icon fan is a real control: each arm ends in its own stable
-			// mouse region. The selected object remains the visual centre instead
-			// of being copied three times as an unclickable pseudo menu.
+			size_t hovered = gContextEntryCount;
 			for (size_t i = 0; i < gContextEntryCount; ++i)
 			{
 				MOUSE_REGION const& region = gContextRegions[i];
 				const INT16 x = region.RegionTopLeftX;
 				const INT16 y = region.RegionTopLeftY;
-				const INT16 iconCentreX = x + iconSize / 2;
-				ColorFillVideoSurfaceArea(FRAME_BUFFER,
-					std::min(centreX, iconCentreX), symbolY + 10,
-					std::max(centreX, iconCentreX), symbolY + 10, mutedRed);
-				ColorFillVideoSurfaceArea(FRAME_BUFFER, iconCentreX, y + iconSize,
-					iconCentreX, symbolY + 10, mutedRed);
-				ColorFillVideoSurfaceArea(FRAME_BUFFER, x, y,
-					x + iconSize - 1, y + iconSize - 1, dark);
 				const BOOLEAN hot = gusMouseXPos >= x && gusMouseXPos <= x + iconSize &&
 					gusMouseYPos >= y && gusMouseYPos <= y + iconSize;
-				OutlineBox(x, y, iconSize, iconSize,
-					!gContextEntries[i].enabled ? disabled : hot ? red : mutedRed);
-				if (gGodNewIcons)
-					BltVideoObject(FRAME_BUFFER, gGodNewIcons,
-						ContextActionIconFrame(gContextEntries[i].action), x + 3, y + 3);
+				if (hot) hovered = i;
+				if (hot || !gContextEntries[i].enabled)
+					DrawIconCorners(x, y, iconSize, iconSize,
+						!gContextEntries[i].enabled ? disabled : red);
+				DrawContextActionIcon(gContextEntries[i].action, x + 3, y + 3);
 				if (hot)
 				{
 					SetFont(TINYFONT1);
@@ -5584,98 +5005,67 @@ namespace
 						gContextEntries[i].label.left(29));
 				}
 			}
-			ColorFillVideoSurfaceArea(FRAME_BUFFER,
-				std::min(centreX, anchorX), symbolY + 10,
-				std::max(centreX, anchorX), symbolY + 10, mutedRed);
-			ColorFillVideoSurfaceArea(FRAME_BUFFER, anchorX,
-				std::min<INT16>(symbolY + 10, anchorY), anchorX,
-				std::max<INT16>(symbolY + 10, anchorY), mutedRed);
-			if (gContextTileIndex < NUMBEROFTILES &&
-				gObjectSymbolTileIndex < NUMBEROFTILES)
-				DrawObjectSymbol(centreX - 12, symbolY, 24);
-			else if (gGodNewIcons)
-			{
-				ColorFillVideoSurfaceArea(FRAME_BUFFER, centreX - 12, symbolY,
-					centreX + 11, symbolY + 23, dark);
-				OutlineBox(centreX - 12, symbolY, 24, 24, red);
-				BltVideoObject(FRAME_BUFFER, gGodNewIcons, 12,
-					centreX - 9, symbolY + 3);
-			}
+			if (hovered < gContextEntryCount)
+				DrawContextHoverExplanation(hovered, FALSE);
 			InvalidateRegion(gContextBlock.RegionTopLeftX - 2,
 				gContextBlock.RegionTopLeftY - 2,
 				gContextBlock.RegionBottomRightX + 2,
-				std::max<INT16>(gContextBlock.RegionBottomRightY + 2, anchorY + 2));
+				gContextBlock.RegionBottomRightY + 2);
 			return;
 		}
-		const INT16 width = 168;
-		const INT16 height = static_cast<INT16>(20 + gContextEntryCount * 18);
-		const UINT16 red = Get16BPPColor(FROMRGB(205, 12, 12));
-		const UINT16 mutedRed = Get16BPPColor(FROMRGB(92, 8, 8));
-		const UINT16 dark = Get16BPPColor(FROMRGB(4, 7, 7));
-		ColorFillVideoSurfaceArea(FRAME_BUFFER, gContextX, gContextY,
-			gContextX + width - 1, gContextY + height - 1, dark);
-		OutlineBox(gContextX, gContextY, width, height, red);
-		ColorFillVideoSurfaceArea(FRAME_BUFFER, gContextX + 1, gContextY + 15,
-			gContextX + width - 2, gContextY + 15, mutedRed);
-		SetFont(TINYFONT1);
-		SetFontBackground(FONT_MCOLOR_BLACK);
-		SetFontForeground(FONT_MCOLOR_RED);
-		MPrint(gContextX + 6, gContextY + 4, gContextTitle.left(24));
-		for (size_t i = 0; i < gContextEntryCount; ++i)
-		{
-			SetFontForeground(gContextEntries[i].enabled ?
-				FONT_WHITE : FONT_MCOLOR_DKGRAY);
-			MPrint(gContextX + 8,
-				gContextY + 21 + static_cast<INT16>(i) * 18,
-				gContextEntries[i].label);
-		}
-		InvalidateRegion(gContextX, gContextY,
-			gContextX + width, gContextY + height);
+		// Every OS//0 action uses one of the two spatial fan renderers. Keeping a
+		// third rectangular fallback was the source of overlapping, unclickable
+		// menus whenever a caller forgot to declare its interaction owner.
+		gObjectActionFanVisible = TRUE;
+		PositionContextRegions();
 	}
 
 	void DrawHoverInspector()
 	{
-		if (!gHoverVisible || gContextVisible || gTutorialActive) return;
-		auto inside = [](INT16 x, INT16 y, INT16 w, INT16 h)
-		{
-			return gusMouseXPos >= x && gusMouseXPos < x + w &&
-				gusMouseYPos >= y && gusMouseYPos < y + h;
-		};
-		if ((gTutorialActive && gBagVisible && inside(gBagX, gBagY, PANE_W, BAG_H)) ||
-			inside(0, gOrbY, COLLAPSED_OS0_W, COMMAND_BAR_H)) return;
-
+		FloatingPanel const& panel =
+			gFloatingPanels[static_cast<size_t>(FloatingPanelId::INSPECTOR)];
+		if (!panel.visible || !gHoverVisible || gTutorialActive || gAimAutoCollapsed)
+			return;
+		gHoverX = panel.x;
+		gHoverY = panel.y;
 		const UINT16 red = Get16BPPColor(FROMRGB(205, 12, 12));
+		const UINT16 muted = Get16BPPColor(FROMRGB(92, 8, 8));
 		const UINT16 dark = Get16BPPColor(FROMRGB(4, 7, 7));
-		ColorFillVideoSurfaceArea(FRAME_BUFFER, gHoverX, gHoverY,
-			gHoverX + 309, gHoverY + 81, dark);
-		OutlineBox(gHoverX, gHoverY, 310, 82, red);
+		ColorFillVideoSurfaceArea(FRAME_BUFFER, panel.x, panel.y,
+			panel.x + panel.w - 1, panel.y + panel.h - 1, dark);
+		ColorFillVideoSurfaceArea(FRAME_BUFFER, panel.x, panel.y,
+			panel.x + 30, panel.y + 1, red);
+		ColorFillVideoSurfaceArea(FRAME_BUFFER, panel.x + panel.w - 31, panel.y,
+			panel.x + panel.w - 1, panel.y + 1, red);
 		if (gInspectorPreview)
 		{
 			BltVideoSurface(FRAME_BUFFER, gInspectorPreview,
-				gHoverX + 4, gHoverY + 4, nullptr);
-			OutlineBox(gHoverX + 3, gHoverY + 3, 66, 66,
-				Get16BPPColor(FROMRGB(92, 8, 8)));
+				panel.x + 5, panel.y + 22, nullptr);
+			DrawIconCorners(panel.x + 4, panel.y + 21, 66, 66, muted);
 		}
 		SetFont(TINYFONT1);
 		SetFontBackground(FONT_MCOLOR_BLACK);
 		SetFontForeground(FONT_MCOLOR_RED);
-		MPrint(gHoverX + 75, gHoverY + 9, gHoverTitle.left(35));
+		MPrint(panel.x + 7, panel.y + 7, "INSPECTOR / LIVE HOVER");
+		MPrint(panel.x + panel.w - 13, panel.y + 7, "X");
+		MPrint(panel.x + 75, panel.y + 25, gHoverTitle.left(35));
 		SetFontForeground(FONT_MCOLOR_LTGRAY);
-		MPrint(gHoverX + 75, gHoverY + 27, gHoverDetail.left(39));
+		MPrint(panel.x + 75, panel.y + 43, gHoverDetail.left(39));
 		if (!gHoverDebugDetail.empty())
 		{
 			SetFontForeground(FONT_WHITE);
-			MPrint(gHoverX + 75, gHoverY + 43, gHoverDebugDetail.left(39));
+			MPrint(panel.x + 75, panel.y + 59, gHoverDebugDetail.left(39));
 		}
 		SetFontForeground(FONT_MCOLOR_DKGRAY);
-		MPrint(gHoverX + 75, gHoverY + 61,
-			gpItemPointer ? "SELECT DESTINATION / WORLD = DROP" :
+		MPrint(panel.x + 75, panel.y + 78,
+			gpItemPointer ? "LMB APPLY / SHIFT+MMB RETURN" :
 				"RMB OPTIONS / MMB CYCLE");
-		InvalidateRegion(gHoverX, gHoverY, gHoverX + 310, gHoverY + 82);
+		InvalidateRegion(panel.x, panel.y, panel.x + panel.w, panel.y + panel.h);
 	}
 
 	void DrawWorldSelection()
 	{
+		if (gContextVisible) return;
 		const GridNo gridNo = gInspectedSoldier ?
 			gInspectedSoldier->sGridNo : gInspectedGridNo;
 		const UINT8 level = gInspectedSoldier ?
@@ -5696,41 +5086,20 @@ namespace
 		InvalidateRegion(x - 17, y - 12, x + 18, y + 15);
 	}
 
-	void DrawWorldAssetExplodedView()
-	{
-		if (gInspectedSoldier || gInspectedGridNo < 0 ||
-			gInspectedTileIndex >= NUMBEROFTILES ||
-			gObjectSymbolTileIndex >= NUMBEROFTILES) return;
-		INT16 x;
-		INT16 y;
-		GetGridNoScreenPos(gInspectedGridNo, gInspectedLevel, &x, &y);
-		OS0MapWorldToDisplayScreen(&x, &y);
-		if (x < gsVIEWPORT_START_X + 54 || x > gsVIEWPORT_END_X - 54 ||
-			y < gsVIEWPORT_WINDOW_START_Y + 48 ||
-			y > gsVIEWPORT_WINDOW_END_Y - 24) return;
-		const UINT32 age = GetJA2Clock() - gExplodedViewStarted;
-		const INT16 settledX = x + 19;
-		const INT16 settledY = y - 39;
-		const INT16 size = age < 180 ?
-			static_cast<INT16>(14 + age * 4 / 180) : 18;
-		DrawObjectSymbol(settledX, settledY, size);
-		InvalidateRegion(settledX - 2, settledY - 2,
-			settledX + 22, settledY + 22);
-	}
-
 	BOOLEAN FinalizeWorldMove()
 	{
-		if (gWorldMoveSource < 0 || gWorldMoveSource >= WORLD_MAX ||
-			gWorldMoveDestination < 0 || gWorldMoveDestination >= WORLD_MAX ||
-			gWorldMoveDestination == gWorldMoveSource ||
-			gWorldMoveTileIndex >= NUMBEROFTILES) return FALSE;
+		OS0CarryState& carry = CarryState();
+		if (carry.source < 0 || carry.source >= WORLD_MAX ||
+			carry.destination < 0 || carry.destination >= WORLD_MAX ||
+			carry.destination == carry.source ||
+			carry.tileIndex >= NUMBEROFTILES) return FALSE;
 
-		STRUCTURE* const structure = WorldStructureAt(gWorldMoveSource, 0,
-			gWorldMoveTileIndex);
-		LEVELNODE* const sourceNode = WorldLevelNodeAt(gWorldMoveSource, 0,
-			gWorldMoveTileIndex);
+		STRUCTURE* const structure = WorldStructureAt(carry.source,
+			carry.sourceLevel, carry.tileIndex);
+		LEVELNODE* const sourceNode = WorldLevelNodeAt(carry.source,
+			carry.sourceLevel, carry.tileIndex);
 		if (!structure || !sourceNode || !structure->pDBStructureRef ||
-			!OkayToAddStructureToWorld(gWorldMoveDestination, 0,
+			!OkayToAddStructureToWorld(carry.destination, carry.destinationLevel,
 				structure->pDBStructureRef, INVALID_STRUCTURE_ID)) return FALSE;
 		WORLD_PHYSICS_PROFILE const physics = GetWorldPhysicsProfile(structure);
 
@@ -5740,37 +5109,44 @@ namespace
 			// placement therefore cannot eat the original crate or its contents.
 			RestoreWorldMoveShade();
 			LEVELNODE* const destinationNode =
-				AddStructToTail(gWorldMoveDestination, gWorldMoveTileIndex);
+				AddStructToTail(carry.destination, carry.tileIndex);
 			if (!destinationNode) return FALSE;
 			// Keep the lighting initialized by the destination tile. Copying the
 			// source palette state made carried objects change colour after placing.
-			RemoveStructFromLevelNode(gWorldMoveSource, sourceNode);
-			MoveItemPools(gWorldMoveSource, gWorldMoveDestination);
-			RecompileLocalMovementCosts(gWorldMoveSource);
-			RecompileLocalMovementCosts(gWorldMoveDestination);
+			OS0AssetKey const sourceKey{ static_cast<UINT8>(gWorldSector.x),
+				static_cast<UINT8>(gWorldSector.y), gWorldSector.z, carry.source,
+				carry.sourceLevel, carry.tileIndex };
+			OS0AssetKey const destinationKey{ static_cast<UINT8>(gWorldSector.x),
+				static_cast<UINT8>(gWorldSector.y), gWorldSector.z,
+				carry.destination, carry.destinationLevel, carry.tileIndex };
+			OS0GetTacticalSession().state().assetDamage.move(sourceKey,
+				destinationKey);
+			RemoveStructFromLevelNode(carry.source, sourceNode);
+			MoveItemPools(carry.source, carry.destination);
+			RecompileLocalMovementCosts(carry.source);
+			RecompileLocalMovementCosts(carry.destination);
 			ErasePath();
 			gfPlotNewMovement = TRUE;
-			if (gLootGridNo == gWorldMoveSource)
-				gLootGridNo = gWorldMoveDestination;
-			if (gInspectedGridNo == gWorldMoveSource)
+			if (gLootGridNo == carry.source)
+				gLootGridNo = carry.destination;
+			if (gInspectedGridNo == carry.source)
 			{
-				gInspectedGridNo = gWorldMoveDestination;
-				gLootGridNo = gWorldMoveDestination;
-				CaptureInspectorPreview(gWorldMoveDestination, gInspectedLevel);
-				RefreshObjectSymbol(gInspectedTileIndex);
-				StartExplodedView(gWorldMoveDestination, gInspectedTileIndex, TRUE);
+				gInspectedGridNo = carry.destination;
+				gLootGridNo = carry.destination;
+				CaptureInspectorPreview(carry.destination, gInspectedLevel);
+				StartExplodedView(carry.destination, gInspectedTileIndex, TRUE);
 			}
 			// Heavy handling grows the attribute that was actually used. JA2's
 			// StatChange stores sub-points in the merc profile, giving us the same
 			// learn-by-doing loop as the rest of the campaign rather than a new XP bar.
-			if (gWorldMoveCarrier)
+			if (SOLDIERTYPE* const carrier = CarryCarrier())
 			{
 				const UINT16 practice = static_cast<UINT16>(std::clamp<INT32>(
 					static_cast<INT32>(physics.massKg / 10.0f) +
-					(gWorldMoveLifted ? 1 : 3), 2, 12));
-				StatChange(*gWorldMoveCarrier, STRAMT, practice, FROM_SUCCESS);
+					(carry.lifted ? 1 : 3), 2, 12));
+				StatChange(*carrier, STRAMT, practice, FROM_SUCCESS);
 				RecordFeedbackEvent(ST::format("{} {} KG / STR PRACTICE {}",
-					gWorldMoveLifted ? "LIFT" : "DRAG",
+					carry.lifted ? "LIFT" : "DRAG",
 					static_cast<INT32>(physics.massKg + 0.5f), practice));
 			}
 			return TRUE;
@@ -5783,36 +5159,51 @@ namespace
 
 	void UpdateWorldMove()
 	{
+		OS0CarryState& carry = CarryState();
 		// JA2's interactive-tile hover restores its own shade when the cursor
 		// leaves the source. Reassert the carry shade until placement/cancel.
-		if ((gWorldMovePending || gWorldMoveWalking) && gWorldMoveSourceShaded)
+		if (carry.active() && carry.sourceShaded)
 		{
-			if (LEVELNODE* const node = WorldLevelNodeAt(gWorldMoveSource, 0,
-				gWorldMoveTileIndex)) node->ubShadeLevel = SHADE_MIN;
+			if (LEVELNODE* const node = WorldLevelNodeAt(carry.source,
+				carry.sourceLevel, carry.tileIndex)) node->ubShadeLevel = SHADE_MIN;
 		}
-		if (!gWorldMoveWalking) return;
-		if (!gWorldMoveCarrier || !gWorldMoveCarrier->bActive ||
-			gWorldMoveCarrier->bLife <= 0)
+		SOLDIERTYPE* const carrier = CarryCarrier();
+		OS0CarryContinuationFacts const facts{
+			carrier && carrier->bActive,
+			carrier && carrier->bLife > 0,
+			carrier && carrier->sSector == gWorldSector && !carrier->fBetweenSectors,
+			carrier && carrier->bLevel == carry.sourceLevel,
+			carrier && (!carry.walking() || carrier->sGridNo == carry.actionGrid ||
+				carrier->sFinalDestination == carry.actionGrid)
+		};
+		OS0CarryCancelReason const cancellation =
+			OS0ValidateCarryContinuation(carry, facts);
+		if (cancellation != OS0CarryCancelReason::NONE)
 		{
+			RecordFeedbackEvent(ST::format("CARRY CANCELLED / REASON {}",
+				static_cast<UINT8>(cancellation)));
 			ClearWorldMoveState();
 			return;
 		}
-		if (gWorldMoveCarrier->sGridNo != gWorldMoveActionGrid) return;
+		if (!carry.walking()) return;
+		if (carrier->sGridNo != carry.actionGrid)
+		{
+			return;
+		}
 
 		if (!FinalizeWorldMove())
 		{
-			gWorldMoveWalking = FALSE;
-			gWorldMovePending = TRUE;
-			gWorldMoveDestination = NOWHERE;
-			gWorldMoveActionGrid = NOWHERE;
-			gCursorAction = 2;
+			carry.phase = OS0CarryPhase::TARGETING;
+			carry.destination = NOWHERE;
+			carry.actionGrid = NOWHERE;
+			CursorState().action = ContextAction::CARRY;
 			ShadeWorldMoveSource();
 			guiPendingOverrideEvent = M_CHANGE_TO_HANDMODE;
 			SetRenderFlags(RENDER_FLAG_FULL);
 			return;
 		}
 		ClearWorldMoveState();
-		gCursorAction = 0;
+		CursorState().action = ContextAction::MOVE;
 		guiPendingOverrideEvent = A_CHANGE_TO_MOVE;
 		SetRenderFlags(RENDER_FLAG_FULL);
 	}
@@ -5822,9 +5213,9 @@ namespace
 		if (x < gsVIEWPORT_START_X || x > gsVIEWPORT_END_X ||
 			y < gsVIEWPORT_WINDOW_START_Y || y > gsVIEWPORT_WINDOW_END_Y) return;
 		const INT16 bob = static_cast<INT16>((GetJA2Clock() / 90) % 4);
-		if (gWorldMoveTileIndex < NUMBEROFTILES)
+		if (CarryState().tileIndex < NUMBEROFTILES)
 		{
-			TILE_ELEMENT const& tile = gTileDatabase[gWorldMoveTileIndex];
+			TILE_ELEMENT const& tile = gTileDatabase[CarryState().tileIndex];
 			if (tile.hTileSurface)
 			{
 				ETRLEObject const& frame =
@@ -5835,8 +5226,6 @@ namespace
 					frame.sOffsetY + (carried ? -22 : 8) - bob);
 				BltVideoObject(FRAME_BUFFER, tile.hTileSurface, tile.usRegionIndex,
 					drawX, drawY);
-				const UINT16 red = Get16BPPColor(FROMRGB(205, 12, 12));
-				OutlineBox(x - 7, y - 4, 15, 8, red);
 				InvalidateRegion(std::max<INT16>(gsVIEWPORT_START_X, drawX - 2),
 					std::max<INT16>(gsVIEWPORT_WINDOW_START_Y, drawY - 2),
 					std::min<INT16>(gsVIEWPORT_END_X,
@@ -5853,41 +5242,42 @@ namespace
 
 	void DrawActionMenu()
 	{
-		if (gCursorAction != 2 && !gWorldMovePending && !gWorldMoveWalking) return;
-		if (gWorldMovePending)
+		// A right-click interaction is the only active spatial menu. Never draw the
+		// carry cursor/ghost as a second mini-menu beneath the radial fan.
+		OS0CarryState const& carry = CarryState();
+		if (gContextVisible ||
+			(CursorState().action != ContextAction::CARRY && !carry.active())) return;
+		if (carry.pending())
 			DrawCarryGhost(gusMouseXPos, gusMouseYPos, FALSE);
-		else if (gWorldMoveWalking && gWorldMoveCarrier)
+		else if (carry.walking())
 		{
+			SOLDIERTYPE* const carrier = CarryCarrier();
+			if (!carrier) return;
 			INT16 carrierX;
 			INT16 carrierY;
-			GetGridNoScreenPos(gWorldMoveCarrier->sGridNo,
-				gWorldMoveCarrier->bLevel, &carrierX, &carrierY);
-			OS0MapWorldToDisplayScreen(&carrierX, &carrierY);
+			if (!GetActorDisplayAnchor(carrier, carrierX, carrierY)) return;
 			INT16 objectX = carrierX;
 			INT16 objectY = carrierY;
-			if (!gWorldMoveLifted && gWorldMoveSource >= 0)
+			if (!carry.lifted)
 			{
-				INT16 sourceX;
-				INT16 sourceY;
-				GetGridNoScreenPos(gWorldMoveSource, 0, &sourceX, &sourceY);
-				OS0MapWorldToDisplayScreen(&sourceX, &sourceY);
-				// A dragged object trails toward its source while the merc advances;
-				// a light object is held above the body by DrawCarryGhost.
-				objectX += std::clamp<INT16>(sourceX - carrierX, -22, 22);
-				objectY += std::clamp<INT16>(sourceY - carrierY, -12, 12);
+				// Heavy objects stay at the feet and slightly behind the actor. This is
+				// stable across tile changes and reads as a continuous drag, not a copy
+				// snapping back toward the original grid.
+				objectX += 22;
+				objectY += 8;
 			}
-			DrawCarryGhost(objectX, objectY, gWorldMoveLifted);
+			DrawCarryGhost(objectX, objectY, carry.lifted);
 			SetFont(TINYFONT1);
 			SetFontBackground(FONT_MCOLOR_BLACK);
 			SetFontForeground(FONT_MCOLOR_RED);
 			MPrint(carrierX - 13, carrierY - 48,
-				gWorldMoveLifted ? "LIFT" : "DRAG");
+				carry.lifted ? "LIFT" : "DRAG");
 
-			if (gWorldMoveDestination >= 0)
+			if (carry.destination >= 0)
 			{
 				INT16 destinationX;
 				INT16 destinationY;
-				GetGridNoScreenPos(gWorldMoveDestination, 0,
+				GetGridNoScreenPos(carry.destination, carry.destinationLevel,
 					&destinationX, &destinationY);
 				OS0MapWorldToDisplayScreen(&destinationX, &destinationY);
 				const UINT16 red = Get16BPPColor(FROMRGB(205, 12, 12));
@@ -6109,7 +5499,7 @@ namespace
 	void DebugLibraryCloseCallback(MOUSE_REGION*, UINT32 reason)
 	{
 		if (!(reason & MSYS_CALLBACK_REASON_POINTER_UP)) return;
-		gGodLibraryVisible = FALSE;
+		gUIRuntime.hide(OS0UIPanel::ASSET_LIBRARY);
 		gGodLibraryDragging = FALSE;
 		SaveUILayout();
 		SetBagRegionsEnabled(TRUE);
@@ -6128,7 +5518,7 @@ namespace
 			InternalLocateGridNo(entry->gridNo, TRUE);
 			OS0SelectWorldObject(nullptr, entry->gridNo, entry->level,
 				entry->tileIndex);
-			gGodLibraryVisible = TRUE;
+			gUIRuntime.show(OS0UIPanel::ASSET_LIBRARY);
 			if (reason & MSYS_CALLBACK_REASON_RBUTTON_UP)
 				OpenAssetCatalog(entry->gridNo, entry->level, entry->tileIndex);
 			else
@@ -6245,9 +5635,9 @@ namespace
 					entry->level, entry->tileIndex);
 				const GridNo durabilityGrid = structure ?
 					structure->sGridNo : entry->gridNo;
-				const INT16 maximum = AssetDurabilityMaximum(material);
-				const INT16 current = CurrentAssetDurability(durabilityGrid,
-					entry->tileIndex, material);
+				const INT16 maximum = OS0AssetDurabilityMaximum(material);
+				const INT16 current = OS0CurrentAssetDurability(durabilityGrid,
+					entry->level, entry->tileIndex, material);
 				SetFontForeground(entry->catalogued ? FONT_WHITE : FONT_MCOLOR_RED);
 				MPrint(x + 52, y + 5,
 					ST::format("T{} {} / {} x{}", entry->tileIndex,
@@ -6354,11 +5744,8 @@ namespace
 			case 8: gCatalogDraft.buildable = !gCatalogDraft.buildable; break;
 			case 9:
 			{
-				AssetCatalogRecord* record = FindAssetCatalogRecord(
-					gCatalogDraft.tileset, gCatalogDraft.tileIndex);
-				if (record) *record = gCatalogDraft;
-				else gAssetCatalog.push_back(gCatalogDraft);
-				const BOOLEAN saved = WriteAssetCatalog();
+				OS0UpsertAssetCatalogRecord(gCatalogDraft);
+				const BOOLEAN saved = OS0WriteAssetCatalog();
 				gDebugAssetLibrarySector = 0xff;
 				gDebugAssetLibraryTileset = -1;
 				RecordFeedbackEvent(ST::format("ASSET CATALOG {} tile {} category {} {}x{}",
@@ -6371,7 +5758,6 @@ namespace
 				if (gInspectedGridNo >= 0 && gInspectedTileIndex < NUMBEROFTILES)
 					gContextTitle = DescribeWorldAsset(gInspectedGridNo,
 						gInspectedLevel, gInspectedTileIndex).displayName;
-				RefreshPanelActions();
 				gGodLibraryVisible = gAssetCatalogReturnToLibrary;
 				gAssetCatalogReturnToLibrary = FALSE;
 				break;
@@ -6449,17 +5835,9 @@ namespace
 	}
 
 	size_t BuildContextCursorActions(SOLDIERTYPE* target, GridNo gridNo,
-		UINT8 level, UINT16 tileIndex, std::array<UINT8, 6>& available)
+		UINT8 level, UINT16 tileIndex,
+		std::array<ContextAction, 6>& available)
 	{
-		size_t count = 0;
-		auto add = [&](UINT8 action)
-		{
-			if (count >= available.size()) return;
-			for (size_t i = 0; i < count; ++i)
-				if (available[i] == action) return;
-			available[count++] = action;
-		};
-
 		SOLDIERTYPE* const selected = GetSelectedMan();
 		const BOOLEAN validGrid = gridNo >= 0 && gridNo < WORLD_MAX;
 		const BOOLEAN hasItems = validGrid && GetItemPool(gridNo, level) != nullptr;
@@ -6473,57 +5851,25 @@ namespace
 			level, tileIndex, selected);
 		const BOOLEAN armed = selected && selected->inv[HANDPOS].usItem != NOTHING &&
 			GCM->getItem(selected->inv[HANDPOS].usItem)->isWeapon();
-
-		if (target)
-		{
-			if (target->bTeam == OUR_TEAM)
-			{
-				add(1); // Own operator: character/inventory is the natural default.
-				add(3);
-			}
-			else
-			{
-				const BOOLEAN hostile = target->bTeam == ENEMY_TEAM ||
-					target->bTeam == CREATURE_TEAM;
-				if (hostile && armed) add(5);
-				if (!hostile) add(4);
-				add(3);
-				if (!hostile && armed) add(5);
-			}
-		}
-		else if (hasItems || openable)
-		{
-			add(1);
-			add(3);
-			if (movable) add(2);
-		}
-		else if (movable)
-		{
-			add(2);
-			add(3);
-			add(1);
-		}
-		else if (hasAsset)
-		{
-			add(3);
-			if (armed) add(5);
-		}
-		add(0); // Moving remains the universal way out of a contextual tool.
+		OS0ActionFacts const facts{
+			target != nullptr,
+			target && target->bTeam == OUR_TEAM,
+			target && (target->bTeam == ENEMY_TEAM || target->bTeam == CREATURE_TEAM),
+			hasItems, openable, movable, hasAsset, armed
+		};
+		std::vector<ContextAction> const resolved =
+			ResolveOS0CursorActions(facts);
+		size_t const count = std::min(available.size(), resolved.size());
+		std::copy_n(resolved.begin(), count, available.begin());
 		return count;
 	}
 
-	const char* CursorActionLabel(UINT8 action)
+	BOOLEAN DirectControlBlocked()
 	{
-		switch (action)
-		{
-			case 0: return "MOVE";
-			case 1: return "USE / LOOT";
-			case 2: return "CARRY";
-			case 3: return "INSPECT";
-			case 4: return "TALK";
-			case 5: return "ATTACK";
-		}
-		return "ACTION";
+		return gTutorialActive || gContextVisible || gStackSplitVisible ||
+			gAssetCatalogVisible || gItemDetailsVisible || gFeedbackEditing ||
+			gTacticalStatus.fAutoBandageMode || gpItemPointer ||
+			CarryState().active();
 	}
 }
 
@@ -6531,46 +5877,56 @@ namespace
 void InitializeOS0IngameUI()
 {
 	if (gInitialized) return;
+	gUILayout.configure(SCREEN_WIDTH, SCREEN_HEIGHT, gsVIEWPORT_WINDOW_END_Y);
+	gUIRuntime.enterCampaign(
+		OS0GetTacticalSession().state().creatorCompleted);
+	if (gTutorialActive)
+	{
+		gCreatorModel.reset();
+		gVideoScrollBeforeCreator = gfDoVideoScroll;
+		gfDoVideoScroll = FALSE;
+	}
+	gInventoryVisible = FALSE;
 
-	gOrbY = std::max<INT16>(0, SCREEN_HEIGHT - COMMAND_BAR_H);
+	gOrbY = gUILayout.dock().y;
 	const INT16 centerX = std::max<INT16>(0, (gsVIEWPORT_END_X - PANE_W) / 2);
 	const INT16 centerY = std::max<INT16>(0, (WorkspaceBottom() - BAG_H) / 2);
 	gBagX = centerX;
 	gBagY = centerY;
 	gInventoryX = gBagX;
 	gInventoryY = gBagY;
-	gFloatingPanels[static_cast<size_t>(FloatingPanelId::CONTEXT)] =
-		{ 8, BRAND_H + 13, CONTEXT_PANEL_W, CONTEXT_PANEL_H, FALSE, FALSE, FALSE };
-	gFloatingPanels[static_cast<size_t>(FloatingPanelId::TOOLS)] =
-		{ 8, std::max<INT16>(0, WorkspaceBottom() - TOOLS_PANEL_H),
-			TOOLS_PANEL_W, TOOLS_PANEL_H, FALSE, FALSE, FALSE };
-	gFloatingPanels[static_cast<size_t>(FloatingPanelId::ACTIONS)] =
-		{ std::max<INT16>(0, gsVIEWPORT_END_X - ACTIONS_PANEL_W - 8),
-			std::max<INT16>(8, WorkspaceBottom() - ACTIONS_PANEL_H),
-			ACTIONS_PANEL_W, ACTIONS_PANEL_H, FALSE, FALSE, FALSE };
-	gFloatingPanels[static_cast<size_t>(FloatingPanelId::OBJECT_INVENTORY)] =
-		{ centerX, std::max<INT16>(8, centerY - 40), PANE_W, BAG_H,
-			FALSE, FALSE, FALSE };
 	gFloatingPanels[static_cast<size_t>(FloatingPanelId::SECTOR)] =
 		{ std::max<INT16>(0, (gsVIEWPORT_END_X - SECTOR_PANEL_W) / 2), 24,
 			SECTOR_PANEL_W, SECTOR_PANEL_H, FALSE, FALSE, FALSE };
-	gFloatingPanels[static_cast<size_t>(FloatingPanelId::FEEDBACK)] =
-		{ std::max<INT16>(0, (gsVIEWPORT_END_X - FEEDBACK_PANEL_W) / 2),
-			std::max<INT16>(8, (gsVIEWPORT_END_Y - FEEDBACK_PANEL_H) / 2),
-			FEEDBACK_PANEL_W, FEEDBACK_PANEL_H, FALSE, FALSE, FALSE };
-	gLootX = gFloatingPanels[static_cast<size_t>(FloatingPanelId::OBJECT_INVENTORY)].x;
-	gLootY = gFloatingPanels[static_cast<size_t>(FloatingPanelId::OBJECT_INVENTORY)].y;
+	gFloatingPanels[static_cast<size_t>(FloatingPanelId::INSPECTOR)] =
+		{ 8, std::max<INT16>(8, WorkspaceBottom() - INSPECTOR_H - 8),
+			INSPECTOR_W, INSPECTOR_H, TRUE, FALSE, FALSE };
+	gFloatingPanels[static_cast<size_t>(FloatingPanelId::TOOLBOX)] =
+		{ std::max<INT16>(8, gsVIEWPORT_END_X - TOOLBOX_W - 8),
+			std::max<INT16>(8, WorkspaceBottom() - TOOLBOX_H - 8),
+			TOOLBOX_W, TOOLBOX_H, FALSE, FALSE, FALSE };
 	ApplyArtworkWorkspaceLayout(!gTutorialActive);
 	gGodLibraryX = std::max<INT16>(0,
 		(gsVIEWPORT_END_X - GOD_LIBRARY_W) / 2);
 	gGodLibraryY = std::max<INT16>(4,
 		(gsVIEWPORT_WINDOW_END_Y - GOD_LIBRARY_H) / 2);
 	LoadUILayout();
+	if (gTutorialActive)
+	{
+		// The creator is a modal screen-space surface, not a remembered gameplay
+		// window. Saved character-sheet coordinates must not move it off centre.
+		gBagX = centerX;
+		gBagY = centerY;
+		ClampWindowPositions();
+	}
 	gAssetCatalogX = std::max<INT16>(0,
 		(gsVIEWPORT_END_X - ASSET_CATALOG_W) / 2);
 	gAssetCatalogY = std::max<INT16>(4,
 		(gsVIEWPORT_WINDOW_END_Y - ASSET_CATALOG_H) / 2);
-	LoadAssetCatalog();
+	OS0LoadAssetCatalog();
+	ST::string resourceValidationError;
+	if (!OS0ValidateResourceItemDefinitions(&resourceValidationError))
+		throw std::runtime_error(resourceValidationError.c_str());
 	gGodNewIcons = AddVideoObjectFromFile(INTERFACEDIR "/newicons3.sti");
 	gGodDoorIcons = AddVideoObjectFromFile(INTERFACEDIR "/door_op2.sti");
 	gGodButtonFrame = AddVideoObjectFromFile(INTERFACEDIR "/button_frame.sti");
@@ -6607,6 +5963,14 @@ void InitializeOS0IngameUI()
 		gAssetLibraryRegions[i].SetUserData<0>(i);
 		gAssetLibraryRegions[i].Disable();
 	}
+	for (size_t i = 0; i < gToolboxRegions.size(); ++i)
+	{
+		MSYS_DefineRegion(&gToolboxRegions[i], 0, 0, 30, 26,
+			MSYS_PRIORITY_HIGHEST, CURSOR_NORMAL, MSYS_NO_CALLBACK,
+			ToolboxModuleCallback);
+		gToolboxRegions[i].SetUserData<0>(i);
+		gToolboxRegions[i].Disable();
+	}
 	MSYS_DefineRegion(&gAssetCatalogBlock, 0, 0,
 		ASSET_CATALOG_W, ASSET_CATALOG_H, MSYS_PRIORITY_HIGH,
 		CURSOR_NORMAL, MSYS_NO_CALLBACK, BagBlockCallback);
@@ -6642,29 +6006,17 @@ void InitializeOS0IngameUI()
 	}
 	for (size_t i = 0; i < gPanelDockRegions.size(); ++i)
 	{
+		OS0UIRect const dock =
+			gUILayout.command(OS0CommandForDockSlot(i));
 		MSYS_DefineRegion(&gPanelDockRegions[i], 0, 0,
-			CommandModuleWidth(), COMMAND_BAR_H,
+			dock.w, dock.h,
 			MSYS_PRIORITY_HIGHEST, CURSOR_NORMAL, MSYS_NO_CALLBACK,
 			PanelDockCallback);
 		gPanelDockRegions[i].SetUserData<0>(i);
 	}
-	for (size_t i = 0; i < gToolRegions.size(); ++i)
-	{
-		MSYS_DefineRegion(&gToolRegions[i], 0, 0, TOOLS_PANEL_W - 14, 14,
-			MSYS_PRIORITY_HIGHEST, CURSOR_NORMAL, MSYS_NO_CALLBACK,
-			ToolPanelCallback);
-		gToolRegions[i].SetUserData<0>(i);
-	}
-	for (size_t i = 0; i < gActionPanelRegions.size(); ++i)
-	{
-		MSYS_DefineRegion(&gActionPanelRegions[i], 0, 0, ACTIONS_PANEL_W - 14, 17,
-			MSYS_PRIORITY_HIGHEST, CURSOR_NORMAL, MSYS_NO_CALLBACK,
-			ActionPanelCallback);
-		gActionPanelRegions[i].SetUserData<0>(i);
-	}
 	for (size_t i = 0; i < gFeedbackRegions.size(); ++i)
 	{
-		const INT16 width = i == 0 || i == 1 ? FEEDBACK_PANEL_W - 16 :
+		const INT16 width = i == 0 || i == 1 ? SECTOR_PANEL_W - 16 :
 			i == 2 ? 118 : 76;
 		const INT16 height = i == 1 ? 104 : 19;
 		MSYS_DefineRegion(&gFeedbackRegions[i], 0, 0, width, height,
@@ -6704,10 +6056,6 @@ void InitializeOS0IngameUI()
 		MSYS_DefineRegion(&gSlotRegions[i], 0, 0, slot.w, slot.h,
 			MSYS_PRIORITY_HIGHEST, CURSOR_NORMAL, MSYS_NO_CALLBACK, SlotCallback);
 		gSlotRegions[i].SetUserData<0>(slot.slot);
-		MSYS_DefineRegion(&gObjectSlotRegions[i], 0, 0, slot.w, slot.h,
-			MSYS_PRIORITY_HIGHEST, CURSOR_NORMAL, MSYS_NO_CALLBACK,
-			ObjectSoldierSlotCallback);
-		gObjectSlotRegions[i].SetUserData<0>(slot.slot);
 	}
 	for (size_t i = 0; i < gEquipmentRegions.size(); ++i)
 	{
@@ -6740,7 +6088,7 @@ void InitializeOS0IngameUI()
 		gStackSplitRegions[i].Disable();
 	}
 
-	MSYS_DefineRegion(&gOrbRegion, 0, gOrbY, CommandModuleWidth(),
+	MSYS_DefineRegion(&gOrbRegion, 0, gOrbY, COLLAPSED_OS0_W,
 		gOrbY + COMMAND_BAR_H, MSYS_PRIORITY_HIGHEST, CURSOR_NORMAL,
 		MSYS_NO_CALLBACK, OrbCallback);
 	MSYS_DefineRegion(&gTutorialContinue, 0, 0, 110, 22,
@@ -6779,8 +6127,19 @@ void InitializeOS0IngameUI()
 	}
 
 	PositionBagRegions();
-	SetBagRegionsEnabled(gBagVisible);
+	// Input ownership is global to the OS//0 shell, not conditional on the
+	// optional character window.  Tying all regions to gBagVisible left the dock
+	// dead whenever a completed campaign correctly started with inventory closed.
+	SetBagRegionsEnabled(TRUE);
 	gInitialized = TRUE;
+	// The vanilla tactical viewport starts with VIDEO_NO_CURSOR and only installs
+	// its first free/tile cursor after a pointer-movement callback.  OS//0 can
+	// enter the sector with the pointer already stationary over the world, which
+	// otherwise leaves a zero-sized cursor until some unrelated UI transition.
+	// Prime a visible cursor once; normal tactical cursor selection owns every
+	// subsequent frame (including aim and held-item cursors).
+	if (gpItemPointer) SetMouseCursorFromCurrentItem();
+	else SetCurrentCursorFromDatabase(CURSOR_NORMAL);
 	// Materialize the layout immediately. Drag releases and OS0 expansion keep
 	// updating it, while a crash or forced process exit can no longer lose the
 	// last successfully loaded/default arrangement.
@@ -6806,6 +6165,7 @@ void ShutdownOS0IngameUI()
 	MSYS_RemoveRegion(&gGodLibraryClose);
 	for (MOUSE_REGION& r : gGodIconRegions) MSYS_RemoveRegion(&r);
 	for (MOUSE_REGION& r : gAssetLibraryRegions) MSYS_RemoveRegion(&r);
+	for (MOUSE_REGION& r : gToolboxRegions) MSYS_RemoveRegion(&r);
 	MSYS_RemoveRegion(&gAssetCatalogBlock);
 	for (MOUSE_REGION& r : gAssetCatalogRegions) MSYS_RemoveRegion(&r);
 	for (MOUSE_REGION& r : gContextRegions) MSYS_RemoveRegion(&r);
@@ -6813,15 +6173,12 @@ void ShutdownOS0IngameUI()
 	for (MOUSE_REGION& r : gFloatingPanelGrabbers) MSYS_RemoveRegion(&r);
 	for (MOUSE_REGION& r : gFloatingPanelCloses) MSYS_RemoveRegion(&r);
 	for (MOUSE_REGION& r : gPanelDockRegions) MSYS_RemoveRegion(&r);
-	for (MOUSE_REGION& r : gToolRegions) MSYS_RemoveRegion(&r);
-	for (MOUSE_REGION& r : gActionPanelRegions) MSYS_RemoveRegion(&r);
 	for (MOUSE_REGION& r : gFeedbackRegions) MSYS_RemoveRegion(&r);
 	for (MOUSE_REGION& r : gSectorUpgradeRegions) MSYS_RemoveRegion(&r);
 	for (MOUSE_REGION& r : gSectorTabRegions) MSYS_RemoveRegion(&r);
 	MSYS_RemoveRegion(&gStrategicMapRegion);
 	MSYS_RemoveRegion(&gSectorTeamRegion);
 	for (MOUSE_REGION& r : gSlotRegions) MSYS_RemoveRegion(&r);
-	for (MOUSE_REGION& r : gObjectSlotRegions) MSYS_RemoveRegion(&r);
 	for (MOUSE_REGION& r : gEquipmentRegions) MSYS_RemoveRegion(&r);
 	MSYS_RemoveRegion(&gEquipmentPackRegion);
 	for (MOUSE_REGION& r : gItemTransferIntentRegions) MSYS_RemoveRegion(&r);
@@ -6833,12 +6190,6 @@ void ShutdownOS0IngameUI()
 	for (MOUSE_REGION& r : gTutorialTraitRegions) MSYS_RemoveRegion(&r);
 	for (MOUSE_REGION& r : gOpsActionRegions) MSYS_RemoveRegion(&r);
 	for (MOUSE_REGION& r : gLootRegions) MSYS_RemoveRegion(&r);
-	if (gPortrait)
-	{
-		DeleteVideoObject(gPortrait);
-		gPortrait = nullptr;
-		gPortraitProfile = NO_PROFILE;
-	}
 	if (gGodNewIcons)
 	{
 		DeleteVideoObject(gGodNewIcons);
@@ -6859,16 +6210,22 @@ void ShutdownOS0IngameUI()
 		DeleteVideoSurface(gWorldZoomBuffer);
 		gWorldZoomBuffer = nullptr;
 	}
+	if (gWorldZoom > 1)
+	{
+		gfDoVideoScroll = gVideoScrollBeforeZoom;
+		gWorldZoom = 1;
+	}
+	if (gTutorialActive) gfDoVideoScroll = gVideoScrollBeforeCreator;
 	if (gInspectorPreview)
 	{
 		DeleteVideoSurface(gInspectorPreview);
 		gInspectorPreview = nullptr;
 	}
-	if (gObjectSymbolSurface)
+	if (gAnimatedMercPreview)
 	{
-		DeleteVideoSurface(gObjectSymbolSurface);
-		gObjectSymbolSurface = nullptr;
-		gObjectSymbolTileIndex = NO_TILE;
+		DeleteVideoSurface(gAnimatedMercPreview);
+		gAnimatedMercPreview = nullptr;
+		gAnimatedMercPreviewSoldier = nullptr;
 	}
 	if (gAssetLibrarySymbolSurface)
 	{
@@ -6905,9 +6262,8 @@ void ShutdownOS0IngameUI()
 	gAssetCatalogNameEditing = FALSE;
 	gHoverCursorSoldier = nullptr;
 	gHoverCursorGridNo = NOWHERE;
-	gCoverCommandSoldier = nullptr;
-	gCoverCommandDestination = NOWHERE;
-	gAssetDamage.clear();
+	OS0ResetDirectControl();
+	OS0GetTacticalSession().endTacticalSector();
 	gDebugAssetLibrary.clear();
 	gDebugAssetLibrarySector = 0xff;
 	gDebugAssetLibraryTileset = -1;
@@ -6916,24 +6272,78 @@ void ShutdownOS0IngameUI()
 }
 
 
-void RenderOS0IngameUI()
+void OS0RenderAutoFirstAidStatus(BOOLEAN complete, UINT32 elapsedSeconds)
+{
+	// Auto-bandage owns a modal simulation loop and therefore bypasses the
+	// regular tactical/OS//0 frame.  Draw only one compact state indicator here;
+	// never revive TEAM_PANEL, SM_PANEL, radar, inventory or the old portrait box.
+	constexpr INT16 w = 258;
+	constexpr INT16 h = 38;
+	const INT16 x = std::max<INT16>(4, (SCREEN_WIDTH - w) / 2);
+	const INT16 y = std::max<INT16>(4, std::min<INT16>(
+		SCREEN_HEIGHT - h - 5, gsVIEWPORT_END_Y - h - 5));
+	const UINT16 black = Get16BPPColor(FROMRGB(2, 3, 3));
+	const UINT16 dark = Get16BPPColor(FROMRGB(12, 13, 11));
+	const UINT16 red = Get16BPPColor(FROMRGB(132, 0, 0));
+	const UINT16 bright = Get16BPPColor(FROMRGB(218, 18, 18));
+
+	ColorFillVideoSurfaceArea(FRAME_BUFFER, x, y, x + w - 1, y + h - 1, black);
+	ColorFillVideoSurfaceArea(FRAME_BUFFER, x, y, x + w - 1, y + 1,
+		complete ? bright : red);
+	ColorFillVideoSurfaceArea(FRAME_BUFFER, x + 5, y + 7, x + 29, y + 31, dark);
+	OutlineBox(x, y, w, h, complete ? bright : red);
+
+	// A small first-aid cross reads at native JA2 resolution and needs no new
+	// bitmap asset.
+	ColorFillVideoSurfaceArea(FRAME_BUFFER, x + 15, y + 11,
+		x + 19, y + 27, bright);
+	ColorFillVideoSurfaceArea(FRAME_BUFFER, x + 9, y + 17,
+		x + 25, y + 21, bright);
+
+	SetFont(TINYFONT1);
+	SetFontBackground(FONT_MCOLOR_BLACK);
+	SetFontForeground(complete ? FONT_WHITE : FONT_MCOLOR_RED);
+	MPrint(x + 38, y + 7, complete ?
+		"AUTO FIRST AID / COMPLETE" : "AUTO FIRST AID / TREATING");
+	SetFontForeground(FONT_MCOLOR_LTGRAY);
+	const ST::string detail = complete ?
+		"ENTER OR SPACE: RETURN TO FIELD" :
+		ST::format("{} SEC / ESC: ABORT", elapsedSeconds);
+	MPrint(x + 38, y + 21, detail);
+	InvalidateRegion(x, y, x + w, y + h);
+}
+
+
+void UpdateOS0TacticalSession()
 {
 	if (!gInitialized) InitializeOS0IngameUI();
-	if (!gpItemPointer) gItemTransferTarget = nullptr;
-	// The legacy fixed radar is never allowed to reappear when an exit-sector
-	// modal changes tactical panel state.  Its real artwork is hosted in OS//0.
-	fRenderRadarScreen = FALSE;
-	if (!gTutorialActive)
+	OS0TacticalState& state = OS0GetTacticalSession().state();
+	BOOLEAN inputRegionsDirty = FALSE;
+	for (OS0ImpactVisualEvent const& event : state.pendingVisualEvents)
 	{
-		// Retire the prototype's duplicate windows even when an old save/layout or
-		// an older action path tries to revive them.
-		gFloatingPanels[static_cast<size_t>(FloatingPanelId::CONTEXT)].visible = FALSE;
-		gFloatingPanels[static_cast<size_t>(FloatingPanelId::TOOLS)].visible = FALSE;
-		gFloatingPanels[static_cast<size_t>(FloatingPanelId::ACTIONS)].visible = FALSE;
-		gFloatingPanels[static_cast<size_t>(FloatingPanelId::OBJECT_INVENTORY)].visible = FALSE;
-		gFloatingPanels[static_cast<size_t>(FloatingPanelId::FEEDBACK)].visible = FALSE;
-		SetBagRegionsEnabled(TRUE);
+		for (UINT8 i = 0; i < 6; ++i)
+		{
+			ImpactParticle& particle = gImpactParticles[gImpactParticleNext];
+			gImpactParticleNext = (gImpactParticleNext + 1) % gImpactParticles.size();
+			particle.gridNo = event.gridNo;
+			particle.velocityX = static_cast<INT8>(static_cast<INT16>((i * 5 +
+				event.gridNo) % 9) - 4);
+			particle.velocityY = static_cast<INT8>(-7 - (i % 4));
+			particle.colourKind = static_cast<UINT8>(event.material);
+			particle.born = std::max<UINT32>(1, GetJA2Clock());
+		}
 	}
+	state.pendingVisualEvents.clear();
+	for (ST::string const& diagnostic : state.pendingDiagnostics)
+		RecordFeedbackEvent(diagnostic);
+	state.pendingDiagnostics.clear();
+	if (!gpItemPointer && gItemTransferTarget)
+	{
+		gItemTransferTarget = nullptr;
+		inputRegionsDirty = TRUE;
+	}
+	fRenderRadarScreen = FALSE;
+	if (inputRegionsDirty) SetBagRegionsEnabled(TRUE);
 	UpdateWindowDragging();
 	if (!gTutorialActive && !gFieldToolIssued)
 	{
@@ -6945,9 +6355,18 @@ void RenderOS0IngameUI()
 	}
 	if (!gTutorialActive)
 	{
-		// JA2 temporarily reuses action modes for an item held by the mouse. That
-		// is an inventory drag, not aiming: keep every open spatial menu anchored.
-		const BOOLEAN aiming = !gpItemPointer &&
+		OS0UpdateDirectControl(GetSelectedMan(), !DirectControlBlocked(),
+			CursorState().attackMode);
+		if (CursorState().attackMode && !gpItemPointer)
+		{
+			SOLDIERTYPE* const selected = GetSelectedMan();
+			const BOOLEAN moving = selected &&
+				(gAnimControl[selected->usAnimState].uiFlags & ANIM_MOVING);
+			if (selected && !moving && gCurrentUIMode != ACTION_MODE &&
+				gCurrentUIMode != CONFIRM_ACTION_MODE)
+				guiPendingOverrideEvent = M_CHANGE_TO_ACTION;
+		}
+		const BOOLEAN aiming = !gContextVisible && !gpItemPointer &&
 			(gCurrentUIMode == ACTION_MODE ||
 			 gCurrentUIMode == CONFIRM_ACTION_MODE);
 		if (aiming && !gAimAutoCollapsed)
@@ -6991,8 +6410,6 @@ void RenderOS0IngameUI()
 			SetRenderFlags(RENDER_FLAG_FULL);
 		}
 	}
-	UpdateWorldMove();
-	UpdateCoverCommand();
 	if (gLootVisible && !IsInspectedWorldAssetNear())
 	{
 		gLootVisible = FALSE;
@@ -7000,8 +6417,6 @@ void RenderOS0IngameUI()
 	}
 	if (!gTutorialActive && gInspectedGridNo == NOWHERE)
 	{
-		// An allied inspector is a live view of the current selection. Enemy
-		// and world-asset inspectors stay pinned until another object is opened.
 		SOLDIERTYPE* const selected = GetSelectedMan();
 		if (selected && (!gInspectedSoldier ||
 			gInspectedSoldier->bTeam == OUR_TEAM))
@@ -7012,18 +6427,28 @@ void RenderOS0IngameUI()
 	}
 	if (gTutorialActive)
 	{
-		// The vanilla IMP arrival quote ("find Miguel...") conflicts with the
-		// playable introduction. Keep the tutorial quiet without muting later
-		// player-triggered conversations.
 		EmptyDialogueQueue();
 		StopAnyCurrentlyTalkingSpeech();
 	}
+
+	// Simulation progresses once per tactical frame and is independent of panel
+	// visibility. RenderOS0IngameUI only projects the resulting state.
+	UpdateWorldMove();
+	UpdateCoverCommands();
+}
+
+
+void RenderOS0IngameUI()
+{
+	if (!gInitialized) InitializeOS0IngameUI();
+	if (!gTutorialActive && gBagVisible)
+		CaptureAnimatedMercPreview(gInventorySoldier ?
+			gInventorySoldier : GetSelectedMan());
 	if (!gTutorialActive)
 	{
 		DrawArtworkBrand();
 	}
-	if (gTutorialActive && gBagVisible) DrawBag();
-	else if (gBagVisible) DrawSpatialBackpack();
+	if (gBagVisible) DrawBag();
 	if (!gTutorialActive)
 	{
 		DrawSectorPanel();
@@ -7032,13 +6457,12 @@ void RenderOS0IngameUI()
 	DrawWorldSelection();
 	DrawExplodedEquipment();
 	DrawItemTransferIntents();
-	DrawWorldAssetExplodedView();
 	DrawImpactParticles();
 	DrawOrb();
+	DrawToolbox();
 	DrawActionMenu();
 	DrawHoverInspector();
 	DrawContextMenu();
-	if (gTutorialActive) DrawFeedbackPanel();
 	DrawGodIconLibrary();
 	DrawAssetCatalog();
 	DrawStackSplitDialog();
@@ -7049,11 +6473,19 @@ void RenderOS0IngameUI()
 	BOOLEAN floatingPanelDragging = FALSE;
 	for (FloatingPanel const& panel : gFloatingPanels)
 		floatingPanelDragging |= panel.dragging;
-	if (gContextVisible || gHoverVisible || gGodLibraryVisible ||
-		gAssetCatalogVisible || gBagDragging || floatingPanelDragging ||
-		gWorldMovePending || gWorldMoveWalking || gEquipmentExplodedVisible ||
-		gStackSplitVisible)
+	const BOOLEAN equipmentMoving = gEquipmentExplodedVisible &&
+		gEquipmentSoldier &&
+		((gAnimControl[gEquipmentSoldier->usAnimState].uiFlags & ANIM_MOVING) ||
+		 gfScrollPending || g_scroll_inertia);
+	if (gTutorialActive || gContextVisible || gBagDragging || floatingPanelDragging ||
+		CarryState().active() || equipmentMoving)
 		SetRenderFlags(RENDER_FLAG_FULL);
+}
+
+
+BOOLEAN OS0CreatorIsActive()
+{
+	return gInitialized && gTutorialActive;
 }
 
 
@@ -7073,11 +6505,6 @@ void OS0OpenCharacterPanel(SOLDIERTYPE* soldier)
 	}
 	gInventoryVisible = contentsAvailable;
 	gLootVisible = FALSE;
-	gFloatingPanels[static_cast<size_t>(FloatingPanelId::CONTEXT)].visible = TRUE;
-	gFloatingPanels[static_cast<size_t>(FloatingPanelId::ACTIONS)].visible = TRUE;
-	if (soldier->bTeam != OUR_TEAM && contentsAvailable)
-		gFloatingPanels[static_cast<size_t>(FloatingPanelId::OBJECT_INVENTORY)].visible = TRUE;
-	RefreshPanelActions();
 	gPanelInteractionGuardUntil = GetJA2Clock() + 140;
 	SetBagRegionsEnabled(TRUE);
 	SetRenderFlags(RENDER_FLAG_FULL);
@@ -7111,9 +6538,6 @@ void OS0ExecuteCharacterQuickAction(SOLDIERTYPE* soldier,
 			gInspectedGridNo = NOWHERE;
 			gContentsMode = ContentsMode::SOLDIER;
 			gMode = ComputerMode::INFO;
-			gFloatingPanels[static_cast<size_t>(FloatingPanelId::CONTEXT)].visible = TRUE;
-			gFloatingPanels[static_cast<size_t>(FloatingPanelId::ACTIONS)].visible = TRUE;
-			RefreshPanelActions();
 			break;
 		case OS0CharacterQuickAction::INVENTORY:
 			OS0OpenCharacterPanel(soldier);
@@ -7152,7 +6576,6 @@ BOOLEAN OS0SelectWorldObject(SOLDIERTYPE* target, GridNo gridNo,
 	if (target)
 	{
 		gItemDetailsVisible = FALSE;
-		gObjectSymbolTileIndex = NO_TILE;
 		gInspectedSoldier = target;
 		gInspectedGridNo = NOWHERE;
 		gContentsMode = ContentsMode::SOLDIER;
@@ -7160,10 +6583,6 @@ BOOLEAN OS0SelectWorldObject(SOLDIERTYPE* target, GridNo gridNo,
 		gInventoryVisible = CanAccessSoldierContents(target);
 		gMode = target->bTeam == OUR_TEAM ?
 			ComputerMode::CONTENTS : ComputerMode::INFO;
-		gFloatingPanels[static_cast<size_t>(FloatingPanelId::CONTEXT)].visible = TRUE;
-		gFloatingPanels[static_cast<size_t>(FloatingPanelId::ACTIONS)].visible = TRUE;
-		gFloatingPanels[static_cast<size_t>(FloatingPanelId::OBJECT_INVENTORY)].visible = FALSE;
-		RefreshPanelActions();
 		SetBagRegionsEnabled(TRUE);
 		SetRenderFlags(RENDER_FLAG_FULL);
 		// Let JA2 keep its normal allied selection mechanics. Contacts are
@@ -7189,15 +6608,12 @@ BOOLEAN OS0SelectWorldObject(SOLDIERTYPE* target, GridNo gridNo,
 	gInspectedGridNo = gridNo;
 	gInspectedLevel = level;
 	gInspectedTileIndex = tileIndex;
-	RefreshObjectSymbol(tileIndex);
 	StartExplodedView(gridNo, tileIndex, TRUE);
 	gLootGridNo = gridNo;
 	gLootLevel = level;
 	gLootTileIndex = tileIndex;
 	gMode = ComputerMode::CONTENTS;
 	gContentsMode = ContentsMode::WORLD;
-	gFloatingPanels[static_cast<size_t>(FloatingPanelId::CONTEXT)].visible = TRUE;
-	gFloatingPanels[static_cast<size_t>(FloatingPanelId::ACTIONS)].visible = TRUE;
 	// Selection must not spawn a window underneath the first click. Otherwise
 	// that new region swallows the second half of a double-click. Crucially, a
 	// trailing LBUTTON_UP after a double-click is the *same* selection and must
@@ -7206,10 +6622,8 @@ BOOLEAN OS0SelectWorldObject(SOLDIERTYPE* target, GridNo gridNo,
 	{
 		gItemDetailsVisible = FALSE;
 		gLootVisible = FALSE;
-		gFloatingPanels[static_cast<size_t>(FloatingPanelId::OBJECT_INVENTORY)].visible = FALSE;
 	}
 	CaptureInspectorPreview(gridNo, level);
-	RefreshPanelActions();
 	PositionBagRegions();
 	SetBagRegionsEnabled(TRUE);
 	SetRenderFlags(RENDER_FLAG_FULL);
@@ -7220,45 +6634,62 @@ void OS0HoverWorldObject(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 	UINT16 tileIndex, INT16 screenX, INT16 screenY)
 {
 	tileIndex = ResolveWorldTileIndex(gridNo, level, tileIndex);
+	const UINT16 heldItem = gpItemPointer ? gpItemPointer->usItem : NOTHING;
 	const BOOLEAN cursorContextChanged = target != gHoverCursorSoldier ||
 		gridNo != gHoverCursorGridNo || level != gHoverCursorLevel ||
 		tileIndex != gHoverCursorTileIndex;
+	const BOOLEAN heldItemChanged = heldItem != gHoverCursorHeldItem;
+	const BOOLEAN wasHoverVisible = gHoverVisible;
 	if (cursorContextChanged)
 	{
 		gHoverCursorSoldier = target;
 		gHoverCursorGridNo = gridNo;
 		gHoverCursorLevel = level;
 		gHoverCursorTileIndex = tileIndex;
-		if (!gWorldMovePending && !gWorldMoveWalking)
+		if (!CarryState().active())
 		{
-			std::array<UINT8, 6> actions{};
+			std::array<ContextAction, 6> actions{};
 			if (BuildContextCursorActions(target, gridNo, level, tileIndex,
-				actions) > 0 && actions[0] != gCursorAction)
+				actions) > 0 && CursorState().action != ContextAction::ATTACK &&
+				actions[0] != CursorState().action)
 				ApplyCursorTool(actions[0]);
 		}
-		// Dragging an object onto a character reveals only destinations that belong
-		// to that actor.  The user can choose a hand/body slot or open PACK; native
-		// slot code then swaps occupied gear without losing either object.
-		if (gpItemPointer && target && CanAccessSoldierContents(target))
+	}
+	// This relation is evaluated every frame, not only when the world hover key
+	// changes. Starting an item drag while already over the actor used to miss the
+	// transition completely and no transfer destinations appeared.
+	if (gpItemPointer && target && CanAccessSoldierContents(target))
+	{
+		const BOOLEAN transferTargetChanged = gItemTransferTarget != target ||
+			gEquipmentSoldier != target || !gEquipmentExplodedVisible;
+		gItemTransferTarget = target;
+		gEquipmentSoldier = target;
+		gInventorySoldier = target;
+		gEquipmentExplodedVisible = TRUE;
+		if (transferTargetChanged)
 		{
-			gItemTransferTarget = target;
-			gEquipmentSoldier = target;
-			gInventorySoldier = target;
-			gEquipmentExplodedVisible = TRUE;
 			PositionEquipmentRegions();
 			PositionBagRegions();
 			SetBagRegionsEnabled(TRUE);
 		}
+	}
+	else if (gpItemPointer && gItemTransferTarget)
+	{
+		gItemTransferTarget = nullptr;
+		SetBagRegionsEnabled(TRUE);
 	}
 	const BOOLEAN validGrid = gridNo >= 0 && gridNo < WORLD_MAX;
 	ITEM_POOL* const pool = validGrid ? GetItemPool(gridNo, level) : nullptr;
 	const BOOLEAN hasAsset = validGrid && tileIndex < NUMBEROFTILES;
 	if (!target && !pool && !hasAsset)
 	{
-		if (gHoverVisible) SetRenderFlags(RENDER_FLAG_FULL);
-		gHoverVisible = FALSE;
+		if (!gInspectorPinned) gHoverVisible = FALSE;
+		gHoverCursorHeldItem = heldItem;
+		if (wasHoverVisible && !gHoverVisible) SetRenderFlags(RENDER_FLAG_FULL);
 		return;
 	}
+	if (!cursorContextChanged && !heldItemChanged && gHoverVisible) return;
+	gHoverCursorHeldItem = heldItem;
 	if (cursorContextChanged && validGrid)
 		CaptureInspectorPreview(gridNo, level);
 
@@ -7270,7 +6701,7 @@ void OS0HoverWorldObject(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 			ST::format("{} -> {} / CHOOSE SLOT",
 				GCM->getItem(gpItemPointer->usItem)->getName(), target->name) :
 			ST::format("{}  HP {}/{}  {}",
-				CursorActionLabel(gCursorAction), target->bLife, target->bLifeMax,
+				ContextActionName(CursorState().action), target->bLife, target->bLifeMax,
 				target->bTeam == OUR_TEAM ? "OPERATOR" : "CONTACT");
 	}
 	else if (pool && pool->iItemIndex >= 0 &&
@@ -7281,7 +6712,7 @@ void OS0HoverWorldObject(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 		gHoverTitle = worldItem.o.usItem != NOTHING ?
 			GCM->getItem(worldItem.o.usItem)->getName() : "GROUND ITEMS";
 		gHoverDetail = ST::format("{}  LMB EXECUTE  MMB CYCLE",
-			CursorActionLabel(gCursorAction));
+			ContextActionName(CursorState().action));
 	}
 	else
 	{
@@ -7293,9 +6724,9 @@ void OS0HoverWorldObject(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 		STRUCTURE const* const structure = WorldStructureAt(gridNo, level, tileIndex);
 		GridNo const durabilityGrid = structure ? structure->sGridNo : gridNo;
 		const UINT16 canonical = CanonicalAssetTileIndex(gridNo, level, tileIndex);
-		const INT16 maximum = AssetDurabilityMaximum(material);
-		const INT16 current = CurrentAssetDurability(durabilityGrid, canonical,
-			material);
+		const INT16 maximum = OS0AssetDurabilityMaximum(material);
+		const INT16 current = OS0CurrentAssetDurability(durabilityGrid, level,
+			canonical, material);
 		gHoverTitle = salvage.displayName;
 		gHoverDetail = ST::format("{} / {} / {}x{} / HP {}/{}",
 			gAssetCategoryNames[static_cast<size_t>(record.category)],
@@ -7303,35 +6734,29 @@ void OS0HoverWorldObject(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 			record.width, record.height, current, maximum);
 		const ST::string yield = salvage.salvageable ?
 			ST::format(" / +{} {}", salvage.amount,
-				ResourceName(salvage.resource)) : ST::string(" / FIXED");
+				OS0ResourceName(salvage.resource)) : ST::string(" / FIXED");
 		gHoverDebugDetail = ST::format("{} {}{}",
 			FieldToolName(required), HasFieldTool(GetSelectedMan(), required) ?
 				"READY" : "MISSING", yield);
 	}
 
-	constexpr INT16 width = 310;
-	constexpr INT16 height = 82;
-	const INT16 proposedX = screenX + 16 + width <= gsVIEWPORT_END_X ?
-		screenX + 16 : screenX - width - 10;
-	const INT16 proposedY = screenY + 18 + height <= gsVIEWPORT_WINDOW_END_Y ?
-		screenY + 18 : screenY - height - 10;
-	gHoverX = std::clamp<INT16>(proposedX, gsVIEWPORT_START_X,
-		std::max<INT16>(gsVIEWPORT_START_X, gsVIEWPORT_END_X - width));
-	gHoverY = std::clamp<INT16>(proposedY, gsVIEWPORT_WINDOW_START_Y,
-		std::max<INT16>(gsVIEWPORT_WINDOW_START_Y,
-			gsVIEWPORT_WINDOW_END_Y - height));
+	// Content follows the hovered world object; the window does not. Keeping the
+	// inspector at its user-chosen, persisted position prevents it from covering
+	// the merc and eliminates the cursor-chasing jitter of the prototype.
+	(void)screenX;
+	(void)screenY;
 	gHoverVisible = TRUE;
-	SetRenderFlags(RENDER_FLAG_FULL);
 }
 
 void OS0ClearWorldHover()
 {
 	if (gHoverVisible) SetRenderFlags(RENDER_FLAG_FULL);
-	gHoverVisible = FALSE;
+	if (!gInspectorPinned) gHoverVisible = FALSE;
 	gHoverCursorSoldier = nullptr;
 	gHoverCursorGridNo = NOWHERE;
 	gHoverCursorLevel = 0;
 	gHoverCursorTileIndex = NO_TILE;
+	gHoverCursorHeldItem = NOTHING;
 }
 
 void OS0OpenContextMenu(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
@@ -7339,6 +6764,15 @@ void OS0OpenContextMenu(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 {
 	if (GetJA2Clock() < gPanelInteractionGuardUntil) return;
 	CloseContextMenu();
+	// RMB owns a transient interaction state. Suspend persistent aiming first;
+	// otherwise the aim auto-collapse closes the newly created fan in this frame.
+	if (CursorState().attackMode || gCurrentUIMode == ACTION_MODE ||
+		gCurrentUIMode == CONFIRM_ACTION_MODE)
+	{
+		CursorState().attackMode = FALSE;
+		CursorState().action = ContextAction::MOVE;
+		guiPendingOverrideEvent = A_CHANGE_TO_MOVE;
+	}
 	tileIndex = ResolveWorldTileIndex(gridNo, level, tileIndex);
 	gContextSoldier = target;
 	gContextGridNo = gridNo;
@@ -7355,9 +6789,17 @@ void OS0OpenContextMenu(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 
 	if (target)
 	{
-		OS0OpenCharacterPanel(target);
+		// Build the one radial interaction state directly. Opening the character
+		// sheet first created a second, smaller menu for one frame underneath it.
+		gInspectedSoldier = target;
+		gInspectedGridNo = NOWHERE;
+		gContentsMode = ContentsMode::SOLDIER;
+		gInventoryVisible = CanAccessSoldierContents(target);
+		if (target->bTeam == OUR_TEAM) gInventorySoldier = target;
+		gLootVisible = FALSE;
 		gCharacterActionFanVisible = TRUE;
-		if (target->bTeam == OUR_TEAM) gBagVisible = FALSE;
+		// A context fan is transient and must not destroy the independent RPG
+		// inventory window. Its real slots remain valid drag targets behind/after it.
 		gContextSoldier = target;
 		gContextTitle = target->name;
 		const BOOLEAN own = target->bTeam == OUR_TEAM;
@@ -7374,6 +6816,8 @@ void OS0OpenContextMenu(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 			AddContextEntry(ContextAction::PRONE, "STANCE / PRONE");
 			AddContextEntry(ContextAction::STEALTH,
 				target->bStealthMode ? "STEALTH / OFF" : "STEALTH / ON");
+			AddContextEntry(ContextAction::AUTO_FIRST_AID, "AUTO FIRST AID",
+				CanAutoBandage(FALSE));
 			const OBJECTTYPE& hand = target->inv[HANDPOS];
 			const BOOLEAN gunReady = hand.usItem != NOTHING &&
 				GCM->getItem(hand.usItem)->getItemClass() == IC_GUN;
@@ -7419,17 +6863,29 @@ void OS0OpenContextMenu(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 		AddContextEntry(ContextAction::INSPECT, "INSPECT / INFO");
 		if (hasAsset)
 			AddContextEntry(ContextAction::CATALOG, "GOD / CATALOG ASSET");
-		if (hasItems || (structure && structure->fFlags & STRUCTURE_OPENABLE &&
-			!(structure->fFlags & STRUCTURE_ANYDOOR)))
+		if (structure && structure->fFlags & STRUCTURE_OPENABLE &&
+			!(structure->fFlags & STRUCTURE_ANYDOOR))
 			AddContextEntry(ContextAction::CONTENTS, "OPEN CONTENTS", near);
 		if (hasItems)
+		{
 			AddContextEntry(ContextAction::PICK_UP,
 				near ? "PICK UP" : "APPROACH & PICK UP");
+			if (selected && gContextWorldItemIndex >= 0 &&
+				static_cast<size_t>(gContextWorldItemIndex) < gWorldItems.size())
+			{
+				WORLDITEM const& worldItem = GetWorldItem(gContextWorldItemIndex);
+				if (worldItem.fExists && worldItem.o.usItem != NOTHING &&
+					OS0PreferredEquipmentSlot(selected, worldItem.o) != NO_SLOT)
+					AddContextEntry(ContextAction::EQUIP_ITEM,
+						"EQUIP DIRECTLY", near &&
+						OS0CanAcceptCarriedObject(selected, worldItem.o));
+			}
+		}
 		if (hasAsset && structure)
 		{
 			AddContextEntry(ContextAction::CARRY, "CARRY / REPOSITION",
 				near && IsInspectedWorldAssetMovable());
-			AssetCatalogRecord const* const catalog = FindAssetCatalogRecordConst(
+			AssetCatalogRecord const* const catalog = OS0FindAssetCatalogRecordConst(
 				static_cast<INT16>(giCurrentTilesetID),
 				CanonicalAssetTileIndex(gridNo, level, tileIndex));
 			AddContextEntry(ContextAction::BUILD,
@@ -7447,7 +6903,7 @@ void OS0OpenContextMenu(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 				AddContextEntry(ContextAction::SALVAGE,
 					!tool ? ST::format("NEED {}", FieldToolName(required)) :
 					ST::format("DISMANTLE / +{} {}", salvage.amount,
-						ResourceName(salvage.resource)),
+						OS0ResourceName(salvage.resource)),
 					CanSalvageWorldAsset(selected, gridNo, level, tileIndex));
 			}
 		}
@@ -7475,8 +6931,6 @@ void OS0OpenContextMenu(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 		gInspectedTileIndex = NO_TILE;
 		gContentsMode = ContentsMode::WORLD;
 		gContextTitle = TerrainPhysicsName(GetTerrainType(gridNo));
-		gFloatingPanels[static_cast<size_t>(FloatingPanelId::CONTEXT)].visible = TRUE;
-		gFloatingPanels[static_cast<size_t>(FloatingPanelId::ACTIONS)].visible = TRUE;
 		CaptureInspectorPreview(gridNo, 0);
 		AddContextEntry(ContextAction::INSPECT, "INSPECT / GROUND");
 		const BOOLEAN tool = HasDiggingTool(selected);
@@ -7485,10 +6939,10 @@ void OS0OpenContextMenu(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 			!tool ? "DIG / NEED FIELD SHOVEL" :
 			diggable ? "DIG / REMOVE SURFACE" : "DIG / GROUND EXPOSED",
 			diggable);
-		RefreshPanelActions();
 	}
 	else if (selected)
 	{
+		gCharacterActionFanVisible = TRUE;
 		gContextSoldier = selected;
 		gContextGridNo = selected->sGridNo;
 		gInspectedSoldier = selected;
@@ -7503,6 +6957,8 @@ void OS0OpenContextMenu(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 		AddContextEntry(ContextAction::PRONE, "STANCE / PRONE");
 		AddContextEntry(ContextAction::STEALTH,
 			selected->bStealthMode ? "STEALTH / OFF" : "STEALTH / ON");
+		AddContextEntry(ContextAction::AUTO_FIRST_AID, "AUTO FIRST AID",
+			CanAutoBandage(FALSE));
 		const OBJECTTYPE& hand = selected->inv[HANDPOS];
 		if (hand.usItem != NOTHING &&
 			GCM->getItem(hand.usItem)->getItemClass() == IC_GUN)
@@ -7516,6 +6972,23 @@ void OS0OpenContextMenu(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 		}
 	}
 	if (gContextEntryCount == 0) return;
+	// CloseContextMenu clears stale hover state. Rebuild it explicitly from the
+	// same resolved relation so RMB always opens the radial *and* its preview,
+	// even when the mouse did not move between button-down and button-up.
+	if (target || hasItems || hasAsset)
+	{
+		OS0HoverWorldObject(target, gridNo, level, tileIndex, screenX, screenY);
+	}
+	else if (hasTerrain)
+	{
+		CaptureInspectorPreview(gridNo, level);
+		gHoverTitle = TerrainPhysicsName(GetTerrainType(gridNo));
+		gHoverDetail = "GROUND / RMB ACTIONS / MMB CYCLE";
+		gHoverDebugDetail = HasDiggingTool(selected) ?
+			"FIELD SHOVEL READY" : "FIELD SHOVEL MISSING";
+		gHoverVisible = TRUE;
+	}
+	gFloatingPanels[static_cast<size_t>(FloatingPanelId::INSPECTOR)].visible = TRUE;
 
 	if (!gObjectActionFanVisible)
 	{
@@ -7535,7 +7008,7 @@ void OS0OpenContextMenu(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 void OS0CycleCursorAction(SOLDIERTYPE* target, GridNo gridNo, UINT8 level, UINT16 tileIndex)
 {
 	tileIndex = ResolveWorldTileIndex(gridNo, level, tileIndex);
-	std::array<UINT8, 6> available{};
+	std::array<ContextAction, 6> available{};
 	const size_t count = BuildContextCursorActions(target, gridNo, level,
 		tileIndex, available);
 	if (count == 0) return;
@@ -7543,22 +7016,120 @@ void OS0CycleCursorAction(SOLDIERTYPE* target, GridNo gridNo, UINT8 level, UINT1
 	size_t current = count;
 	for (size_t i = 0; i < count; ++i)
 	{
-		if (available[i] == gCursorAction)
+		if (available[i] == CursorState().action)
 		{
 			current = i;
 			break;
 		}
 	}
 	ApplyCursorTool(available[current == count ? 0 : (current + 1) % count]);
-	RecordFeedbackEvent(ST::format("CURSOR {}", CursorActionLabel(gCursorAction)));
+	RecordFeedbackEvent(ST::format("CURSOR {}",
+		ContextActionName(CursorState().action)));
 }
 
 void OS0CancelCursorAction()
 {
-	gCursorAction = 0;
+	if (gpItemPointer)
+	{
+		CancelItemPointer();
+		gItemTransferTarget = nullptr;
+		RecordFeedbackEvent("HELD ITEM RETURNED TO INVENTORY");
+	}
+	CursorState().action = ContextAction::MOVE;
+	CursorState().attackMode = FALSE;
 	ClearWorldMoveState();
 	guiPendingOverrideEvent = A_CHANGE_TO_MOVE;
 	SetRenderFlags(RENDER_FLAG_FULL);
+}
+
+BOOLEAN OS0HandleRealtimeControlKey(UINT32 key, UINT32 keyState)
+{
+	if (key == SDLK_ESCAPE)
+	{
+		if (!CursorState().attackMode) return FALSE;
+		OS0CancelCursorAction();
+		return TRUE;
+	}
+	const BOOLEAN directControlKey = key == 'w' || key == 'W' ||
+		key == 'a' || key == 'A' || key == 's' || key == 'S' ||
+		key == 'd' || key == 'D' || key == 'q' || key == 'Q' ||
+		key == 'e' || key == 'E';
+	if (!directControlKey) return FALSE;
+	// Alt/Ctrl combinations remain engine shortcuts. Shift is intentionally part
+	// of direct control and promotes a standing movement segment to RUNNING.
+	if (keyState & (ALT_DOWN | CTRL_DOWN)) return FALSE;
+	OS0UpdateDirectControl(GetSelectedMan(), !DirectControlBlocked(),
+		CursorState().attackMode);
+	return TRUE;
+}
+
+BOOLEAN OS0HandleHeldItemAction(SOLDIERTYPE* target, GridNo gridNo,
+	UINT8 level, UINT16 tileIndex)
+{
+	if (!gpItemPointer || !gpItemPointerSoldier) return FALSE;
+	tileIndex = ResolveWorldTileIndex(gridNo, level, tileIndex);
+	SOLDIERTYPE* const actor = gpItemPointerSoldier;
+
+	// The actor is a relation target, not an implicit inventory bucket. Clicking
+	// the actor keeps the item held and exposes valid body/hand/pack/drop actions;
+	// the chosen symbol performs exactly one registered transfer.
+	if (target && CanAccessSoldierContents(target))
+	{
+		gItemTransferTarget = target;
+		gEquipmentSoldier = target;
+		gInventorySoldier = target;
+		gEquipmentExplodedVisible = TRUE;
+		PositionEquipmentRegions();
+		PositionItemTransferIntentRegions();
+		SetBagRegionsEnabled(TRUE);
+		SetRenderFlags(RENDER_FLAG_FULL);
+		RecordFeedbackEvent(ST::format("ITEM TARGET {} / CHOOSE RELATION",
+			target->name));
+		return TRUE;
+	}
+
+	if (gridNo < 0 || gridNo >= WORLD_MAX) return FALSE;
+	const BOOLEAN hasAsset = tileIndex < NUMBEROFTILES;
+	if (hasAsset)
+	{
+		const FieldToolKind required = RequiredFieldTool(gridNo, level, tileIndex);
+		const BOOLEAN matchingTool = required != FieldToolKind::NONE &&
+			gpItemPointer->usItem == FieldToolItem(required);
+		if (matchingTool)
+		{
+			const BOOLEAN applied = SalvageWorldAsset(actor, gridNo, level, tileIndex) ||
+				(required == FieldToolKind::FIELD_SHOVEL &&
+				 DigTerrainAt(actor, gridNo, tileIndex));
+			if (applied)
+			{
+				RecordFeedbackEvent(ST::format("HELD {} APPLIED AT {}",
+					GCM->getItem(gpItemPointer->usItem)->getName(), gridNo));
+				SetBagRegionsEnabled(TRUE);
+				SetRenderFlags(RENDER_FLAG_FULL);
+				return TRUE; // Keep the tool on the cursor for the next use.
+			}
+		}
+
+		STRUCTURE const* const structure = WorldStructureAt(gridNo, level, tileIndex);
+		if (structure && structure->fFlags & STRUCTURE_OPENABLE &&
+			!(structure->fFlags & STRUCTURE_ANYDOOR))
+		{
+			AddItemToPool(gridNo, gpItemPointer, HIDDEN_IN_OBJECT, level, 0, -1);
+			EndItemPointer();
+			gItemTransferTarget = nullptr;
+			OS0OpenWorldContainer(gridNo, level, tileIndex);
+			return TRUE;
+		}
+	}
+
+	// Bare soil accepts the field shovel even when no object-layer asset exists.
+	if (gpItemPointer->usItem == CROWBAR && DigTerrainAt(actor, gridNo, tileIndex))
+	{
+		RecordFeedbackEvent(ST::format("HELD FIELD SHOVEL APPLIED AT {}", gridNo));
+		SetRenderFlags(RENDER_FLAG_FULL);
+		return TRUE;
+	}
+	return FALSE;
 }
 
 BOOLEAN OS0HandleCursorAction(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
@@ -7567,8 +7138,26 @@ BOOLEAN OS0HandleCursorAction(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 	// A panel opened by a double-click can receive a trailing button-up from the
 	// same physical gesture. Consume it before vanilla UI code sees it.
 	if (GetJA2Clock() < gPanelInteractionGuardUntil) return TRUE;
+	if (gpItemPointer && OS0HandleHeldItemAction(target, gridNo, level, tileIndex))
+		return TRUE;
 	tileIndex = ResolveWorldTileIndex(gridNo, level, tileIndex);
-	if (gCursorAction == 1)
+	if (CursorState().action == ContextAction::ATTACK)
+	{
+		SOLDIERTYPE* const selected = GetSelectedMan();
+		if (!selected) return TRUE;
+		if (gCurrentUIMode == CONFIRM_ACTION_MODE)
+		{
+			guiPendingOverrideEvent = CA_MERC_SHOOT;
+			return TRUE;
+		}
+		if (UIMouseOnValidAttackLocation(selected))
+		{
+			guiPendingOverrideEvent = A_CHANGE_TO_CONFIM_ACTION;
+			return TRUE;
+		}
+		return TRUE;
+	}
+	if (CursorState().action == ContextAction::USE)
 	{
 		if (target)
 		{
@@ -7583,7 +7172,7 @@ BOOLEAN OS0HandleCursorAction(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 		}
 		return FALSE;
 	}
-	if (gCursorAction == 3)
+	if (CursorState().action == ContextAction::INSPECT)
 	{
 		const BOOLEAN hasInspectable = target ||
 			(gridNo >= 0 && gridNo < WORLD_MAX &&
@@ -7591,7 +7180,7 @@ BOOLEAN OS0HandleCursorAction(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 		OS0SelectWorldObject(target, gridNo, level, tileIndex);
 		return hasInspectable;
 	}
-	if (gCursorAction != 2) return FALSE;
+	if (CursorState().action != ContextAction::CARRY) return FALSE;
 	if (gridNo < 0 || gridNo >= WORLD_MAX || tileIndex >= NUMBEROFTILES)
 		return TRUE;
 
@@ -7605,14 +7194,12 @@ BOOLEAN OS0HandleCursorAction(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 	}
 
 	ClearWorldMoveState();
-	gWorldMovePending = TRUE;
-	gWorldMoveSource = gridNo;
-	gWorldMoveTileIndex = tileIndex;
-	gWorldMoveCarrier = selected;
+	OS0CarryState& carry = CarryState();
+	if (!carry.begin(gridNo, level, tileIndex, Soldier2ID(selected))) return TRUE;
 	if (STRUCTURE const* const moving = WorldStructureAt(gridNo, 0, tileIndex))
 	{
 		WORLD_PHYSICS_PROFILE const physics = GetWorldPhysicsProfile(moving);
-		gWorldMoveLifted = physics.massKg <=
+		carry.lifted = physics.massKg <=
 			GetSoldierWorldCarryCapacityKg(selected) * 0.55f;
 	}
 	ShadeWorldMoveSource();
@@ -7628,6 +7215,14 @@ void OS0OpenWorldContainer(GridNo gridNo, UINT8 level, UINT16 tileIndex)
 	if (gridNo < 0 || gridNo >= WORLD_MAX) return;
 	if (GetJA2Clock() < gPanelInteractionGuardUntil) return;
 	tileIndex = ResolveWorldTileIndex(gridNo, level, tileIndex);
+	STRUCTURE const* const structure = WorldStructureAt(gridNo, level, tileIndex);
+	if (!structure || !(structure->fFlags & STRUCTURE_OPENABLE) ||
+		structure->fFlags & STRUCTURE_ANYDOOR)
+	{
+		// Loose ground items are already physical world objects. They never open
+		// the container projection; double-click picks the exact sprite up.
+		return;
+	}
 	CloseContextMenu();
 	gContextTitle = tileIndex < NUMBEROFTILES ?
 		DescribeWorldAsset(gridNo, level, tileIndex).displayName : "GROUND ITEMS";
@@ -7640,22 +7235,24 @@ void OS0OpenWorldContainer(GridNo gridNo, UINT8 level, UINT16 tileIndex)
 	gInspectedLevel = level;
 	gInspectedTileIndex = tileIndex;
 	gItemDetailsVisible = FALSE;
-	RefreshObjectSymbol(tileIndex);
 	StartExplodedView(gridNo, tileIndex, TRUE);
 	gMode = ComputerMode::CONTENTS;
 	gContentsMode = ContentsMode::WORLD;
-	const BOOLEAN hasContents = GetItemPool(gridNo, level) != nullptr ||
-		WorldStructureAt(gridNo, level, tileIndex) != nullptr;
+	const BOOLEAN hasContents = GetItemPool(gridNo, level) != nullptr;
 	gLootVisible = hasContents && IsInspectedWorldAssetNear();
-	gFloatingPanels[static_cast<size_t>(FloatingPanelId::CONTEXT)].visible = TRUE;
-	gFloatingPanels[static_cast<size_t>(FloatingPanelId::ACTIONS)].visible = TRUE;
-	gFloatingPanels[static_cast<size_t>(FloatingPanelId::OBJECT_INVENTORY)].visible = TRUE;
 	gInventoryVisible = TRUE;
+	if (SOLDIERTYPE* const selected = GetSelectedMan())
+	{
+		// Loot remains a set of world sprites. The receiving destinations are the
+		// real body equipment and pocket slots attached to the active operator.
+		gInventorySoldier = selected;
+		gEquipmentSoldier = selected;
+		gEquipmentExplodedVisible = gLootVisible;
+	}
 	gPanelInteractionGuardUntil = GetJA2Clock() + 140;
 	if (gLootVisible) gLootIgnoreInputUntil = GetJA2Clock() + 300;
 
 	CaptureInspectorPreview(gridNo, level);
-	RefreshPanelActions();
 	PositionBagRegions();
 	SetBagRegionsEnabled(TRUE);
 	SetRenderFlags(RENDER_FLAG_FULL);
@@ -7681,8 +7278,20 @@ void OS0ActivateWorldObject(GridNo gridNo, UINT8 level, UINT16 tileIndex)
 			if (!worldItem.fExists || worldItem.o.usItem == NOTHING ||
 				worldItem.bVisible == HIDDEN_ITEM) continue;
 			if (SOLDIERTYPE* const selected = GetSelectedMan())
-				SoldierPickupItem(selected, item->iItemIndex, gridNo,
-					ITEM_IGNORE_Z_LEVEL);
+			{
+				const BOOLEAN accepted = OS0CanAcceptCarriedObject(selected, worldItem.o);
+				if (accepted)
+					SoldierPickupItem(selected, item->iItemIndex, gridNo,
+						ITEM_IGNORE_Z_LEVEL);
+				else
+					RecordFeedbackEvent("LOAD LIMIT 125% / PICKUP REJECTED");
+				if (accepted)
+				{
+					gInspectedGridNo = NOWHERE;
+					gInspectedTileIndex = NO_TILE;
+					gLootVisible = FALSE;
+				}
+			}
 			return;
 		}
 	}
@@ -7696,7 +7305,6 @@ void OS0ActivateWorldObject(GridNo gridNo, UINT8 level, UINT16 tileIndex)
 		// Decorative/resource assets have no inventory, but double-click still
 		// gives them a first-class inspector instead of an empty fake container.
 		OS0SelectWorldObject(nullptr, gridNo, level, tileIndex);
-		gBagVisible = TRUE;
 		gMode = ComputerMode::INFO;
 		SetBagRegionsEnabled(TRUE);
 		SetRenderFlags(RENDER_FLAG_FULL);
@@ -7706,23 +7314,23 @@ void OS0ActivateWorldObject(GridNo gridNo, UINT8 level, UINT16 tileIndex)
 
 BOOLEAN OS0HandlePendingWorldMove(GridNo destination)
 {
-	if (!gWorldMovePending) return FALSE;
-	if (gWorldMoveSource < 0 || gWorldMoveSource >= WORLD_MAX ||
+	OS0CarryState& carry = CarryState();
+	if (!carry.pending()) return FALSE;
+	if (carry.source < 0 || carry.source >= WORLD_MAX ||
 		destination < 0 || destination >= WORLD_MAX ||
-		destination == gWorldMoveSource ||
-		gWorldMoveTileIndex >= NUMBEROFTILES)
+		destination == carry.source || carry.tileIndex >= NUMBEROFTILES)
 	{
 		return TRUE;
 	}
-	SOLDIERTYPE* const selected = gWorldMoveCarrier;
+	SOLDIERTYPE* const selected = CarryCarrier();
 	if (!selected || !selected->bActive || selected->bLife <= 0)
 	{
 		ClearWorldMoveState();
 		return TRUE;
 	}
 
-	STRUCTURE* const structure = WorldStructureAt(gWorldMoveSource, 0,
-		gWorldMoveTileIndex);
+	STRUCTURE* const structure = WorldStructureAt(carry.source,
+		carry.sourceLevel, carry.tileIndex);
 	constexpr StructureFlags fixed = static_cast<StructureFlags>(
 		STRUCTURE_WALLSTUFF | STRUCTURE_ROOF | STRUCTURE_PERSON |
 		STRUCTURE_CORPSE | STRUCTURE_TREE | STRUCTURE_ANYFENCE |
@@ -7738,27 +7346,23 @@ BOOLEAN OS0HandlePendingWorldMove(GridNo destination)
 
 	// Validate before starting the walk. Invalid tiles leave the crate attached
 	// to the cursor, so the player can simply choose another destination.
-	if (!OkayToAddStructureToWorld(destination, 0,
+	if (!OkayToAddStructureToWorld(destination, carry.sourceLevel,
 		structure->pDBStructureRef, INVALID_STRUCTURE_ID)) return TRUE;
 	const GridNo actionGrid = FindCarryActionGrid(selected, destination);
 	if (actionGrid == NOWHERE) return TRUE;
 
-	gWorldMoveDestination = destination;
-	gWorldMoveActionGrid = actionGrid;
-	gWorldMovePending = FALSE;
-	gWorldMoveWalking = TRUE;
-	gCursorAction = 0;
+	if (!carry.beginWalk(destination, carry.sourceLevel, actionGrid)) return TRUE;
+	CursorState().action = ContextAction::MOVE;
 	guiPendingOverrideEvent = A_CHANGE_TO_MOVE;
 
 	if (selected->sGridNo != actionGrid &&
 		!EVENT_InternalGetNewSoldierPath(selected, actionGrid,
 			selected->usUIMovementMode, TRUE, TRUE))
 	{
-		gWorldMoveDestination = NOWHERE;
-		gWorldMoveActionGrid = NOWHERE;
-		gWorldMovePending = TRUE;
-		gWorldMoveWalking = FALSE;
-		gCursorAction = 2;
+		carry.destination = NOWHERE;
+		carry.actionGrid = NOWHERE;
+		carry.phase = OS0CarryPhase::TARGETING;
+		CursorState().action = ContextAction::CARRY;
 		guiPendingOverrideEvent = M_CHANGE_TO_HANDMODE;
 	}
 	SetRenderFlags(RENDER_FLAG_FULL);
@@ -7771,6 +7375,19 @@ void OS0AdjustWorldZoom(INT8 direction)
 	const UINT8 next = direction > 0 ? 2 : 1;
 	if (next == gWorldZoom) return;
 	CloseContextMenu();
+	if (gWorldZoom == 1 && next > 1)
+	{
+		// The fast pixel-scroll path moves the previously presented buffer.  A
+		// magnified viewport no longer has a 1:1 relation to those increments, so
+		// render the world for its new camera position instead of shifting stale
+		// zoomed pixels (and fixed windows) around.
+		gVideoScrollBeforeZoom = gfDoVideoScroll;
+		gfDoVideoScroll = FALSE;
+	}
+	else if (gWorldZoom > 1 && next == 1)
+	{
+		gfDoVideoScroll = gVideoScrollBeforeZoom;
+	}
 	gWorldZoom = next;
 	// Zoom is a view operation. It must not cancel a crate/asset placement that
 	// is currently attached to the cursor or waiting for its carrier.
@@ -7789,36 +7406,44 @@ void OS0PrepareWorldZoom()
 	if (gWorldZoom <= 1) return;
 
 	// The previous frame contains the enlarged world and the OS//0 overlay.
-	// Restore the last clean, unzoomed tactical frame before scrolling and
-	// rendering. Otherwise the overlay is sampled into the next zoom frame and
-	// recursively leaves the red menu trails seen while moving the camera.
+	// Restore only the last clean, unzoomed tactical viewport before rendering.
+	// The engine can then update its normal dirty world regions; forcing a full
+	// world render here made 2x zoom needlessly redraw the entire sector forever.
+	SGPBox source;
+	SGPBox destination;
+	GetWorldZoomRects(source, destination);
 	if (gWorldZoomBuffer &&
-		gWorldZoomBuffer->Width() == SCREEN_WIDTH &&
-		gWorldZoomBuffer->Height() == SCREEN_HEIGHT)
+		gWorldZoomBuffer->Width() == destination.w &&
+		gWorldZoomBuffer->Height() == destination.h)
 	{
-		const SGPBox full{ 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT };
-		BltVideoSurface(FRAME_BUFFER, gWorldZoomBuffer, 0, 0, &full);
+		const SGPBox savedViewport{ 0, 0, destination.w, destination.h };
+		BltVideoSurface(FRAME_BUFFER, gWorldZoomBuffer,
+			destination.x, destination.y, &savedViewport);
 	}
-	SetRenderFlags(RENDER_FLAG_FULL);
 }
 
 
 void OS0ApplyWorldZoom()
 {
 	if (gWorldZoom <= 1) return;
-	if (!gWorldZoomBuffer ||
-		gWorldZoomBuffer->Width() != SCREEN_WIDTH ||
-		gWorldZoomBuffer->Height() != SCREEN_HEIGHT)
-	{
-		if (gWorldZoomBuffer) DeleteVideoSurface(gWorldZoomBuffer);
-		gWorldZoomBuffer = AddVideoSurface(SCREEN_WIDTH, SCREEN_HEIGHT, PIXEL_DEPTH);
-	}
-	const SGPBox full{ 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT };
-	BltVideoSurface(gWorldZoomBuffer, FRAME_BUFFER, 0, 0, &full);
 	SGPBox source;
 	SGPBox destination;
 	GetWorldZoomRects(source, destination);
-	BltStretchVideoSurface(FRAME_BUFFER, gWorldZoomBuffer, &source, &destination);
+	if (!gWorldZoomBuffer ||
+		gWorldZoomBuffer->Width() != destination.w ||
+		gWorldZoomBuffer->Height() != destination.h)
+	{
+		if (gWorldZoomBuffer) DeleteVideoSurface(gWorldZoomBuffer);
+		gWorldZoomBuffer = AddVideoSurface(destination.w, destination.h, PIXEL_DEPTH);
+	}
+	const SGPBox viewport{ destination.x, destination.y,
+		destination.w, destination.h };
+	BltVideoSurface(gWorldZoomBuffer, FRAME_BUFFER, 0, 0, &viewport);
+	SGPBox localSource = source;
+	localSource.x -= destination.x;
+	localSource.y -= destination.y;
+	BltStretchVideoSurface(FRAME_BUFFER, gWorldZoomBuffer, &localSource,
+		&destination);
 	InvalidateRegion(destination.x, destination.y,
 		destination.x + destination.w, destination.y + destination.h);
 }
@@ -7861,8 +7486,9 @@ void OS0MapWorldToDisplayScreen(INT16* x, INT16* y)
 
 INT16 OS0WorldViewportBottom()
 {
+	if (gInitialized) return gUILayout.worldBottom();
 	return std::min<INT16>(gsVIEWPORT_WINDOW_END_Y,
-		std::max<INT16>(0, SCREEN_HEIGHT - COMMAND_BAR_H));
+		std::max<INT16>(0, SCREEN_HEIGHT - OS0UILayout::DOCK_HEIGHT));
 }
 
 
@@ -7902,72 +7528,4 @@ void OS0TalkingPanelClosed()
 	SetBagRegionsEnabled(TRUE);
 	gOrbRegion.Enable();
 	SetRenderFlags(RENDER_FLAG_FULL);
-}
-
-
-BOOLEAN OS0NotifyWorldAssetHit(GridNo gridNo, STRUCTURE* structure, UINT8 impact)
-{
-	if (!gInitialized || !structure || gridNo < 0 || gridNo >= WORLD_MAX) return FALSE;
-	STRUCTURE* const base = FindBaseStructure(structure);
-	LEVELNODE* const node = base ? FindLevelNodeBasedOnStructure(base) : nullptr;
-	if (!base || !node || node->usIndex >= NUMBEROFTILES) return FALSE;
-	const UINT16 tileIndex = node->usIndex;
-	AssetMaterial material = InferAssetMaterial(base);
-	if (AssetCatalogRecord const* const catalog = FindAssetCatalogRecordConst(
-		static_cast<INT16>(giCurrentTilesetID),
-		CanonicalAssetTileIndex(base->sGridNo, 0, tileIndex)))
-	{
-		if (catalog->material != AssetMaterial::AUTO) material = catalog->material;
-	}
-
-	for (UINT8 i = 0; i < 6; ++i)
-	{
-		ImpactParticle& particle = gImpactParticles[gImpactParticleNext];
-		gImpactParticleNext = (gImpactParticleNext + 1) % gImpactParticles.size();
-		particle.gridNo = gridNo;
-		particle.velocityX = static_cast<INT8>(static_cast<INT16>((i * 5 +
-			gridNo) % 9) - 4);
-		particle.velocityY = static_cast<INT8>(-7 - (i % 4));
-		particle.colourKind = static_cast<UINT8>(material);
-		particle.born = std::max<UINT32>(1, GetJA2Clock());
-	}
-
-	// Vanilla gunfire only reports a material impact; it never consumes the
-	// structure HP used by explosions. OS//0 adds a conservative damage layer
-	// only to assets that are explicitly salvageable/resource-like, so ordinary
-	// walls and map-critical geometry retain the original JA2 behaviour.
-	SalvageProfile const profile = DescribeWorldAsset(gridNo, 0, tileIndex);
-	if (!profile.salvageable) return FALSE;
-	const INT16 maximum = AssetDurabilityMaximum(material);
-	auto state = std::find_if(gAssetDamage.begin(), gAssetDamage.end(),
-		[&](AssetDamageState const& value)
-		{
-			return value.gridNo == base->sGridNo && value.tileIndex == tileIndex;
-		});
-	if (state == gAssetDamage.end())
-	{
-		gAssetDamage.push_back({ base->sGridNo, tileIndex, maximum });
-		state = gAssetDamage.end() - 1;
-	}
-	state->remaining = static_cast<INT16>(state->remaining -
-		std::max<UINT8>(1, impact / 3));
-	RecordFeedbackEvent(ST::format("ASSET HIT grid {} tile {} hp {}/{}",
-		base->sGridNo, tileIndex, std::max<INT16>(0, state->remaining), maximum));
-	if (state->remaining > 0) return TRUE;
-
-	const GridNo baseGrid = base->sGridNo;
-	{
-		ApplyMapChangesToMapTempFile recordChange;
-		RemoveStructFromLevelNode(baseGrid, node);
-	}
-	AddResourceItemToPool(baseGrid, 0, profile.resource,
-		std::max<UINT8>(1, profile.amount));
-	gAssetDamage.erase(state);
-	RecompileLocalMovementCosts(baseGrid);
-	InvalidateWorldRedundency();
-	SetRenderFlags(RENDER_FLAG_FULL);
-	RecordFeedbackEvent(ST::format("ASSET DESTROYED grid {} / +{} {}",
-		baseGrid, std::max<UINT8>(1, profile.amount),
-		ResourceName(profile.resource)));
-	return TRUE;
 }

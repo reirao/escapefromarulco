@@ -1,3 +1,9 @@
+/*
+ * Escape from Arulco modification notice:
+ * Modified from JA2 Stracciatella, 2026-07-24 through 2026-07-29.
+ * See MODIFICATIONS.md and the SFI source-code license agreement.
+ */
+
 #include "AI.h"
 #include "Ambient_Control.h"
 #include "Animated_ProgressBar.h"
@@ -83,6 +89,7 @@
 #include "SGPFile.h"
 #include "SaveLoadGame.h"
 #include "SaveLoadGameStates.h"
+#include "OS0_TacticalSession.h"
 #include "SaveLoadScreen.h"
 #include "Scheduling.h"
 #include "ShippingDestinationModel.h"
@@ -477,6 +484,7 @@ BOOLEAN SaveGame(const ST::string& saveName, const ST::string& gameDesc)
 
 		// Compute this last, after all save functions had the opportunity to
 		// add more data to the SaveStates.
+		OS0StorePersistentState(g_gameStates);
 		header.uiSaveStateSize = SaveStatesToSaveGameFile(*f);
 		f->seek(0, FileSeekMode::FILE_SEEK_FROM_START);
 
@@ -679,6 +687,7 @@ void LoadSavedGame(const ST::string &saveName)
 	TrashWorld();
 
 	ResetGameStates();
+	OS0ResetCampaignState();
 	InitScriptingEngine();
 
 	InitTacticalSave();
@@ -1024,6 +1033,7 @@ void LoadSavedGame(const ST::string &saveName)
 	{
 		LoadStatesFromSaveFile(f, g_gameStates);
 		AddModInfoToGameStates(g_gameStates);
+		OS0LoadPersistentState(g_gameStates);
 	}
 
 	BAR(1, "Final Checks...");
