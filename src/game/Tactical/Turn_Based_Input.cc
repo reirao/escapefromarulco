@@ -1,6 +1,6 @@
 /*
  * Escape from Arulco modification notice:
- * Modified from JA2 Stracciatella on 2026-07-28.
+ * Modified from JA2 Stracciatella, 2026-07-28 through 2026-07-30.
  * See MODIFICATIONS.md and the SFI source-code license agreement.
  */
 
@@ -99,7 +99,7 @@ static BOOLEAN gfFirstCycleMovementStarted = FALSE;
 const SOLDIERTYPE* gUITargetSoldier = NULL;
 
 
-static void QueryTBLeftButton(UIEventKind*);
+static void QueryTBLeftButton(UIEventKind*, BOOLEAN reset = FALSE);
 static void QueryTBRightButton(UIEventKind*);
 static void QueryTBMiddleButton(UIEventKind*);
 
@@ -112,7 +112,7 @@ void HandleTBClimbWindow( void );
 
 void GetTBMouseButtonInput(UIEventKind* const puiNewEvent)
 {
-	QueryTBLeftButton( puiNewEvent );
+	QueryTBLeftButton(puiNewEvent, OS0ConsumeViewportPrimaryGesture());
 	if (!OS0OwnsViewportContextButtons())
 	{
 		QueryTBRightButton( puiNewEvent );
@@ -175,10 +175,21 @@ static void QueryTBMiddleButton(UIEventKind* const puiNewEvent)
 	}
 }
 
-static void QueryTBLeftButton(UIEventKind* const puiNewEvent)
+static void QueryTBLeftButton(UIEventKind* const puiNewEvent,
+	BOOLEAN const reset)
 {
 	static BOOLEAN fClickHoldIntercepted = FALSE;
 	static BOOLEAN fCanCheckForSpeechAdvance = FALSE;
+	if (reset)
+	{
+		fClickHoldIntercepted = FALSE;
+		fCanCheckForSpeechAdvance = FALSE;
+		fLeftButtonDown = FALSE;
+		fIgnoreLeftUp = FALSE;
+		gfFirstCycleMovementStarted = FALSE;
+		RESETCOUNTER(LMOUSECLICK_DELAY_COUNTER);
+		return;
+	}
 
 	// LEFT MOUSE BUTTON
 	if ( gViewportRegion.uiFlags & MSYS_MOUSE_IN_AREA )
@@ -1466,12 +1477,10 @@ static void HandleModNone(UINT32 const key, UIEventKind* const new_event)
 			break;
 
 		case 'f':
-			// If there is a selected soldier, and the cursor location is valid
-			if (SOLDIERTYPE* sel = GetSelectedMan())
-			{
-				GridNo const grid_no = gUIFullTarget ? gUIFullTarget->sGridNo : guiCurrentCursorGridNo;
-				DisplayRangeToTarget(sel, grid_no);
-			}
+			// OS//0 uses plain F as a one-shot perception/interact intent. The
+			// viewport resolver samples the pointer now, so camera motion cannot
+			// activate a stale cached hover. Modified F shortcuts remain below.
+			OS0TriggerHoveredInteraction();
 			break;
 
 		case 'g': HandlePlayerTogglingLightEffects(TRUE);                      break;
@@ -1682,6 +1691,12 @@ static void HandleModShift(UINT32 const key, UIEventKind* const new_event)
 {
 	switch (key)
 	{
+		case 'f':
+			// Shift is OS//0's held sprint modifier; it must not make the
+			// one-shot perception key disappear while the player approaches.
+			OS0TriggerHoveredInteraction();
+			break;
+
 		case SDLK_SPACE:
 			// Nothing in hand and either not in SM panel, or the matching button
 			// is enabled if we are in SM panel
@@ -2137,7 +2152,8 @@ void GetKeyboardInput(UIEventKind* const puiNewEvent)
 		}
 		if ((InputEvent.usEvent == KEY_DOWN || InputEvent.usEvent == KEY_REPEAT ||
 			InputEvent.usEvent == KEY_UP) &&
-			OS0HandleRealtimeControlKey(InputEvent.usParam, InputEvent.usKeyState))
+			OS0HandleRealtimeControlKey(InputEvent.usParam, InputEvent.usKeyState,
+				InputEvent.usEvent))
 		{
 			continue;
 		}

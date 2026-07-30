@@ -1918,7 +1918,19 @@ static BOOLEAN HandleScrollDirections(UINT32 ScrollFlags, INT16 sScrollXStep, IN
 static UINT ScrollSpeed(void)
 {
 	UINT speed = 20 << (_KeyDown(SHIFT) ? 2 : gubCurScrollSpeedID);
-	if (!gfDoVideoScroll) speed *= 2;
+	if (!gfDoVideoScroll)
+	{
+		const UINT zoom = std::max<UINT>(1, OS0WorldZoomFactor());
+		// The zoomed pixels already magnify native camera movement. Preserve the
+		// same apparent screen speed instead of applying both the legacy no-video
+		// acceleration and the 2x stretch.
+		if (zoom > 1)
+		{
+			if (OS0WorldZoomKeepsLegacyScrollBoost()) speed *= 2;
+			speed = std::max<UINT>(1, speed / zoom);
+		}
+		else speed *= 2;
+	}
 	return speed;
 }
 

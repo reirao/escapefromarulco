@@ -1,7 +1,7 @@
 # Feature wiring audit
 
 This matrix compares the public prototype claims with the actual runtime path in
-the source. It was last verified for `v0.0.1.12`.
+the source. It was last verified for `v0.0.1.13`.
 
 | Feature | Runtime status | Wiring / persistence |
 | --- | --- | --- |
@@ -16,10 +16,12 @@ the source. It was last verified for `v0.0.1.12`.
 | Container inventory drag/drop | Verified | Double-click and right-click `OPEN CONTENTS` share one path; the container's own scaled world sprite becomes the centre of its spatial item layout. |
 | Deterministic container loot | Verified | First open seeds material and useful/damaged equipment; an invisible world-item marker prevents refilling and is saved with sector world items. |
 | Context actions | Verified | Object, terrain, character, loot and weapon entries call real JA2 or OS0 actions rather than display-only labels. |
+| Categorized character hub | Verified | Plain `F` over the owned merc and the first `CHARACTER` dock button enter the same registry-driven hub. Its root exposes `ACTIONS`, `ABILITIES / TALENTS`, `EQUIPMENT`, `GROUP` and `GOD`; abilities/talents are listed only when backed by an executable engine or OS0 action. Page selection remains inside the hub, `BACK` returns to its root and only leaf actions dispatch gameplay commands. |
 | Character radial actions | Verified | Right-clicking a merc anchors a circular JA2-icon action ring to that actor. Every icon owns a stable mouse region and keeps the detailed action name as hover text. |
 | In-world equipment view | Verified as an initial RPG inventory layer | Equipment expands around the merc and PACK unfolds only the real pocket slots. Dragging an item onto a character exposes registry-driven hand, pack and drop intents with safe swap/fallback behavior. |
 | Stack quantity transfer | Verified for player inventory/equipment | Dragging a stack opens an OS0 quantity dialog with single-step, all, take and cancel controls before attaching the chosen count to JA2's native item cursor. |
-| Hover cursor / middle-click cycle | Verified after audit fix | Hover is connected to the viewport movement callback; middle click cycles the valid action set for the current target. |
+| Perception trigger / hover / middle-click cycle | Verified after audit fix | Plain `F` over a world object or terrain freshly resolves the exact hovered relation, enables nearby perception and exposes its non-executing object actions. It never chooses or executes an action automatically. `F` over the owned merc instead opens the shared character hub; `Alt+F` remains vanilla tracking. Hover uses the viewport movement callback and middle click cycles the same target's valid action set. |
+| Hub modal focus | Verified | Opening a modal hub surface temporarily suspends other OS0 windows without destroying their visibility or saved layout. Closing the modal restores the previously visible windows; category navigation itself does not close the hub. |
 | Long-hold graphical merc menu | Verified | JA2's original 3x3 movement frame remains active and a second frame invokes character, inventory, stealth, weapon, reload and icon-library actions. |
 | AI run-to-cover command | Verified | Uses JA2's cover evaluator, a peaceful-sector geometry fallback, engine pathing and a prone/crouch arrival stance. |
 | God icon atlas | Verified | Loads 24 symbols from JA2 STI resources and feeds the selected symbol back into the extended command menu. |
@@ -33,7 +35,8 @@ the source. It was last verified for `v0.0.1.12`.
 | Weapon impact chips and asset durability | Verified after audit fix | OS0 owns damage for salvageable/resource assets before vanilla can invalidate the structure pointer; critical geometry remains JA2-owned. Destroyed map objects and material drops persist. |
 | Salvage and surface digging | Verified | Nearby tool-gated actions remove map objects/surface layers through map-temp recording and create physical timber, stone, scrap or soil stacks. Digging is surface editing, not deep voxel terrain. |
 | Sector stockpiles/upgrades | Verified | Four resource counters and three upgrade flags use reserved bits in saved `SECTORINFO`. Workshop and depot alter yields; the built shelter can be clicked to recover the current team. |
-| Tactical zoom | Verified | World rendering and display/world input coordinates share the same zoom transform; edge-aware crop bias exposes the actual map boundary when JA2's camera reaches it. The command dock is not part of the zoomed or scrollable viewport. |
+| Tactical zoom | Verified | World rendering and display/world input coordinates share the same zoom transform; a viewport-signature cache barrier handles combat-message geometry changes, and the crop approaches actual map boundaries continuously. The command dock is not part of the zoomed or scrollable viewport. |
+| NORMAL / COMBAT control mode | Verified | One stateful dock switch owns the canonical mode. Guarded native-event projection, whole-gesture LMB ownership, direct single-shot fire and AP-safe realtime/turn-based WASD prevent duplicate clicks and mode deadlocks. |
 | Realtime field editor | Verified as a sandbox authoring layer | `TERRAIN` opens a movable catalog UI for the active tileset, editor-safe items, generic actors and NPC/RPC profiles. Category filters, variants, layers, quantity and facing feed typed frame-boundary commands; terrain paint/smooth and all 32 road macros reuse guarded native JA2 editor algorithms. |
 | Empty/load/save world workflow | Verified with map-level recovery | `EMPTY MAP` uses two-click confirmation; save/load uses `%APPDATA%\JA2\OS0\maps\live-editor.dat`. World replacement preserves the player squad and creates a temporary map snapshot before teardown, restoring map, squad, selection, camera and ambience on failure. This is not full tactical-state undo. |
 | Live tactical strategy window | Verified as an initial replacement | `STRATEGIC MAP` now opens a movable live window with base upgrades, the 16x16 control map and a clickable team roster. Travel plotting, assignments, militia and finance still remain future ports from the legacy Map Screen. |

@@ -58,6 +58,23 @@ TEST(OS0InteractionModeTest, NearbyScanIsExplicitAndFightAlwaysDisablesIt)
 	EXPECT_FALSE(mode.nearbyScanEnabled());
 }
 
+TEST(OS0InteractionModeTest, PerceptionSelectsEnvironmentWithoutInventingATarget)
+{
+	OS0InteractionMode mode;
+
+	ASSERT_TRUE(mode.beginPerception());
+	EXPECT_TRUE(mode.isNormal());
+	EXPECT_TRUE(mode.nearbyScanEnabled());
+	EXPECT_TRUE(mode.isSurfaceSelected(OS0InteractionSurface::ENVIRONMENT));
+	EXPECT_FALSE(mode.isSurfaceActive(OS0InteractionSurface::ENVIRONMENT));
+
+	ASSERT_TRUE(mode.beginFight(OS0InteractionSurface::ACTIONS));
+	EXPECT_FALSE(mode.beginPerception());
+	EXPECT_TRUE(mode.isFight());
+	EXPECT_FALSE(mode.nearbyScanEnabled());
+	EXPECT_TRUE(mode.isSurfaceSelected(OS0InteractionSurface::ACTIONS));
+}
+
 TEST(OS0InteractionModeTest, InvalidValuesAreRejectedWithoutMutation)
 {
 	OS0InteractionMode mode;
@@ -70,6 +87,7 @@ TEST(OS0InteractionModeTest, InvalidValuesAreRejectedWithoutMutation)
 	EXPECT_FALSE(mode.selectSurface(invalidSurface));
 	EXPECT_FALSE(mode.beginInteraction(invalidSurface));
 	EXPECT_FALSE(mode.beginFight(invalidSurface));
+	EXPECT_FALSE(mode.returnToNormal(invalidSurface));
 
 	EXPECT_TRUE(mode.isInteracting());
 	EXPECT_TRUE(mode.isSurfaceSelected(OS0InteractionSurface::BEHAVIOR));
@@ -153,18 +171,15 @@ TEST(OS0InteractionModeTest, FightRestoresLastPersistentOwnerWhenWindowsCoexist)
 	EXPECT_TRUE(mode.isSurfaceActive(OS0InteractionSurface::EQUIPMENT));
 }
 
-TEST(OS0InteractionModeTest, ExplicitCancelRestoresSurfaceSelectedBeforeFight)
+TEST(OS0InteractionModeTest, ExplicitCancelCanSelectNormalActionsAtomically)
 {
 	OS0InteractionMode mode;
 	ASSERT_TRUE(mode.beginInteraction(OS0InteractionSurface::EQUIPMENT));
 	ASSERT_TRUE(mode.beginFight(OS0InteractionSurface::ACTIONS));
 
-	// This mirrors the production cancel path: the generic action is selected
-	// before returning to NORMAL. Leaving FIGHT must still restore its owner.
-	ASSERT_TRUE(mode.selectSurface(OS0InteractionSurface::ACTIONS));
-	mode.returnToNormal();
+	ASSERT_TRUE(mode.returnToNormal(OS0InteractionSurface::ACTIONS));
 	EXPECT_TRUE(mode.isNormal());
-	EXPECT_TRUE(mode.isSurfaceSelected(OS0InteractionSurface::EQUIPMENT));
+	EXPECT_TRUE(mode.isSurfaceSelected(OS0InteractionSurface::ACTIONS));
 }
 
 TEST(OS0InteractionModeTest, ExplicitInteractionOwnsSurfaceWhenLeavingFight)

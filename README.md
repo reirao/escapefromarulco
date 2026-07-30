@@ -6,13 +6,14 @@ An experimental, non-commercial rework of *Jagged Alliance 2* built on
 > **Early alpha:** this build is intentionally unfinished. Expect rough controls,
 > incomplete systems and crashes. The purpose of this release is hands-on testing.
 
-Current stable playtest: **0.0.1.12**. This is the tested runtime checkpoint after
-the consolidated `v0.0.1.11` baseline.
+Current stable playtest: **0.0.1.13**. This checkpoint adds the shared contextual
+character hub, audited `F` perception route and explicit NORMAL/COMBAT control mode
+on top of the `v0.0.1.12` runtime.
 
 ## Download and play
 
-1. Open the [v0.0.1.12 release](https://github.com/reirao/escapefromarulco/releases/tag/v0.0.1.12).
-2. Download `Escape-from-Arulco-Playtest-v0.0.1.12.zip`.
+1. Open the [v0.0.1.13 release](https://github.com/reirao/escapefromarulco/releases/tag/v0.0.1.13).
+2. Download `Escape-from-Arulco-Playtest-v0.0.1.13.zip`.
 3. Extract the complete ZIP into a writable folder.
 4. Run `START_PLAYTEST.cmd`.
 5. In the launcher, select your own legally installed JA2 or JA2 Gold directory.
@@ -29,12 +30,17 @@ the original JA2 game data. Windows x64 and an existing JA2 installation are req
   attributes and two selectable traits; the obsolete laptop creator is retired
 - One UI runtime and one viewport layout boundary shared by creator, windows and input
 - A fixed 38-pixel command dock outside the scrolling/zoomed tactical world
-- Character inventory is optional and opens only from the `CHARACTER` command
+- Character inventory is optional and opens from the shared character hub or its
+  `CHARACTER` command-dock entry
 - Object-first character equipment, pocket and container views anchored in the world
 - One compact field-computer icon with movable Base/Map/Team/Report, Inspector and
   Toolbox windows whose positions persist by stable names
 - Character and container inventories with item drag and drop
 - Context-sensitive object, weapon, loot and stance actions
+- One shared categorized character hub, opened either with `F` over the owned merc
+  or with the first `CHARACTER` dock button. Its root pages are `ACTIONS`,
+  `ABILITIES / TALENTS`, `EQUIPMENT`, `GROUP` and `GOD`; ability entries are shown
+  only when they invoke a real engine-backed action
 - Hover-selected context cursors with middle-click cycling through valid actions
 - Player-issued AI command for running to cover and choosing prone/crouched stance
 - Extended graphical JA2 long-hold menu for character, inventory and combat actions
@@ -57,6 +63,8 @@ the original JA2 game data. Windows x64 and an existing JA2 installation are req
 - Empty-map and `live-editor.dat` load/save workflow that keeps the player squad and
   rolls a failed world replacement back to a temporary map snapshot
 - Zoomed tactical view
+- Explicit NORMAL/COMBAT dock switch with mouse aim, direct single-shot LMB fire,
+  realtime WASD movement and AP-safe one-tile WASD control during player turns
 - Built-in playtest feedback reports
 
 This is a systems prototype, not yet a balanced campaign.
@@ -65,6 +73,13 @@ The exact implementation status and current boundaries are recorded in
 
 ## Controls and feedback
 
+- **F over your merc:** open the same categorized character hub as the first
+  `CHARACTER` command-dock button
+- **F over a world object or terrain:** perceive the exact hovered relation, enable
+  the nearby environment scan and expose its safe object actions without executing
+  an action automatically
+- **Alt+F:** retain JA2's tracking shortcut
+- **Escape:** close the active radial and restore the previously visible windows
 - **Right click:** context menu for the object or terrain under the cursor
 - **Hold right click:** graphical character/movement menu; its star opens the Asset
   Library/JA2 icon hub and the other symbols control character, gear and combat
@@ -72,6 +87,9 @@ The exact implementation status and current boundaries are recorded in
 - **Double click:** open a character, container or world object
 - **Bottom command dock:** open Character, Inspector, world tools, assets, strategy
   and sandbox modules; it remains fixed while the tactical camera moves
+- **TARGET/WALK symbol in the first dock cell:** switch between `COMBAT` and `NORMAL`.
+  In combat mode the merc follows the mouse, WASD moves, Shift sprints in realtime,
+  Q/E turns and LMB fires. Burst/throw/trajectory attacks confirm on the next click.
 - **Computer icon:** toggle the Toolbox; the Strategy symbol opens Base, Arulco
   map/radar, Team and Report
 - **GOD / CATALOG ASSET:** right-click a world asset and classify it for the shared

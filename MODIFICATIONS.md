@@ -61,6 +61,31 @@ The code is experimental and does not represent an official JA2 Stracciatella re
 - Expanded regression coverage for interaction modes, mouse-region ordering,
   creator/runtime transitions, item relations, viewport mapping and editor requests.
 
+## v0.0.1.13 character interaction hub
+
+- Made plain `F` resolve the object or character under the current screen pixel
+  instead of trusting stale cursor caches after camera movement.
+- Added one shared character hub with `ACTIONS`, `ABILITIES / TALENTS`, `EQUIPMENT`,
+  `GROUP` and `GOD` pages, also opened by the first command-dock button.
+- Routed squad selection, team management, turn control, editor/library access,
+  debug field tools and operator recovery through executable registered actions.
+- Made context hubs temporarily suspend persistent windows without changing their
+  visibility, contents, saved positions or restored mouse regions.
+- Fixed selected-merc detection while aiming, overlapping character/asset targets,
+  pinned item details, scan/cursor ownership and full-inventory God-tool fallback.
+- Added registry and interaction-mode regression coverage plus focused manual tests
+  for the new perception and character-hub flow.
+- Added an explicit `NORMAL` / `COMBAT` dock switch and made that OS0 state the
+  single owner of native movement/action-mode projection.
+- Bound one complete left-button gesture to exactly one input owner. Ordinary
+  firearms now fire once on release in combat mode, while native burst and
+  trajectory confirmation remains intact.
+- Added mouse-facing realtime WASD/Shift/Q/E control plus AP-safe one-tile WASD/Q/E
+  commands for the player's turn, including one buffered direction tap.
+- Rebuilt zoom cache invalidation around the complete tactical viewport signature,
+  so combat-message geometry changes and smooth map-edge scrolling stay aligned
+  with cursor-to-world conversion.
+
 ## v0.1.1-alpha hotfix
 
 - Removed an unsupported String Theory alignment specifier that crashed on the first

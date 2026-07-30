@@ -4,10 +4,12 @@
 
 #include "Animation_Control.h"
 #include "Game_Clock.h"
+#include "Handle_UI.h"
 #include "Input.h"
 #include "Isometric_Utils.h"
 #include "Overhead.h"
 #include "PathAI.h"
+#include "Points.h"
 #include "RenderWorld.h"
 #include "Soldier_Control.h"
 #include "Soldier_Macros.h"
@@ -27,6 +29,7 @@ namespace
 		UINT32 nextMouseFacingAt = 0;
 		UINT32 nextTurnAt = 0;
 		UINT32 nextStepAt = 0;
+		UINT32 pendingTurnBasedKey = 0;
 		UINT8 lookDirection = NUM_WORLD_DIRECTIONS;
 		UINT8 lastTravelDirection = NUM_WORLD_DIRECTIONS;
 		GridNo bufferedFrom = NOWHERE;
@@ -36,6 +39,7 @@ namespace
 		BOOLEAN moveInputActive = FALSE;
 		BOOLEAN clearMovementFlagsWhenStationary = FALSE;
 		BOOLEAN releaseWhenResumed = FALSE;
+		BOOLEAN turnBasedCommandActive = FALSE;
 	};
 
 	struct TravelIntent
@@ -82,7 +86,8 @@ namespace
 	BOOLEAN EngineOwnsMovement(SOLDIERTYPE const* soldier)
 	{
 		return
-			(gAnimControl[soldier->usAnimState].uiFlags & ANIM_SPECIALMOVE) ||
+			(gAnimControl[soldier->usAnimState].uiFlags &
+				(ANIM_SPECIALMOVE | ANIM_FIRE)) ||
 			(soldier->uiStatusFlags & SOLDIER_PCUNDERAICONTROL) ||
 			soldier->fInNonintAnim || soldier->fRTInNonintAnim ||
 			soldier->fNoAPToFinishMove || soldier->bCollapsed ||
@@ -97,6 +102,30 @@ namespace
 	{
 		return (soldier->uiStatusFlags & SOLDIER_PAUSEANIMOVE) ||
 			soldier->fDelayedMovement || soldier->fPausedMove;
+	}
+
+	BOOLEAN TurnBasedControlHasForeignOwner(SOLDIERTYPE const* soldier,
+		DirectControlTiming const& timing)
+	{
+		const BOOLEAN ownsTurnLock = timing.turnBasedCommandActive &&
+			gCurrentUIMode == LOCKOURTURN_UI_MODE;
+		const BOOLEAN ownsMovementTransition = timing.turnBasedCommandActive &&
+			(IsMoving(soldier) || DirectControlTemporarilyPaused(soldier) ||
+			 soldier->fTurningUntilDone ||
+			 soldier->usPendingAnimation != NO_PENDING_ANIMATION ||
+			 soldier->ubPendingStanceChange != NO_PENDING_STANCE);
+		const BOOLEAN ownsReleaseProjection = timing.turnBasedCommandActive &&
+			!ownsMovementTransition &&
+			guiPendingOverrideEvent == M_ON_TERRAIN;
+		return gTacticalStatus.ubAttackBusyCount > 0 ||
+			gfDisableRegionActive ||
+			(gfUserTurnRegionActive && !ownsTurnLock) ||
+			(guiPendingOverrideEvent != I_DO_NOTHING &&
+			 !ownsReleaseProjection) ||
+			gCurrentUIMode == LOCKUI_MODE ||
+			(gCurrentUIMode == LOCKOURTURN_UI_MODE && !ownsTurnLock) ||
+			gCurrentUIMode == ENEMYS_TURN_MODE ||
+			(EngineOwnsMovement(soldier) && !ownsMovementTransition);
 	}
 
 	BOOLEAN DirectControlTransitionPending(SOLDIERTYPE const* soldier,
@@ -245,6 +274,158 @@ BOOLEAN OS0IsDirectControlKey(UINT32 key)
 		key == SDLK_LSHIFT || key == SDLK_RSHIFT;
 }
 
+BOOLEAN OS0HandleTurnBasedDirectControlKey(SOLDIERTYPE* soldier, UINT32 key,
+	UINT16 eventType, BOOLEAN enabled)
+{
+	if (!(gTacticalStatus.uiFlags & INCOMBAT)) return FALSE;
+	if (eventType != KEY_DOWN && eventType != KEY_REPEAT) return FALSE;
+	if (!soldier) return FALSE;
+	DirectControlTiming& timing = TimingFor(soldier);
+	const BOOLEAN actionable = key == SDLK_w || key == SDLK_a ||
+		key == SDLK_s || key == SDLK_d || key == SDLK_q || key == SDLK_e ||
+		key == 'W' || key == 'A' || key == 'S' || key == 'D' ||
+		key == 'Q' || key == 'E';
+	if (!actionable) return FALSE;
+	if (!enabled || !soldier->bActive ||
+		soldier->bTeam != OUR_TEAM || soldier->bLife < OKLIFE ||
+		!OK_CONTROLLABLE_MERC(soldier) ||
+		gTacticalStatus.ubCurrentTeam != OUR_TEAM)
+		return FALSE;
+	if (TurnBasedControlHasForeignOwner(soldier, timing))
+	{
+		// Buffered movement belongs only to the currently completing movement or
+		// turn. A shot, interrupt, modal lock or queued native event cancels it so
+		// an old tap cannot execute unexpectedly after that owner finishes.
+		timing.pendingTurnBasedKey = 0;
+		return FALSE;
+	}
+	if (timing.turnBasedCommandActive &&
+		(gCurrentUIMode == LOCKOURTURN_UI_MODE ||
+		 gfUserTurnRegionActive ||
+		 guiPendingOverrideEvent == M_ON_TERRAIN))
+	{
+		// SetUIBusy owns this lock until the one-tile command settles. Keep only
+		// the newest deliberate tap; never dispatch a second path underneath it.
+		if (eventType == KEY_DOWN) timing.pendingTurnBasedKey = key;
+		return FALSE;
+	}
+
+	if (IsMoving(soldier) || DirectControlTemporarilyPaused(soldier) ||
+		soldier->fTurningUntilDone ||
+		soldier->usPendingAnimation != NO_PENDING_ANIMATION ||
+		soldier->ubPendingStanceChange != NO_PENDING_STANCE)
+	{
+		// One-tile TB movement can outlast a quick tap. Preserve the most recent
+		// fresh direction and replay it once the native animation reaches its tile;
+		// repeats remain disposable so a released held key cannot run indefinitely.
+		if (eventType == KEY_DOWN) timing.pendingTurnBasedKey = key;
+		return FALSE;
+	}
+	timing.pendingTurnBasedKey = 0;
+	EnsureLookDirection(soldier, timing);
+	const UINT32 now = GetJA2Clock();
+	// A fresh tap always supersedes the repeat throttle. Swallowing KEY_DOWN here
+	// made quick direction changes appear to hang even though the key was owned.
+	if (eventType == KEY_REPEAT && now < timing.nextStepAt) return FALSE;
+
+	const BOOLEAN turnLeft = key == SDLK_q || key == 'Q';
+	const BOOLEAN turnRight = key == SDLK_e || key == 'E';
+	if (turnLeft || turnRight)
+	{
+		// Each key event is exactly one physical facing step. A look intent can
+		// survive the RT->TB transition and may point somewhere entirely different;
+		// using it here made the first Q/E press rotate several directions at once.
+		const UINT8 facing = ActualFacing(soldier);
+		const UINT8 direction = turnLeft ? OneCCDirection(facing) :
+			OneCDirection(facing);
+		// The virtual mouse-facing intent can be one step away from the physical
+		// animation. A Q/E step that lands on the current direction is a consumed
+		// no-op; setting UI busy here would wait forever for a turn that never starts.
+		if (direction == facing)
+		{
+			timing.lookDirection = direction;
+			timing.lookDirectionValid = TRUE;
+			timing.nextStepAt = now + 70;
+			return TRUE;
+		}
+		const INT16 apCost = GetAPsToLook(soldier);
+		if (!EnoughPoints(soldier, apCost, 0, TRUE)) return TRUE;
+		timing.lookDirection = direction;
+		timing.lookDirectionValid = TRUE;
+		SendSoldierSetDesiredDirectionEvent(soldier, direction);
+		soldier->bTurningFromUI = TRUE;
+		timing.turnBasedCommandActive = TRUE;
+		SetUIBusy(soldier);
+		timing.nextStepAt = now + 135;
+		return TRUE;
+	}
+	// Movement is relative to the current zoom-aware mouse-facing intent. Q/E is
+	// deliberately handled above so a held manual turn cannot be reset by the
+	// pointer on every key repeat.
+	FollowMouse(soldier, timing, FALSE, FALSE);
+
+	// Resolve the complete held-key chord, not merely whichever repeat arrived
+	// this frame. W+D therefore produces a stable diagonal instead of alternating
+	// forward/right steps.
+	const BOOLEAN forward = _KeyDown(SDLK_w) || key == SDLK_w || key == 'W';
+	const BOOLEAN backward = _KeyDown(SDLK_s) || key == SDLK_s || key == 'S';
+	const BOOLEAN left = _KeyDown(SDLK_a) || key == SDLK_a || key == 'A';
+	const BOOLEAN right = _KeyDown(SDLK_d) || key == SDLK_d || key == 'D';
+	if (!forward && !backward && !left && !right) return FALSE;
+	const TravelIntent intent = ResolveTravelDirection(timing.lookDirection,
+		forward, backward, left, right);
+	if (!intent.active) return FALSE;
+	const GridNo destination = NewGridNo(soldier->sGridNo,
+		DirectionInc(intent.direction));
+	if (destination == soldier->sGridNo ||
+		!NewOKDestination(soldier, destination, TRUE, soldier->bLevel))
+	{
+		timing.nextStepAt = now + 100;
+		return TRUE;
+	}
+
+	const UINT8 stance = gAnimControl[soldier->usAnimState].ubEndHeight;
+	const BOOLEAN sprint =
+		(_KeyDown(SDLK_LSHIFT) || _KeyDown(SDLK_RSHIFT)) &&
+		stance == ANIM_STAND && !intent.reverse && !MercInWater(soldier);
+	const UINT16 previousMode = soldier->usUIMovementMode;
+	const BOOLEAN previousFast = soldier->fUIMovementFast;
+	const INT8 previousReverse = soldier->bReverse;
+	const UINT16 movementMode = MovementModeForIntent(soldier, intent, stance,
+		FALSE, sprint);
+	soldier->usUIMovementMode = movementMode;
+	soldier->fUIMovementFast = sprint;
+	soldier->bReverse = intent.reverse;
+	const INT16 apCost = PlotPath(soldier, destination, NO_COPYROUTE, FALSE,
+		movementMode, soldier->bActionPoints);
+	if (apCost <= 0 || !EnoughPoints(soldier, apCost, 0, TRUE))
+	{
+		soldier->usUIMovementMode = previousMode;
+		soldier->fUIMovementFast = previousFast;
+		soldier->bReverse = previousReverse;
+		timing.nextStepAt = now + 100;
+		return TRUE;
+	}
+
+	const BOOLEAN accepted = EVENT_InternalGetNewSoldierPath(soldier,
+		destination, movementMode, TRUE, FALSE);
+	soldier->fUIMovementFast = previousFast;
+	if (!accepted)
+	{
+		soldier->usUIMovementMode = previousMode;
+		soldier->bReverse = previousReverse;
+		timing.nextStepAt = now + 100;
+		return TRUE;
+	}
+	timing.turnBasedCommandActive = TRUE;
+	SetUIBusy(soldier);
+	timing.lastTravelDirection = intent.direction;
+	timing.lastReverse = intent.reverse;
+	timing.lastSprint = sprint;
+	timing.nextStepAt = now + 70;
+	return TRUE;
+}
+
 void OS0UpdateDirectControl(SOLDIERTYPE* soldier, BOOLEAN enabled,
 	BOOLEAN attackMode)
 {
@@ -255,12 +436,57 @@ void OS0UpdateDirectControl(SOLDIERTYPE* soldier, BOOLEAN enabled,
 		timing.moveInputActive = FALSE;
 		timing.lookDirectionValid = FALSE;
 		timing.releaseWhenResumed = FALSE;
+		timing.pendingTurnBasedKey = 0;
+		timing.turnBasedCommandActive = FALSE;
 		return;
 	}
 	ClearReleasedMovementFlags(soldier, timing);
+	if (gTacticalStatus.uiFlags & INCOMBAT)
+	{
+		ReleaseMovementIntent(soldier, timing);
+		if (!enabled || soldier->bTeam != OUR_TEAM || soldier->bLife < OKLIFE ||
+			!OK_CONTROLLABLE_MERC(soldier) ||
+			gTacticalStatus.ubCurrentTeam != OUR_TEAM)
+		{
+			timing.pendingTurnBasedKey = 0;
+			timing.turnBasedCommandActive = FALSE;
+			return;
+		}
+		const BOOLEAN ownCommandSettled = timing.turnBasedCommandActive &&
+			!IsMoving(soldier) && !DirectControlTemporarilyPaused(soldier) &&
+			!soldier->fTurningUntilDone &&
+			soldier->usPendingAnimation == NO_PENDING_ANIMATION &&
+			soldier->ubPendingStanceChange == NO_PENDING_STANCE &&
+			gCurrentUIMode != LOCKOURTURN_UI_MODE &&
+			!gfUserTurnRegionActive &&
+			guiPendingOverrideEvent == I_DO_NOTHING;
+		if (ownCommandSettled) timing.turnBasedCommandActive = FALSE;
+		if (TurnBasedControlHasForeignOwner(soldier, timing))
+		{
+			timing.pendingTurnBasedKey = 0;
+			return;
+		}
+		if (timing.pendingTurnBasedKey != 0 && !IsMoving(soldier) &&
+			!DirectControlTemporarilyPaused(soldier) &&
+			!soldier->fTurningUntilDone &&
+			soldier->usPendingAnimation == NO_PENDING_ANIMATION &&
+			soldier->ubPendingStanceChange == NO_PENDING_STANCE &&
+			gCurrentUIMode != LOCKOURTURN_UI_MODE &&
+			!gfUserTurnRegionActive &&
+			guiPendingOverrideEvent == I_DO_NOTHING)
+		{
+			OS0HandleTurnBasedDirectControlKey(soldier,
+				timing.pendingTurnBasedKey, KEY_DOWN, TRUE);
+		}
+		return;
+	}
 	if (!enabled || soldier->bTeam != OUR_TEAM || soldier->bLife < OKLIFE ||
-		!OK_CONTROLLABLE_MERC(soldier) ||
-		(gTacticalStatus.uiFlags & INCOMBAT))
+		!OK_CONTROLLABLE_MERC(soldier) || gfDisableRegionActive ||
+		gfUserTurnRegionActive || gTacticalStatus.ubAttackBusyCount > 0 ||
+		guiPendingOverrideEvent != I_DO_NOTHING ||
+		gCurrentUIMode == LOCKUI_MODE ||
+		gCurrentUIMode == LOCKOURTURN_UI_MODE ||
+		gCurrentUIMode == ENEMYS_TURN_MODE)
 	{
 		ReleaseMovementIntent(soldier, timing);
 		return;

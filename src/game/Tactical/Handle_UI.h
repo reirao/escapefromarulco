@@ -163,6 +163,7 @@ typedef BOOLEAN (*UIKEYBOARD_HOOK)( InputAtom *pInputEvent );
 
 // GLOBAL STATUS VARS
 extern UI_MODE     gCurrentUIMode;
+void UpdateCurrentCursorTarget();
 extern UIEventKind guiCurrentEvent;
 extern UIEventKind guiPendingOverrideEvent;
 

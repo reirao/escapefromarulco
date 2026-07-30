@@ -52,14 +52,14 @@ BOOLEAN	gfRTClickLeftHoldIntercepted = FALSE;
 static BOOLEAN gfRTHaveClickedRightWhileLeftDown = FALSE;
 
 
-static void QueryRTLeftButton(UIEventKind* puiNewEvent);
+static void QueryRTLeftButton(UIEventKind* puiNewEvent, BOOLEAN reset = FALSE);
 static void QueryRTRightButton(UIEventKind* puiNewEvent);
 static void QueryRTMiddleButton(UIEventKind* puiNewEvent);
 
 
 void GetRTMouseButtonInput(UIEventKind* puiNewEvent)
 {
-	QueryRTLeftButton( puiNewEvent );
+	QueryRTLeftButton(puiNewEvent, OS0ConsumeViewportPrimaryGesture());
 	if (!OS0OwnsViewportContextButtons())
 	{
 		QueryRTRightButton( puiNewEvent );
@@ -132,12 +132,26 @@ static void QueryRTMiddleButton(UIEventKind* const puiNewEvent)
 	}
 }
 
-static void QueryRTLeftButton(UIEventKind* const puiNewEvent)
+static void QueryRTLeftButton(UIEventKind* const puiNewEvent,
+	BOOLEAN const reset)
 {
 	static UINT32 uiSingleClickTime;
 	static BOOLEAN fDoubleClickIntercepted = FALSE;
 	static BOOLEAN fValidDoubleClickPossible = FALSE;
 	static BOOLEAN fCanCheckForSpeechAdvance = FALSE;
+	if (reset)
+	{
+		uiSingleClickTime = 0;
+		fDoubleClickIntercepted = FALSE;
+		fValidDoubleClickPossible = FALSE;
+		fCanCheckForSpeechAdvance = FALSE;
+		fLeftButtonDown = FALSE;
+		fIgnoreLeftUp = FALSE;
+		gfRTClickLeftHoldIntercepted = FALSE;
+		gfRTHaveClickedRightWhileLeftDown = FALSE;
+		RESETCOUNTER(LMOUSECLICK_DELAY_COUNTER);
+		return;
+	}
 
 	SOLDIERTYPE* const sel = GetSelectedMan();
 

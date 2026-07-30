@@ -35,6 +35,15 @@ enum class ContextAction : UINT8
 	CATALOG,
 	TAKE_COVER,
 	AUTO_FIRST_AID,
+	PREVIOUS_SQUAD,
+	NEXT_SQUAD,
+	TEAM,
+	END_TURN,
+	GOD_ASSETS,
+	GOD_EDITOR,
+	GOD_ICONS,
+	GOD_TOOLS,
+	GOD_REVIVE,
 	COUNT
 };
 
@@ -58,8 +67,17 @@ enum class ActionCategory : UINT8
 	MEDICAL,
 	SOCIAL,
 	WORLD,
+	GROUP,
 	DEBUG,
 	COUNT
+};
+
+struct ActionCategoryDescriptor
+{
+	ActionCategory category;
+	const char* name;
+	const char* explanation;
+	OS0UIIcon icon;
 };
 
 struct ContextActionDescriptor
@@ -74,6 +92,8 @@ struct ContextActionDescriptor
 };
 
 ContextActionDescriptor const& GetContextActionDescriptor(ContextAction action);
+ActionCategoryDescriptor const& GetActionCategoryDescriptor(
+	ActionCategory category);
 const char* ContextActionName(ContextAction action);
 ActionCategory ContextActionCategory(ContextAction action);
 const char* ActionCategoryName(ActionCategory category);

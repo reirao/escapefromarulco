@@ -119,6 +119,31 @@ playtest in its own folder and point the launcher to the original game directory
 48. Finally press `EMPTY MAP` once and cancel by using another control; nothing should
     change. Confirm it with two clicks on a second attempt. If creation or loading is
     forced to fail, the previous map, squad, camera and ambient sound must recover.
+49. Leave the pointer still over a crate, ground item, scenery asset and bare terrain,
+    moving the camera between attempts. Press plain `F`: the freshly hovered relation
+    must enable nearby perception and expose its object actions without automatically
+    executing pickup, attack, dig, salvage, carry or any other action. `Alt+F` must
+    retain vanilla tracking mode.
+50. Hover the owned merc and press `F`, then repeat through the first `CHARACTER`
+    command-dock button. Both routes must open the same hub root with `ACTIONS`,
+    `ABILITIES / TALENTS`, `EQUIPMENT`, `GROUP` and `GOD`. Abilities/talents must be
+    real executable engine/OS0 actions rather than decorative or promised skills.
+51. Enter every character-hub category. Switching pages must not close the hub;
+    `BACK` must return to the root. Trigger one harmless leaf action and verify it
+    executes exactly once. While a modal hub surface has focus, other OS0 windows
+    may disappear only temporarily and must return with their prior visibility and
+    position when the modal closes. Repeat by pressing `Escape` at the root.
+52. At both 1x and 2x zoom, click the TARGET/WALK symbol in the first dock cell.
+    `COMBAT` must aim at the mouse, keep the exit symbol visible, move with WASD and
+    fire an ordinary loaded firearm exactly once per LMB gesture. Switch back to
+    `NORMAL` during movement and immediately after a shot; neither input nor camera
+    may freeze, duplicate the shot or leave the native attack cursor behind.
+53. Enter turn-based combat and tap W/A/S/D rapidly, including a new direction while
+    the previous one-tile animation is still running. Each accepted tap must execute
+    once with native AP cost; held diagonal keys must not zigzag. Test Q/E, Shift+W,
+    no-AP movement, enemy turn and an interrupt. Locked inputs must wait or be ignored
+    without activating legacy JA2 shortcuts. At 2x zoom, start/end combat and scroll
+    into every map edge; the crop must not jump and cursor/world targeting must align.
 
 ## Writing a useful report
 

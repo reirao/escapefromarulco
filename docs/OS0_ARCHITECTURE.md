@@ -32,6 +32,8 @@ It must not mirror soldier inventories, structures or sector ownership.
 | `AddContextEntry`, `RefreshPanelActions` | target, catalog, inventory | presentation entry arrays | world/inventory queries | context UI | full menu/action-panel projection is remaining debt |
 | `ContextActionCallback`, `OS0HandleCursorAction` | typed action and target | canonical simulation and UI projection | items, stance, weapon, world mutation | one typed execution callback plus cursor adapter | no numeric action meanings remain; callback extraction remains debt |
 | `OS0CycleCursorAction`, `ApplyCursorTool` | registry cursor descriptors | session cursor/attack state | JA2 UI mode events | session cursor state and action registry | completed typed mapping (`MOVE`, `USE`, `CARRY`, etc.) |
+| `ProjectControlModeToEngine` | canonical NORMAL/COMBAT state | pending safe projection | JA2 MOVE/ACTION events | OS0 session state | never overwrites firing, movement, interrupt or lock events; normalizes legacy cursor modes before combat |
+| `OS0ViewportGestureState` | button-down owner | primary gesture/release hand-off | RT/TB legacy mouse pollers | viewport input adapter | one physical LMB gesture has exactly one owner and one release |
 | inventory and item-transfer callbacks | real soldier inventory, item pointer | real inventory and world pools | `PlaceObject`, `AutoPlaceObject` | UI callback plus `OS0_ItemRelations` | UI callback invokes item-relation service |
 | panel positioning/dragging/regions | `OS0WindowManager`, persisted layout and window geometry | visibility, drag positions, focus and canonical Z order | mouse system plus `OS0_MouseRegionZOrder` | window manager plus native region adapter | child controls are projected into manager Z order without recreating callbacks or drag capture |
 | feedback/report functions | event ring and text input | report state and log file | keyboard hook / file I/O | UI file | `FeedbackSink` |
@@ -52,7 +54,8 @@ The tactical shell now has three explicit layers:
 Character creation is a single in-sector flow backed by `OS0_CreatorModel`.
 The former `OS0_CREATOR_SCREEN`/IMP wrapper was removed. Its inventory page is
 not part of creation: after completion, the real JA2 inventory is an optional
-CHARACTER dock command.
+`EQUIPMENT` action in the shared character hub, also reachable through the
+`CHARACTER` dock command.
 
 The 38-pixel command dock is outside `gsVIEWPORT_END_Y`. Camera scrolling,
 world zoom and south-edge hit testing therefore share the same world boundary

@@ -79,13 +79,58 @@ namespace
 		{ ContextAction::TAKE_COVER, "TAKE_COVER", ActionCategory::MOVEMENT,
 			"AI runs to nearby cover and lowers stance.", OS0UIIcon::CRAWL },
 		{ ContextAction::AUTO_FIRST_AID, "AUTO_FIRST_AID", ActionCategory::MEDICAL,
-			"Treat bleeding allies; Escape aborts treatment.", OS0UIIcon::FIRST_AID }
+			"Treat bleeding allies; Escape aborts treatment.", OS0UIIcon::FIRST_AID },
+		{ ContextAction::PREVIOUS_SQUAD, "PREVIOUS_SQUAD", ActionCategory::GROUP,
+			"Select the previous active squad in the current tactical sector.",
+			OS0UIIcon::WALK },
+		{ ContextAction::NEXT_SQUAD, "NEXT_SQUAD", ActionCategory::GROUP,
+			"Select the next active squad in the current tactical sector.",
+			OS0UIIcon::RUN },
+		{ ContextAction::TEAM, "TEAM", ActionCategory::GROUP,
+			"Open team selection and squad-management actions.", OS0UIIcon::TALK },
+		{ ContextAction::END_TURN, "END_TURN", ActionCategory::GROUP,
+			"Commit the squad's actions and hand control to the next turn.",
+			OS0UIIcon::CANCEL },
+		{ ContextAction::GOD_ASSETS, "GOD_ASSETS", ActionCategory::DEBUG,
+			"Open the complete world-asset catalogue and classification tools.",
+			OS0UIIcon::KEYRING },
+		{ ContextAction::GOD_EDITOR, "GOD_EDITOR", ActionCategory::DEBUG,
+			"Open live terrain, structure and entity editing tools.",
+			OS0UIIcon::TOOLKIT },
+		{ ContextAction::GOD_ICONS, "GOD_ICONS", ActionCategory::DEBUG,
+			"Open the validated library of reusable in-game interface symbols.",
+			OS0UIIcon::EXAMINE },
+		{ ContextAction::GOD_TOOLS, "GOD_TOOLS", ActionCategory::DEBUG,
+			"Issue the complete debug field-tool set to the selected operator.",
+			OS0UIIcon::TOOLKIT },
+		{ ContextAction::GOD_REVIVE, "GOD_REVIVE", ActionCategory::DEBUG,
+			"Revive and fully restore the selected operator for sandbox testing.",
+			OS0UIIcon::FIRST_AID }
 	}};
 
-	constexpr std::array<const char*, static_cast<size_t>(ActionCategory::COUNT)>
-		CATEGORY_NAMES{{
-			"INFO", "GEAR", "MOVE", "STANCE", "COMBAT",
-			"MEDICAL", "SOCIAL", "WORLD", "DEBUG"
+	constexpr std::array<ActionCategoryDescriptor,
+		static_cast<size_t>(ActionCategory::COUNT)> CATEGORIES{{
+		{ ActionCategory::INFO, "INFO",
+			"Identity, condition and descriptive information.", OS0UIIcon::EXAMINE },
+		{ ActionCategory::GEAR, "GEAR",
+			"Inventory, equipment and carried-item operations.", OS0UIIcon::HAND },
+		{ ActionCategory::MOVEMENT, "MOVE",
+			"Operator navigation and physical object movement.", OS0UIIcon::WALK },
+		{ ActionCategory::STANCE, "STANCE",
+			"Posture, stealth and exposure controls.", OS0UIIcon::SNEAK },
+		{ ActionCategory::COMBAT, "COMBAT",
+			"Weapon handling, aiming and offensive actions.", OS0UIIcon::TARGET },
+		{ ActionCategory::MEDICAL, "MEDICAL",
+			"Treatment and casualty-management actions.", OS0UIIcon::FIRST_AID },
+		{ ActionCategory::SOCIAL, "SOCIAL",
+			"Conversation and contact interaction.", OS0UIIcon::TALK },
+		{ ActionCategory::WORLD, "WORLD",
+			"Environment, construction and salvage operations.", OS0UIIcon::TOOLKIT },
+		{ ActionCategory::GROUP, "GROUP",
+			"Squad selection, team management and turn control.", OS0UIIcon::WALK },
+		{ ActionCategory::DEBUG, "GOD",
+			"God-mode asset, editor and interface development tools.",
+			OS0UIIcon::KEYRING }
 		}};
 }
 
@@ -93,6 +138,13 @@ ContextActionDescriptor const& GetContextActionDescriptor(ContextAction action)
 {
 	const size_t index = static_cast<size_t>(action);
 	return ACTIONS[index < ACTIONS.size() ? index : 0];
+}
+
+ActionCategoryDescriptor const& GetActionCategoryDescriptor(
+	ActionCategory category)
+{
+	const size_t index = static_cast<size_t>(category);
+	return CATEGORIES[index < CATEGORIES.size() ? index : 0];
 }
 
 const char* ContextActionName(ContextAction action)
@@ -107,8 +159,7 @@ ActionCategory ContextActionCategory(ContextAction action)
 
 const char* ActionCategoryName(ActionCategory category)
 {
-	const size_t index = static_cast<size_t>(category);
-	return index < CATEGORY_NAMES.size() ? CATEGORY_NAMES[index] : "ACTION";
+	return GetActionCategoryDescriptor(category).name;
 }
 
 const char* ContextActionExplanation(ContextAction action)

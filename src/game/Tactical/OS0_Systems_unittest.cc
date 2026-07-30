@@ -75,10 +75,52 @@ TEST(OS0ActionRegistryTest, OneDeterministicResolverDrivesCursorSurfaces)
 		++value)
 	{
 		ContextAction const action = static_cast<ContextAction>(value);
-		EXPECT_EQ(GetContextActionDescriptor(action).action, action);
-		EXPECT_NE(ContextActionName(action), nullptr);
-		EXPECT_NE(ContextActionExplanation(action), nullptr);
+		ContextActionDescriptor const& descriptor =
+			GetContextActionDescriptor(action);
+		EXPECT_EQ(descriptor.action, action);
+		ASSERT_NE(descriptor.name, nullptr);
+		ASSERT_NE(descriptor.explanation, nullptr);
+		EXPECT_NE(descriptor.name[0], '\0');
+		EXPECT_NE(descriptor.explanation[0], '\0');
+		EXPECT_NE(descriptor.icon, OS0UIIcon::COUNT);
+		EXPECT_LT(descriptor.category, ActionCategory::COUNT);
+		EXPECT_EQ(ContextActionName(action), descriptor.name);
+		EXPECT_EQ(ContextActionExplanation(action), descriptor.explanation);
 	}
+
+	for (UINT8 value = 0; value < static_cast<UINT8>(ActionCategory::COUNT);
+		++value)
+	{
+		ActionCategory const category = static_cast<ActionCategory>(value);
+		ActionCategoryDescriptor const& descriptor =
+			GetActionCategoryDescriptor(category);
+		EXPECT_EQ(descriptor.category, category);
+		ASSERT_NE(descriptor.name, nullptr);
+		ASSERT_NE(descriptor.explanation, nullptr);
+		EXPECT_NE(descriptor.name[0], '\0');
+		EXPECT_NE(descriptor.explanation[0], '\0');
+		EXPECT_NE(descriptor.icon, OS0UIIcon::COUNT);
+		EXPECT_EQ(ActionCategoryName(category), descriptor.name);
+	}
+
+	EXPECT_STREQ(ActionCategoryName(ActionCategory::DEBUG), "GOD");
+	EXPECT_EQ(ContextActionCategory(ContextAction::PREVIOUS_SQUAD),
+		ActionCategory::GROUP);
+	EXPECT_EQ(ContextActionCategory(ContextAction::NEXT_SQUAD),
+		ActionCategory::GROUP);
+	EXPECT_EQ(ContextActionCategory(ContextAction::TEAM), ActionCategory::GROUP);
+	EXPECT_EQ(ContextActionCategory(ContextAction::END_TURN),
+		ActionCategory::GROUP);
+	EXPECT_EQ(ContextActionCategory(ContextAction::GOD_ASSETS),
+		ActionCategory::DEBUG);
+	EXPECT_EQ(ContextActionCategory(ContextAction::GOD_EDITOR),
+		ActionCategory::DEBUG);
+	EXPECT_EQ(ContextActionCategory(ContextAction::GOD_ICONS),
+		ActionCategory::DEBUG);
+	EXPECT_EQ(ContextActionCategory(ContextAction::GOD_TOOLS),
+		ActionCategory::DEBUG);
+	EXPECT_EQ(ContextActionCategory(ContextAction::GOD_REVIVE),
+		ActionCategory::DEBUG);
 }
 
 TEST(OS0ActionRegistryTest, EnvironmentCapabilitiesDriveEveryObjectSurface)
@@ -129,6 +171,15 @@ TEST(OS0ViewportGestureStateTest, ConsumesOnlyMatchedAndHandledReleases)
 	gestures.markHeldItemReleaseHandled();
 	gestures.beginPrimary();
 	EXPECT_FALSE(gestures.consumeHeldItemRelease());
+
+	gestures.beginPrimary(TRUE);
+	EXPECT_TRUE(gestures.ownsPrimary());
+	EXPECT_TRUE(gestures.consumePrimaryGesture());
+	EXPECT_TRUE(gestures.releasePrimary());
+	EXPECT_FALSE(gestures.ownsPrimary());
+	EXPECT_TRUE(gestures.consumePrimaryGesture());
+	EXPECT_FALSE(gestures.consumePrimaryGesture());
+	EXPECT_FALSE(gestures.releasePrimary());
 }
 
 TEST(OS0CreatorModelTest, OwnsValidatedIdentityStatsAndTraitSelection)
@@ -192,6 +243,10 @@ TEST(OS0UIRuntimeTest, PanelsAreIndependentAndDockMappingIsStable)
 	EXPECT_TRUE(ui.visible(OS0UIPanel::INVENTORY));
 	EXPECT_FALSE(ui.visible(OS0UIPanel::CONTEXT));
 	EXPECT_EQ(OS0CommandForDockSlot(0), OS0UICommand::CHARACTER);
+	EXPECT_EQ(GetOS0UICommandDescriptor(OS0UICommand::TACTICAL).intent,
+		OS0UICommandIntent::TOGGLE_COMBAT_MODE);
+	EXPECT_EQ(GetOS0UICommandDescriptor(OS0UICommand::CHARACTER).intent,
+		OS0UICommandIntent::OPEN_CHARACTER_HUB);
 	EXPECT_EQ(OS0CommandForDockSlot(7), OS0UICommand::SANDBOX);
 	EXPECT_EQ(OS0CommandForDockSlot(8), OS0UICommand::COUNT);
 }
@@ -522,10 +577,14 @@ TEST(OS0TacticalSessionTest, PersistsSimulationAndClearsOnlyTransientState)
 	source.state().coverOrders.issue({ 1, 1001, 0,
 		OS0CoverStance::CROUCH });
 	ASSERT_TRUE(source.state().carry.begin(1000, 0, 50, 1));
+	source.state().cursor.action = ContextAction::ATTACK;
+	source.state().cursor.attackMode = TRUE;
 
 	source.endTacticalSector();
 	EXPECT_TRUE(source.state().coverOrders.orders().empty());
 	EXPECT_FALSE(source.state().carry.active());
+	EXPECT_EQ(source.state().cursor.action, ContextAction::MOVE);
+	EXPECT_FALSE(source.state().cursor.attackMode);
 	EXPECT_EQ(source.state().assetDamage.durability(key, 160), 135);
 
 	SavedGameStates states;

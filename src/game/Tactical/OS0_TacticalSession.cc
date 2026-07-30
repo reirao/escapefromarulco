@@ -24,6 +24,9 @@ void OS0TacticalSession::endTacticalSector()
 {
 	state_.coverOrders.clear();
 	state_.carry.reset();
+	// Cursor/control mode is tactical-frame state. Carrying COMBAT into the next
+	// sector leaves the fresh viewport in an aim mode it never requested.
+	state_.cursor = {};
 	state_.pendingVisualEvents.clear();
 	state_.pendingDiagnostics.clear();
 }

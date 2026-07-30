@@ -52,6 +52,7 @@ public:
 	bool beginFight(OS0InteractionSurface surface =
 		OS0InteractionSurface::ACTIONS) noexcept;
 	void returnToNormal() noexcept;
+	bool returnToNormal(OS0InteractionSurface selectedSurface) noexcept;
 
 	// Surface selection never changes the state implicitly. In NORMAL it sets
 	// the surface that a later interaction/fight transition will open.
@@ -63,6 +64,10 @@ public:
 	// nearbyScanEnabled() for the resulting on/off value.
 	bool setNearbyScanEnabled(bool enabled) noexcept;
 	bool toggleNearbyScan() noexcept;
+	// The perception trigger makes ENVIRONMENT the selected surface and enables
+	// nearby discovery without inventing a target or entering interaction by
+	// itself. The viewport may then open the freshly resolved hovered relation.
+	bool beginPerception() noexcept;
 	bool nearbyScanEnabled() const noexcept { return nearbyScanEnabled_; }
 	bool canScanNearby() const noexcept
 	{

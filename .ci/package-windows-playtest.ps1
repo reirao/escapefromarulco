@@ -68,7 +68,9 @@ $documents = @(
     @{ Source = "FEATURE_WIRING.md"; Destination = "FEATURE_WIRING.md" },
     @{ Source = "MODIFICATIONS.md"; Destination = "MODIFICATIONS.md" },
     @{ Source = "PLAYTESTING.md"; Destination = "PLAYTESTING.md" },
-    @{ Source = "docs\RELEASE_$version.md"; Destination = "RELEASE_$version.md" }
+    @{ Source = "docs\RELEASE_$version.md"; Destination = "RELEASE_$version.md" },
+    @{ Source = "SFI Source Code license agreement.txt"; Destination = "SFI Source Code license agreement.txt" },
+    @{ Source = "dependencies\lib-SDL2-2.0.20-mingw\README-SDL.txt"; Destination = "README-SDL.txt" }
 )
 foreach ($document in $documents) {
     $source = Join-Path $repository $document.Source

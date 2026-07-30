@@ -76,6 +76,15 @@ void OS0InteractionMode::returnToNormal() noexcept
 	transitionTo(OS0InteractionState::NORMAL);
 }
 
+bool OS0InteractionMode::returnToNormal(
+	OS0InteractionSurface const selectedSurface) noexcept
+{
+	if (!valid(selectedSurface)) return false;
+	transitionTo(OS0InteractionState::NORMAL);
+	surface_ = selectedSurface;
+	return true;
+}
+
 bool OS0InteractionMode::selectSurface(
 	OS0InteractionSurface const surface) noexcept
 {
@@ -94,6 +103,13 @@ bool OS0InteractionMode::setNearbyScanEnabled(bool const enabled) noexcept
 bool OS0InteractionMode::toggleNearbyScan() noexcept
 {
 	return setNearbyScanEnabled(!nearbyScanEnabled_);
+}
+
+bool OS0InteractionMode::beginPerception() noexcept
+{
+	if (!setNearbyScanEnabled(true)) return false;
+	surface_ = OS0InteractionSurface::ENVIRONMENT;
+	return true;
 }
 
 void OS0InteractionMode::synchronize(
