@@ -126,11 +126,10 @@ void UILayout::recalculatePositions()
 	m_VIEWPORT_START_Y            = 0;
 	m_VIEWPORT_WINDOW_START_Y     = 0;
 	m_VIEWPORT_END_X              = m_screenWidth;
-	// OS0 replaces JA2's large fixed tactical panel with a 38-pixel command
-	// strip. Keep that strip outside the rendered world so zoom, hit testing,
-	// camera scrolling and the visible play area all share the same viewport.
-	m_VIEWPORT_END_Y              = m_screenHeight - 38;
-	m_VIEWPORT_WINDOW_END_Y       = m_screenHeight - 38;
+	// OS//0 is a movable field-computer object. It overlays the live world and
+	// therefore must not reserve a fixed strip at the bottom of every screen.
+	m_VIEWPORT_END_Y              = m_screenHeight;
+	m_VIEWPORT_WINDOW_END_Y       = m_screenHeight;
 	m_tacticalMapCenterX          = (m_VIEWPORT_END_X - m_VIEWPORT_START_X) / 2;
 	m_tacticalMapCenterY          = (m_VIEWPORT_END_Y - m_VIEWPORT_START_Y) / 2;
 

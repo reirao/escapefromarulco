@@ -10,9 +10,12 @@ OS0CreatorModel::OS0CreatorModel()
 void OS0CreatorModel::reset()
 {
 	callsign_.clear();
-	points_ = 100;
-	stats_.fill(55);
+	// Balanced survival preset requested for the first playable build. It uses
+	// exactly the same 650-point budget as the old 55 + 100 unspent setup.
+	stats_ = {{ 85, 85, 85, 85, 85, 35, 85, 35, 35, 35 }};
+	points_ = 0;
 	traits_.fill(NO_SKILLTRAIT);
+	bodyType_ = REGMALE;
 }
 
 BOOLEAN OS0CreatorModel::appendCallsign(char32_t character)
@@ -47,6 +50,17 @@ BOOLEAN OS0CreatorModel::adjustStat(size_t index, INT8 direction) noexcept
 		value -= STAT_STEP;
 		points_ += STAT_STEP;
 	}
+	return TRUE;
+}
+
+BOOLEAN OS0CreatorModel::selectBodyType(
+	SoldierBodyType const bodyType) noexcept
+{
+	if (bodyType != REGMALE && bodyType != BIGMALE &&
+		bodyType != STOCKYMALE && bodyType != REGFEMALE)
+		return FALSE;
+	if (bodyType_ == bodyType) return FALSE;
+	bodyType_ = bodyType;
 	return TRUE;
 }
 

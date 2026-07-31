@@ -1,6 +1,7 @@
 #pragma once
 
 #include "JA2Types.h"
+#include "Animation_Data.h"
 #include "Soldier_Profile_Type.h"
 
 #include <array>
@@ -29,6 +30,8 @@ public:
 	INT16 points() const noexcept { return points_; }
 	std::array<INT8, STAT_COUNT> const& stats() const noexcept { return stats_; }
 	BOOLEAN adjustStat(size_t index, INT8 direction) noexcept;
+	SoldierBodyType bodyType() const noexcept { return bodyType_; }
+	BOOLEAN selectBodyType(SoldierBodyType bodyType) noexcept;
 
 	std::array<SkillTrait, TRAIT_COUNT> const& traits() const noexcept
 	{
@@ -41,4 +44,5 @@ private:
 	INT16 points_ = 100;
 	std::array<INT8, STAT_COUNT> stats_{};
 	std::array<SkillTrait, TRAIT_COUNT> traits_{};
+	SoldierBodyType bodyType_ = REGMALE;
 };

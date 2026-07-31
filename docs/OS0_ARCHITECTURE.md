@@ -1,5 +1,10 @@
 # Escape from Arulco / OS0 tactical architecture
 
+> **Current status:** this is the intended ownership model and an implementation
+> audit, not a claim of production stability. The current `v0.0.1.13` runtime is
+> **FRAGILE / TESTED**; remaining integration debt is listed below and the public
+> feature truth is maintained in `FEATURE_WIRING.md`.
+
 This document describes the current ownership boundaries of the newest local
 playtest build. It is deliberately a dependency map, not a proposed file list.
 
@@ -28,7 +33,8 @@ It must not mirror soldier inventories, structures or sector ownership.
 | `OS0ApplyWorldAssetDamage`, durability queries | sector/level asset key, structure, material/catalog | durable damage records, canonical structures, item pools, visual events | structure removal and movement costs | `OS0_AssetDamageSystem` | weapon/world code has no overlay dependency |
 | resource deposits and sector upgrades | versioned sector record | bounded resources and separate upgrade flags | strategic sector migration only | `OS0_SectorEconomySystem` and `OS0_WorldInteractionSystem` | normal JA2 save-state extension; legacy bits migrated once |
 | catalog load/save/resolve | tileset/world asset, TSV overrides | session catalog and local override file | VFS/file I/O | `OS0_AssetCatalogService` | later user rows override built-in identity keys |
-| `BuildContextCursorActions` | typed target facts | none | world queries | `OS0_ActionRegistry::ResolveOS0CursorActions` | hover and MMB share one ordered resolver |
+| relation/action resolution | bound actor/item/asset/terrain facts | none | world queries | `OS0_ActionRegistry::ResolveOS0InteractionActions` | hover, F, RMB, MMB and execution share one ordered target-bound resolver |
+| pending world action | stable actor ID, target binding, action and destination | owned native route, then canonical target mutation | pathing and selected action | UI integration adapter plus registry | revalidates actor/sector/level/target/relation; cancellation reducer is unit-tested but engine integration remains fragile |
 | `AddContextEntry`, `RefreshPanelActions` | target, catalog, inventory | presentation entry arrays | world/inventory queries | context UI | full menu/action-panel projection is remaining debt |
 | `ContextActionCallback`, `OS0HandleCursorAction` | typed action and target | canonical simulation and UI projection | items, stance, weapon, world mutation | one typed execution callback plus cursor adapter | no numeric action meanings remain; callback extraction remains debt |
 | `OS0CycleCursorAction`, `ApplyCursorTool` | registry cursor descriptors | session cursor/attack state | JA2 UI mode events | session cursor state and action registry | completed typed mapping (`MOVE`, `USE`, `CARRY`, etc.) |
@@ -55,12 +61,13 @@ Character creation is a single in-sector flow backed by `OS0_CreatorModel`.
 The former `OS0_CREATOR_SCREEN`/IMP wrapper was removed. Its inventory page is
 not part of creation: after completion, the real JA2 inventory is an optional
 `EQUIPMENT` action in the shared character hub, also reachable through the
-`CHARACTER` dock command.
+the movable multitool's `INFO` group.
 
-The 38-pixel command dock is outside `gsVIEWPORT_END_Y`. Camera scrolling,
-world zoom and south-edge hit testing therefore share the same world boundary
-and can never translate or steal input from the dock. Creator input is modal,
-fixed in screen space and pauses camera scrolling until entry is complete.
+The former 38-pixel bottom dock is suppressed. Camera scrolling, world zoom and
+south-edge hit testing use the full tactical viewport, while one persisted OS//0
+multitool is projected in screen space and can be dragged or minimized to one icon.
+Creator input is modal, fixed in screen space and pauses camera scrolling until entry
+is complete.
 
 ## Shared windows and realtime field editor (2026-07-29)
 

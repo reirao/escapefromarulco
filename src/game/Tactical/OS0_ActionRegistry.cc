@@ -23,7 +23,8 @@ namespace
 			"Read identity, condition and material data.", OS0UIIcon::LOOK,
 			30, OS0CursorMode::LOOK },
 		{ ContextAction::CONTENTS, "CONTENTS", ActionCategory::GEAR,
-			"Expose real body, pocket or container slots.", OS0UIIcon::OPEN },
+			"Expose real body, pocket or container slots.", OS0UIIcon::OPEN,
+			10 },
 		{ ContextAction::BUILD, "BUILD", ActionCategory::WORLD,
 			"Open blueprint, material and placement controls.", OS0UIIcon::TOOLKIT },
 		{ ContextAction::CARRY, "CARRY", ActionCategory::MOVEMENT,
@@ -67,7 +68,8 @@ namespace
 		{ ContextAction::MOVE_ITEM, "MOVE_ITEM", ActionCategory::GEAR,
 			"Take item on the cursor for direct placement.", OS0UIIcon::WALK },
 		{ ContextAction::PICK_UP, "PICK_UP", ActionCategory::GEAR,
-			"Move item from world or container into carried slots.", OS0UIIcon::HAND },
+			"Move item from world or container into carried slots.", OS0UIIcon::HAND,
+			11 },
 		{ ContextAction::DIG, "DIG", ActionCategory::WORLD,
 			"Use a shovel to remove the current ground layer.", OS0UIIcon::TOOLKIT,
 			24, OS0CursorMode::HAND },
@@ -230,31 +232,141 @@ std::vector<ContextAction> ResolveOS0CursorActions(OS0ActionFacts const& facts)
 std::vector<OS0ResolvedAction> ResolveOS0EnvironmentActions(
 	OS0EnvironmentActionFacts const& facts)
 {
+	// Compatibility adapter for older callers and tests. All semantics live in
+	// the relational resolver so no second list can silently drift from the
+	// hover/F/RMB/MMB execution path.
+	OS0InteractionContext context;
+	context.environment = facts;
+	// The legacy API predates actor availability; retain its historical
+	// capability-only contract while delegating ordering and enablement.
+	context.environment.actorAvailable = TRUE;
+	context.hasEnvironment = TRUE;
+	context.target.kind = facts.hasAsset ? OS0InteractionTargetKind::WORLD_ASSET :
+		(facts.hasItems ? OS0InteractionTargetKind::WORLD_ITEM :
+			OS0InteractionTargetKind::TERRAIN);
+	return ResolveOS0InteractionActions(context);
+}
+
+std::vector<OS0ResolvedAction> ResolveOS0InteractionActions(
+	OS0InteractionContext const& context)
+{
 	std::vector<OS0ResolvedAction> actions;
-	auto add = [&](ContextAction action, BOOLEAN enabled)
+	actions.reserve(12);
+	auto add = [&](ContextAction const action, BOOLEAN const enabled,
+		OS0ActionApproach const approach = OS0ActionApproach::IMMEDIATE,
+		OS0ActionBlockReason const reason = OS0ActionBlockReason::NONE)
 	{
-		if (std::none_of(actions.begin(), actions.end(), [action](auto const& entry)
-			{ return entry.action == action; }))
-			actions.push_back({ action, enabled });
+		if (std::any_of(actions.begin(), actions.end(),
+			[action](OS0ResolvedAction const& entry)
+			{ return entry.action == action; })) return;
+		OS0ResolvedAction resolved;
+		resolved.action = action;
+		resolved.enabled = enabled;
+		resolved.approach = approach;
+		resolved.blockReason =
+			enabled ? OS0ActionBlockReason::NONE : reason;
+		resolved.binding = context.target;
+		resolved.score = ContextActionPriority(action);
+		actions.push_back(resolved);
 	};
 
-	if (facts.openable) add(ContextAction::CONTENTS, facts.near);
-	if (facts.hasItems) add(ContextAction::PICK_UP, facts.near);
-	if (facts.diggableSurface) add(ContextAction::DIG, facts.canDig);
-	if (facts.salvageable) add(ContextAction::SALVAGE, facts.canSalvage);
-	if (facts.moveCandidate)
+	if (!context.hasEnvironment)
 	{
-		add(ContextAction::CARRY, facts.canMove);
-		add(ContextAction::PUSH, facts.canMove);
-		add(ContextAction::PULL, facts.canMove);
-		add(ContextAction::THROW, facts.canThrow);
+		for (ContextAction const action : ResolveOS0CursorActions(context.cursor))
+			add(action, TRUE);
 	}
-	if (facts.hasAsset) add(ContextAction::BUILD, facts.buildable);
-	if (facts.hasAsset || facts.hasItems || facts.terrain)
-		add(ContextAction::INSPECT, TRUE);
-	if (facts.hasAsset && facts.debugCatalog)
-		add(ContextAction::CATALOG, TRUE);
+	else
+	{
+		OS0EnvironmentActionFacts const& facts = context.environment;
+		auto ranged = [&](ContextAction const action, BOOLEAN const capable,
+			OS0ActionBlockReason const reason)
+		{
+			const BOOLEAN enabled = facts.actorAvailable && capable;
+			add(action, enabled,
+				enabled ? (facts.near ? OS0ActionApproach::IMMEDIATE :
+					OS0ActionApproach::MOVE_TO_RANGE) :
+					OS0ActionApproach::IMPOSSIBLE,
+				facts.actorAvailable ? reason : OS0ActionBlockReason::NO_ACTOR);
+		};
+
+		if (facts.openable)
+			ranged(ContextAction::CONTENTS, TRUE,
+				OS0ActionBlockReason::INVALID_TARGET);
+		if (facts.hasItems)
+			ranged(ContextAction::PICK_UP, TRUE,
+				OS0ActionBlockReason::INVALID_TARGET);
+		if (facts.diggableSurface)
+			ranged(ContextAction::DIG, facts.canDig,
+				OS0ActionBlockReason::MISSING_TOOL);
+		if (facts.salvageable)
+			ranged(ContextAction::SALVAGE, facts.canSalvage,
+				OS0ActionBlockReason::MISSING_TOOL);
+		if (facts.moveCandidate)
+		{
+			ranged(ContextAction::CARRY, facts.canMove,
+				OS0ActionBlockReason::TOO_HEAVY);
+			ranged(ContextAction::PUSH, facts.canMove,
+				OS0ActionBlockReason::TOO_HEAVY);
+			ranged(ContextAction::PULL, facts.canMove,
+				OS0ActionBlockReason::TOO_HEAVY);
+			ranged(ContextAction::THROW, facts.canThrow,
+				OS0ActionBlockReason::TOO_HEAVY);
+		}
+		if (facts.hasAsset)
+			add(ContextAction::BUILD, facts.buildable,
+				facts.buildable ? OS0ActionApproach::IMMEDIATE :
+					OS0ActionApproach::IMPOSSIBLE,
+				OS0ActionBlockReason::UNAVAILABLE);
+		if (facts.hasAsset || facts.hasItems || facts.terrain)
+			add(ContextAction::INSPECT, TRUE);
+		if (facts.hasAsset && facts.debugCatalog)
+			add(ContextAction::CATALOG, TRUE);
+		add(ContextAction::MOVE, TRUE);
+	}
+
+	std::stable_sort(actions.begin(), actions.end(),
+		[](OS0ResolvedAction const& lhs, OS0ResolvedAction const& rhs)
+		{
+			if (lhs.enabled != rhs.enabled) return lhs.enabled > rhs.enabled;
+			return lhs.score < rhs.score;
+		});
 	return actions;
+}
+
+OS0ResolvedAction const* FindOS0ResolvedAction(
+	std::vector<OS0ResolvedAction> const& actions,
+	ContextAction const action) noexcept
+{
+	auto const found = std::find_if(actions.begin(), actions.end(),
+		[action](OS0ResolvedAction const& entry)
+		{ return entry.action == action; });
+	return found == actions.end() ? nullptr : &*found;
+}
+
+OS0ResolvedAction const* PrimaryOS0InteractionAction(
+	std::vector<OS0ResolvedAction> const& actions) noexcept
+{
+	auto const found = std::find_if(actions.begin(), actions.end(),
+		[](OS0ResolvedAction const& entry)
+		{
+			return entry.enabled && entry.action != ContextAction::MOVE;
+		});
+	return found == actions.end() ? nullptr : &*found;
+}
+
+const char* OS0ActionBlockReasonName(
+	OS0ActionBlockReason const reason) noexcept
+{
+	switch (reason)
+	{
+		case OS0ActionBlockReason::NONE: return "READY";
+		case OS0ActionBlockReason::NO_ACTOR: return "NO OPERATOR";
+		case OS0ActionBlockReason::MISSING_TOOL: return "MISSING TOOL";
+		case OS0ActionBlockReason::TOO_HEAVY: return "TOO HEAVY";
+		case OS0ActionBlockReason::INVALID_TARGET: return "INVALID TARGET";
+		case OS0ActionBlockReason::UNAVAILABLE: return "UNAVAILABLE";
+	}
+	return "UNAVAILABLE";
 }
 
 BOOLEAN OS0IsManipulationAction(ContextAction action) noexcept

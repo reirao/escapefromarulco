@@ -129,13 +129,14 @@ void OS0UILayout::configure(INT16 screenWidth, INT16 screenHeight,
 
 INT16 OS0UILayout::workspaceBottom() const noexcept
 {
-	return std::max<INT16>(0,
-		std::min<INT16>(worldBottom(), screenHeight_ - DOCK_HEIGHT - 3));
+	return std::max<INT16>(0, worldBottom());
 }
 
 INT16 OS0UILayout::worldBottom() const noexcept
 {
-	return std::min<INT16>(engineWorldBottom_, screenHeight_ - DOCK_HEIGHT);
+	// OS//0 is a floating object, not a fixed screen dock. The tactical world and
+	// movable-window workspace therefore own the full engine viewport.
+	return std::min<INT16>(engineWorldBottom_, screenHeight_);
 }
 
 OS0UIRect OS0UILayout::dock() const noexcept

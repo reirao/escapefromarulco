@@ -119,6 +119,7 @@ std::vector<ContextAction> ResolveOS0CursorActions(OS0ActionFacts const& facts);
 
 struct OS0EnvironmentActionFacts
 {
+	BOOLEAN actorAvailable = FALSE;
 	BOOLEAN hasAsset = FALSE;
 	BOOLEAN hasItems = FALSE;
 	BOOLEAN openable = FALSE;
@@ -135,10 +136,70 @@ struct OS0EnvironmentActionFacts
 	BOOLEAN debugCatalog = FALSE;
 };
 
+enum class OS0InteractionTargetKind : UINT8
+{
+	NONE,
+	ACTOR,
+	WORLD_ITEM,
+	WORLD_ASSET,
+	TERRAIN
+};
+
+struct OS0ActionBinding
+{
+	OS0InteractionTargetKind kind = OS0InteractionTargetKind::NONE;
+	INT32 actorId = -1;
+	GridNo gridNo = -1;
+	UINT8 level = 0;
+	UINT16 tileIndex = 0xffff;
+	INT32 worldItemIndex = -1;
+
+	bool operator==(OS0ActionBinding const& rhs) const noexcept
+	{
+		return kind == rhs.kind && actorId == rhs.actorId &&
+			gridNo == rhs.gridNo && level == rhs.level &&
+			tileIndex == rhs.tileIndex &&
+			worldItemIndex == rhs.worldItemIndex;
+	}
+	bool operator!=(OS0ActionBinding const& rhs) const noexcept
+	{
+		return !(*this == rhs);
+	}
+};
+
+enum class OS0ActionApproach : UINT8
+{
+	IMMEDIATE,
+	MOVE_TO_RANGE,
+	IMPOSSIBLE
+};
+
+enum class OS0ActionBlockReason : UINT8
+{
+	NONE,
+	NO_ACTOR,
+	MISSING_TOOL,
+	TOO_HEAVY,
+	INVALID_TARGET,
+	UNAVAILABLE
+};
+
 struct OS0ResolvedAction
 {
 	ContextAction action = ContextAction::INSPECT;
 	BOOLEAN enabled = FALSE;
+	OS0ActionApproach approach = OS0ActionApproach::IMMEDIATE;
+	OS0ActionBlockReason blockReason = OS0ActionBlockReason::NONE;
+	OS0ActionBinding binding{};
+	INT16 score = 0;
+};
+
+struct OS0InteractionContext
+{
+	OS0ActionFacts cursor{};
+	OS0EnvironmentActionFacts environment{};
+	OS0ActionBinding target{};
+	BOOLEAN hasEnvironment = FALSE;
 };
 
 // Full object relation consumed by the object fan, proximity hints and the
@@ -146,4 +207,16 @@ struct OS0ResolvedAction
 // lists.
 std::vector<OS0ResolvedAction> ResolveOS0EnvironmentActions(
 	OS0EnvironmentActionFacts const& facts);
+
+// Authoritative relation resolver. Hover, F, RMB, MMB, environment panels and
+// direct execution all consume this same ordered result. Each action keeps the
+// exact target it was resolved for and declares whether it is immediate,
+// requires an approach path, or is impossible.
+std::vector<OS0ResolvedAction> ResolveOS0InteractionActions(
+	OS0InteractionContext const& context);
+OS0ResolvedAction const* FindOS0ResolvedAction(
+	std::vector<OS0ResolvedAction> const& actions, ContextAction action) noexcept;
+OS0ResolvedAction const* PrimaryOS0InteractionAction(
+	std::vector<OS0ResolvedAction> const& actions) noexcept;
+const char* OS0ActionBlockReasonName(OS0ActionBlockReason reason) noexcept;
 BOOLEAN OS0IsManipulationAction(ContextAction action) noexcept;

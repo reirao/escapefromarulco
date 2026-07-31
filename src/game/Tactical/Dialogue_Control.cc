@@ -518,6 +518,8 @@ static bool CanSayQuote(SOLDIERTYPE const& s, UINT16 const quote)
 {
 	if (s.ubProfile == NO_PROFILE)
 		return false;
+	if (s.uiStatusFlags & SOLDIER_MUTE)
+		return false;
 	INT8 const min_life = quote == QUOTE_SERIOUSLY_WOUNDED ? CONSCIOUSNESS : OKLIFE;
 	if (s.bLife < min_life)
 		return false;
@@ -718,9 +720,6 @@ static BOOLEAN GetDialogue(const MercProfile &profile, UINT16 usQuoteNum, ST::st
 // execute specific character dialogue
 BOOLEAN ExecuteCharacterDialogue(UINT8 const ubCharacterNum, UINT16 const usQuoteNum, FACETYPE* const face, DialogueHandler const bUIHandlerID, BOOLEAN const fFromSoldier, bool useAlternateDialogueFile)
 {
-	gpCurrentTalkingFace = face;
-	gubCurrentTalkingID  = ubCharacterNum;
-
 	// Check if we are dead now or not....( if from a soldier... )
 
 	// Try to find soldier...
@@ -729,6 +728,12 @@ BOOLEAN ExecuteCharacterDialogue(UINT8 const ubCharacterNum, UINT16 const usQuot
 	{ // If from a soldier, and he does not exist anymore, do not play!
 		return false;
 	}
+	if (pSoldier && fFromSoldier &&
+		(pSoldier->uiStatusFlags & SOLDIER_MUTE))
+		return false;
+
+	gpCurrentTalkingFace = face;
+	gubCurrentTalkingID  = ubCharacterNum;
 	if (pSoldier != NULL && gubVideoConferencingMode != AIM_VIDEO_MERC_ANSWERING_MACHINE_MODE)
 	{
 		// Check vital stats

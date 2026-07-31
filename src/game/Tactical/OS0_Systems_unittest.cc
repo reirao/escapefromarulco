@@ -6,6 +6,7 @@
 #include "OS0_CarrySystem.h"
 #include "OS0_CoverOrderSystem.h"
 #include "OS0_CreatorModel.h"
+#include "OS0_FieldTutorial.h"
 #include "OS0_RealtimeEditor.h"
 #include "OS0_SectorEconomySystem.h"
 #include "OS0_TacticalSession.h"
@@ -151,6 +152,70 @@ TEST(OS0ActionRegistryTest, EnvironmentCapabilitiesDriveEveryObjectSurface)
 	EXPECT_TRUE(OS0IsManipulationAction(ContextAction::THROW));
 }
 
+TEST(OS0ActionRegistryTest, RelationalResolverBindsTargetAndPlansApproach)
+{
+	OS0InteractionContext context;
+	context.hasEnvironment = TRUE;
+	context.target = { OS0InteractionTargetKind::WORLD_ASSET, -1, 1234, 0,
+		77, -1 };
+	context.environment.actorAvailable = TRUE;
+	context.environment.hasAsset = TRUE;
+	context.environment.openable = TRUE;
+	context.environment.near = FALSE;
+
+	std::vector<OS0ResolvedAction> const actions =
+		ResolveOS0InteractionActions(context);
+	OS0ResolvedAction const* const contents =
+		FindOS0ResolvedAction(actions, ContextAction::CONTENTS);
+	ASSERT_NE(contents, nullptr);
+	EXPECT_TRUE(contents->enabled);
+	EXPECT_EQ(contents->approach, OS0ActionApproach::MOVE_TO_RANGE);
+	EXPECT_EQ(contents->binding, context.target);
+	ASSERT_NE(PrimaryOS0InteractionAction(actions), nullptr);
+	EXPECT_EQ(PrimaryOS0InteractionAction(actions)->action,
+		ContextAction::CONTENTS);
+}
+
+TEST(OS0ActionRegistryTest, RelationalResolverExplainsBlockedToolAction)
+{
+	OS0InteractionContext context;
+	context.hasEnvironment = TRUE;
+	context.target = { OS0InteractionTargetKind::TERRAIN, -1, 1234, 0,
+		0xffff, -1 };
+	context.environment.actorAvailable = TRUE;
+	context.environment.terrain = TRUE;
+	context.environment.diggableSurface = TRUE;
+	context.environment.canDig = FALSE;
+
+	std::vector<OS0ResolvedAction> const actions =
+		ResolveOS0InteractionActions(context);
+	OS0ResolvedAction const* const dig =
+		FindOS0ResolvedAction(actions, ContextAction::DIG);
+	ASSERT_NE(dig, nullptr);
+	EXPECT_FALSE(dig->enabled);
+	EXPECT_EQ(dig->approach, OS0ActionApproach::IMPOSSIBLE);
+	EXPECT_EQ(dig->blockReason, OS0ActionBlockReason::MISSING_TOOL);
+	EXPECT_STREQ(OS0ActionBlockReasonName(dig->blockReason), "MISSING TOOL");
+}
+
+TEST(OS0ActionRegistryTest, HostileArmedRelationDefaultsToBoundAttack)
+{
+	OS0InteractionContext context;
+	context.target = { OS0InteractionTargetKind::ACTOR, 9, 456, 0,
+		0xffff, -1 };
+	context.cursor.hasTarget = TRUE;
+	context.cursor.hostileTarget = TRUE;
+	context.cursor.armed = TRUE;
+
+	std::vector<OS0ResolvedAction> const actions =
+		ResolveOS0InteractionActions(context);
+	OS0ResolvedAction const* const primary =
+		PrimaryOS0InteractionAction(actions);
+	ASSERT_NE(primary, nullptr);
+	EXPECT_EQ(primary->action, ContextAction::ATTACK);
+	EXPECT_EQ(primary->binding, context.target);
+}
+
 TEST(OS0ViewportGestureStateTest, ConsumesOnlyMatchedAndHandledReleases)
 {
 	OS0ViewportGestureState gestures;
@@ -192,13 +257,22 @@ TEST(OS0CreatorModelTest, OwnsValidatedIdentityStatsAndTraitSelection)
 	EXPECT_TRUE(model.backspaceCallsign());
 	EXPECT_EQ(model.callsign(), "Reirao Escape f");
 
-	EXPECT_EQ(model.stats()[0], 55);
-	EXPECT_EQ(model.points(), 100);
-	EXPECT_TRUE(model.adjustStat(0, 1));
-	EXPECT_EQ(model.stats()[0], 60);
-	EXPECT_EQ(model.points(), 95);
+	const std::array<INT8, OS0CreatorModel::STAT_COUNT> expectedStats{{
+		85, 85, 85, 85, 85, 35, 85, 35, 35, 35
+	}};
+	EXPECT_EQ(model.stats(), expectedStats);
+	EXPECT_EQ(model.points(), 0);
+	EXPECT_FALSE(model.adjustStat(0, 1));
+	EXPECT_TRUE(model.adjustStat(0, -1));
+	EXPECT_EQ(model.stats()[0], 80);
+	EXPECT_EQ(model.points(), 5);
 	for (int i = 0; i < 20; ++i) model.adjustStat(0, -1);
 	EXPECT_EQ(model.stats()[0], OS0CreatorModel::STAT_MIN);
+
+	EXPECT_EQ(model.bodyType(), REGMALE);
+	EXPECT_TRUE(model.selectBodyType(REGFEMALE));
+	EXPECT_EQ(model.bodyType(), REGFEMALE);
+	EXPECT_FALSE(model.selectBodyType(COW));
 
 	EXPECT_TRUE(model.toggleTrait(STEALTHY));
 	EXPECT_TRUE(model.toggleTrait(NIGHTOPS));
@@ -434,18 +508,19 @@ TEST(OS0RealtimeEditorSessionTest, QueuesTypedCommandsAndFlagsWorldSwap)
 	EXPECT_TRUE(editor.hasPendingWorldSwap());
 }
 
-TEST(OS0UILayoutTest, DockNeverMovesWithWorldAndWindowsStayAboveIt)
+TEST(OS0UILayoutTest, FloatingMultitoolDoesNotReserveWorldSpace)
 {
 	OS0UILayout layout;
-	layout.configure(1280, 720, 682);
-	EXPECT_EQ(layout.worldBottom(), 682);
+	layout.configure(1280, 720, 720);
+	EXPECT_EQ(layout.worldBottom(), 720);
+	EXPECT_EQ(layout.workspaceBottom(), 720);
 	EXPECT_EQ(layout.dock().y, 682);
 	EXPECT_EQ(layout.dock().h, 38);
 	EXPECT_EQ(layout.command(OS0UICommand::TACTICAL).x, 0);
 	EXPECT_EQ(layout.command(OS0UICommand::SANDBOX).x, 1137);
 	OS0UIRect const clamped = layout.clampWindow({ 1200, 690, 420, 184 });
 	EXPECT_EQ(clamped.x, 860);
-	EXPECT_EQ(clamped.y, 495);
+	EXPECT_EQ(clamped.y, 536);
 }
 
 TEST(OS0SectorEconomySystemTest, MigratesLegacyOnceAndClampsResources)
@@ -547,6 +622,10 @@ TEST(OS0CarryStateTest, ValidatesBeginWalkAndCancelLifecycle)
 	pathFailure.pathValid = FALSE;
 	EXPECT_EQ(OS0ValidateCarryContinuation(carry, pathFailure),
 		OS0CarryCancelReason::PATH_FAILED);
+	OS0CarryContinuationFacts objectChanged;
+	objectChanged.objectAvailable = FALSE;
+	EXPECT_EQ(OS0ValidateCarryContinuation(carry, objectChanged),
+		OS0CarryCancelReason::OBJECT_CHANGED);
 	carry.reset();
 	EXPECT_FALSE(carry.active());
 	EXPECT_EQ(carry.source, NOWHERE);
@@ -563,10 +642,25 @@ TEST(OS0CarryStateTest, RetainsSelectedPhysicalHandlingMode)
 	EXPECT_EQ(carry.mode, OS0CarryMode::CARRY);
 }
 
+TEST(OS0CarryStateTest, PersistentGrabSurvivesPhysicalStepSelection)
+{
+	OS0CarryState carry;
+	ASSERT_TRUE(carry.begin(1000, 0, 50, 1, OS0CarryMode::GRAB));
+	EXPECT_TRUE(carry.persistentGrab);
+	EXPECT_EQ(carry.mode, OS0CarryMode::GRAB);
+	carry.mode = OS0CarryMode::PUSH;
+	ASSERT_TRUE(carry.beginWalk(1001, 0, 1000));
+	EXPECT_TRUE(carry.persistentGrab);
+	EXPECT_EQ(carry.mode, OS0CarryMode::PUSH);
+	carry.reset();
+	EXPECT_FALSE(carry.persistentGrab);
+}
+
 TEST(OS0TacticalSessionTest, PersistsSimulationAndClearsOnlyTransientState)
 {
 	OS0TacticalSession source;
 	source.state().creatorCompleted = TRUE;
+	source.state().fieldTutorialCompleted = TRUE;
 	OS0AssetKey const key{ 9, 1, 0, 1000, 1, 50 };
 	OS0SectorKey const sector{ 9, 1, 0 };
 	source.state().assetDamage.apply(key, 160, 25);
@@ -578,13 +672,11 @@ TEST(OS0TacticalSessionTest, PersistsSimulationAndClearsOnlyTransientState)
 		OS0CoverStance::CROUCH });
 	ASSERT_TRUE(source.state().carry.begin(1000, 0, 50, 1));
 	source.state().cursor.action = ContextAction::ATTACK;
-	source.state().cursor.attackMode = TRUE;
 
 	source.endTacticalSector();
 	EXPECT_TRUE(source.state().coverOrders.orders().empty());
 	EXPECT_FALSE(source.state().carry.active());
 	EXPECT_EQ(source.state().cursor.action, ContextAction::MOVE);
-	EXPECT_FALSE(source.state().cursor.attackMode);
 	EXPECT_EQ(source.state().assetDamage.durability(key, 160), 135);
 
 	SavedGameStates states;
@@ -595,11 +687,32 @@ TEST(OS0TacticalSessionTest, PersistsSimulationAndClearsOnlyTransientState)
 	loaded.loadPersistentState(roundTrip);
 
 	EXPECT_TRUE(loaded.state().creatorCompleted);
+	EXPECT_TRUE(loaded.state().fieldTutorialCompleted);
 	EXPECT_EQ(loaded.state().assetDamage.durability(key, 160), 135);
 	EXPECT_EQ(loaded.state().sectorEconomy.resource(sector,
 		OS0ResourceKind::SCRAP), 777);
 	EXPECT_TRUE(loaded.state().sectorEconomy.hasUpgrade(sector,
 		OS0_SECTOR_UPGRADE_WORKSHOP));
+}
+
+TEST(OS0FieldTutorialTest, VerifiesOneRelationalContainerFlow)
+{
+	OS0FieldTutorial tutorial;
+	EXPECT_TRUE(tutorial.notify(OS0FieldTutorialEvent::BEGIN));
+	EXPECT_EQ(tutorial.stage(), OS0FieldTutorialStage::ACQUIRE_CONTAINER);
+	EXPECT_TRUE(tutorial.notify(OS0FieldTutorialEvent::CONTAINER_ASSIGNED));
+	EXPECT_EQ(tutorial.stage(), OS0FieldTutorialStage::HOVER_CONTAINER);
+	EXPECT_TRUE(tutorial.notify(OS0FieldTutorialEvent::CONTAINER_HOVERED));
+	EXPECT_EQ(tutorial.stage(), OS0FieldTutorialStage::OPEN_ACTIONS);
+	EXPECT_TRUE(tutorial.notify(OS0FieldTutorialEvent::ACTIONS_OPENED));
+	EXPECT_EQ(tutorial.stage(), OS0FieldTutorialStage::SELECT_CONTENTS);
+	EXPECT_TRUE(tutorial.notify(OS0FieldTutorialEvent::CONTENTS_SELECTED));
+	EXPECT_EQ(tutorial.stage(), OS0FieldTutorialStage::APPROACH_CONTAINER);
+	EXPECT_FALSE(tutorial.notify(OS0FieldTutorialEvent::APPROACH_STARTED));
+	EXPECT_TRUE(tutorial.notify(OS0FieldTutorialEvent::CONTENTS_OPENED));
+	EXPECT_EQ(tutorial.stage(), OS0FieldTutorialStage::LOOT_CONTAINER);
+	EXPECT_TRUE(tutorial.notify(OS0FieldTutorialEvent::ITEM_TAKEN));
+	EXPECT_TRUE(tutorial.completed());
 }
 
 TEST(OS0TacticalSessionTest, RejectsMalformedOrFuturePersistentState)

@@ -1,7 +1,7 @@
 # Modification notice
 
 This repository is a modified derivative of JA2 Stracciatella. Work on the current
-prototype was performed from 2026-07-24 through 2026-07-30.
+prototype was performed from 2026-07-24 through 2026-07-31.
 
 Prominent notices were added to modified source files in accordance with the included
 Strategy First source-code license agreement.
@@ -25,6 +25,9 @@ Strategy First source-code license agreement.
 - Added save-compatible per-sector stockpiles and three buildable sector upgrades.
 
 The code is experimental and does not represent an official JA2 Stracciatella release.
+Version headings below are development history, not separate supported releases.
+The current `v0.0.1.13` package is a **FRAGILE / TESTED** prerelease: focused builds
+and automated tests pass, while integrated gameplay still requires manual coverage.
 
 ## v0.0.1.11 consolidated baseline
 
@@ -43,7 +46,7 @@ The code is experimental and does not represent an official JA2 Stracciatella re
 - Added focused unit coverage for creator validation, UI state transitions, dock
   mapping, viewport bounds and OS0 persistent-session migration.
 
-## v0.0.1.12 stable runtime checkpoint
+## v0.0.1.12 historical runtime checkpoint
 
 - Consolidated tactical windows behind a shared manager for geometry, visibility,
   focus, drag capture, persistence, Z order and modal suspension.
@@ -85,6 +88,22 @@ The code is experimental and does not represent an official JA2 Stracciatella re
 - Rebuilt zoom cache invalidation around the complete tactical viewport signature,
   so combat-message geometry changes and smooth map-edge scrolling stay aligned
   with cursor-to-world conversion.
+- Replaced the fixed multi-button dock with one movable, persisted OS//0 multitool.
+  Double-click minimizes/expands it into Normal/Combat, Interaction, Salvage,
+  Inspect, Info and God controls while leaving the tactical viewport full height.
+- Added selectable male/female JA2 tactical body sprites, a default creator attribute
+  distribution, immediate camouflage application and a muted generated operator.
+- Added a marked-crate field tutorial whose monotonic events prove hover, `F`/RMB,
+  `CONTENTS`, approach and item-taking through the same runtime action path.
+- Replaced independent environment lists with one target-bound relational resolver.
+  Actions carry a stable binding, availability reason and immediate/move-to-range/
+  impossible approach policy used by hover, `F`, RMB, MMB and execution.
+- Added pending world-action revalidation and cancellation for actor loss, sector or
+  level change, timeout, target mutation, path interruption, input override and combat.
+- Made Escape select one cancellation layer per physical key press instead of letting
+  key-down and key-up unwind multiple unrelated modes.
+- Made pointer-facing a Normal and Combat live-control intent while retaining native
+  JA2 movement/path/animation ownership.
 
 ## v0.1.1-alpha hotfix
 

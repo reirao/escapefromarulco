@@ -13,7 +13,9 @@ namespace
 	constexpr const char* SECTOR_ECONOMY_KEY = "escape-from-arulco:sector-economy-v1";
 	constexpr const char* CREATOR_COMPLETE_KEY =
 		"escape-from-arulco:creator-complete-v1";
-	constexpr INT32 STATE_VERSION = 3;
+	constexpr const char* FIELD_TUTORIAL_COMPLETE_KEY =
+		"escape-from-arulco:field-tutorial-complete-v1";
+	constexpr INT32 STATE_VERSION = 4;
 	constexpr size_t ASSET_DAMAGE_FIELDS = 8;
 	constexpr size_t SECTOR_ECONOMY_FIELDS = 9;
 
@@ -40,6 +42,8 @@ void OS0TacticalSession::storePersistentState(SavedGameStates& states) const
 {
 	states.Set(STATE_VERSION_KEY, STATE_VERSION);
 	states.Set(CREATOR_COMPLETE_KEY, state_.creatorCompleted ? 1 : 0);
+	states.Set(FIELD_TUTORIAL_COMPLETE_KEY,
+		state_.fieldTutorialCompleted ? 1 : 0);
 	std::vector<int32_t> values;
 	values.reserve(state_.assetDamage.records().size() * ASSET_DAMAGE_FIELDS);
 	for (OS0AssetDamageRecord const& record : state_.assetDamage.records())
@@ -74,6 +78,7 @@ void OS0TacticalSession::loadPersistentState(SavedGameStates const& states)
 	state_.assetDamage.clear();
 	state_.sectorEconomy.clear();
 	state_.creatorCompleted = FALSE;
+	state_.fieldTutorialCompleted = FALSE;
 	if (!states.HasKey(STATE_VERSION_KEY)) return;
 	INT32 version = 0;
 	try
@@ -97,6 +102,15 @@ void OS0TacticalSession::loadPersistentState(SavedGameStates const& states)
 		// after an operator already existed. Do not force those campaigns through
 		// character creation again; only a fresh campaign starts incomplete.
 		state_.creatorCompleted = TRUE;
+	}
+	if (states.HasKey(FIELD_TUTORIAL_COMPLETE_KEY))
+	{
+		try
+		{
+			state_.fieldTutorialCompleted =
+				states.Get<int32_t>(FIELD_TUTORIAL_COMPLETE_KEY) != 0;
+		}
+		catch (...) {}
 	}
 
 	if (states.HasKey(ASSET_DAMAGE_KEY))

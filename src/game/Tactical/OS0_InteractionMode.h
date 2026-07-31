@@ -58,17 +58,19 @@ public:
 	// the surface that a later interaction/fight transition will open.
 	bool selectSurface(OS0InteractionSurface surface) noexcept;
 
-	// Nearby scanning is an explicit user toggle, not a side effect of choosing
-	// ENVIRONMENT. FIGHT disables and blocks it; NORMAL and INTERACTING permit it.
-	// Mutators return whether the request was accepted. Query
-	// nearbyScanEnabled() for the resulting on/off value.
+	// Nearby scanning is a presentation preference, not a gameplay mode. Combat
+	// temporarily suppresses it but never destroys the player's preference.
 	bool setNearbyScanEnabled(bool enabled) noexcept;
 	bool toggleNearbyScan() noexcept;
 	// The perception trigger makes ENVIRONMENT the selected surface and enables
 	// nearby discovery without inventing a target or entering interaction by
 	// itself. The viewport may then open the freshly resolved hovered relation.
 	bool beginPerception() noexcept;
-	bool nearbyScanEnabled() const noexcept { return nearbyScanEnabled_; }
+	bool nearbyScanEnabled() const noexcept
+	{
+		return nearbyScanRequested_ && canScanNearby();
+	}
+	bool nearbyScanRequested() const noexcept { return nearbyScanRequested_; }
 	bool canScanNearby() const noexcept
 	{
 		return state_ != OS0InteractionState::FIGHT;
@@ -107,5 +109,30 @@ private:
 	OS0InteractionSurface surface_ = OS0InteractionSurface::ACTIONS;
 	OS0InteractionSurface surfaceBeforeFight_ = OS0InteractionSurface::ACTIONS;
 	bool hasSurfaceBeforeFight_ = false;
-	bool nearbyScanEnabled_ = false;
+	bool nearbyScanRequested_ = false;
 };
+
+enum class OS0CancellationLayer : std::uint8_t
+{
+	NONE,
+	MODAL,
+	HELD_ITEM,
+	WORLD_MANIPULATION,
+	APPROACH,
+	CURSOR_ACTION
+};
+
+struct OS0CancellationFacts
+{
+	bool modal = false;
+	bool heldItem = false;
+	bool worldManipulation = false;
+	bool approach = false;
+	bool cursorAction = false;
+};
+
+// ESC unwinds exactly one ownership layer. The ordering is intentionally pure
+// and shared by real-time and turn-based input so a key release cannot fall
+// through and cancel a second operation.
+OS0CancellationLayer OS0SelectCancellationLayer(
+	OS0CancellationFacts const& facts) noexcept;

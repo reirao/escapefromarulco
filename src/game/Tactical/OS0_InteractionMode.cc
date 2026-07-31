@@ -50,7 +50,6 @@ bool OS0InteractionMode::transitionTo(OS0InteractionState const next) noexcept
 		hasSurfaceBeforeFight_ = false;
 	}
 	state_ = next;
-	if (state_ == OS0InteractionState::FIGHT) nearbyScanEnabled_ = false;
 	return true;
 }
 
@@ -96,13 +95,25 @@ bool OS0InteractionMode::selectSurface(
 bool OS0InteractionMode::setNearbyScanEnabled(bool const enabled) noexcept
 {
 	if (enabled && !canScanNearby()) return false;
-	nearbyScanEnabled_ = enabled;
+	nearbyScanRequested_ = enabled;
 	return true;
+}
+
+OS0CancellationLayer OS0SelectCancellationLayer(
+	OS0CancellationFacts const& facts) noexcept
+{
+	if (facts.modal) return OS0CancellationLayer::MODAL;
+	if (facts.heldItem) return OS0CancellationLayer::HELD_ITEM;
+	if (facts.worldManipulation)
+		return OS0CancellationLayer::WORLD_MANIPULATION;
+	if (facts.approach) return OS0CancellationLayer::APPROACH;
+	if (facts.cursorAction) return OS0CancellationLayer::CURSOR_ACTION;
+	return OS0CancellationLayer::NONE;
 }
 
 bool OS0InteractionMode::toggleNearbyScan() noexcept
 {
-	return setNearbyScanEnabled(!nearbyScanEnabled_);
+	return setNearbyScanEnabled(!nearbyScanRequested_);
 }
 
 bool OS0InteractionMode::beginPerception() noexcept
@@ -126,35 +137,11 @@ void OS0InteractionMode::synchronize(
 		return;
 	}
 	if (isFight()) transitionTo(OS0InteractionState::NORMAL);
-	if (facts.context)
-	{
-		transitionTo(OS0InteractionState::INTERACTING);
-		return;
-	}
-	const bool selectedOwnerStillPresent =
-		(surface_ == OS0InteractionSurface::ENVIRONMENT && facts.environment) ||
-		(surface_ == OS0InteractionSurface::EQUIPMENT && facts.equipment) ||
-		(facts.cursorAction && surface_ == facts.cursorSurface);
-	if (selectedOwnerStillPresent)
-	{
-		// Independent windows can coexist. Their callbacks select the most recent
-		// owner; do not let an older, still-visible window steal it next frame.
-		transitionTo(OS0InteractionState::INTERACTING);
-		return;
-	}
+	// Context radials and floating windows are overlays. Their visibility must
+	// never manufacture a gameplay state or replace the active control intent.
 	if (facts.cursorAction && valid(facts.cursorSurface))
 	{
 		beginInteraction(facts.cursorSurface);
-		return;
-	}
-	if (facts.environment)
-	{
-		beginInteraction(OS0InteractionSurface::ENVIRONMENT);
-		return;
-	}
-	if (facts.equipment)
-	{
-		beginInteraction(OS0InteractionSurface::EQUIPMENT);
 		return;
 	}
 	if (facts.passiveInteraction)
@@ -171,5 +158,5 @@ void OS0InteractionMode::reset() noexcept
 	surface_ = OS0InteractionSurface::ACTIONS;
 	surfaceBeforeFight_ = OS0InteractionSurface::ACTIONS;
 	hasSurfaceBeforeFight_ = false;
-	nearbyScanEnabled_ = false;
+	nearbyScanRequested_ = false;
 }

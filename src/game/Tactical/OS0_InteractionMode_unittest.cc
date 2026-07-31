@@ -36,7 +36,7 @@ TEST(OS0InteractionModeTest, ExplicitTransitionsControlTheActiveSurface)
 	EXPECT_FALSE(mode.isSurfaceActive(OS0InteractionSurface::EQUIPMENT));
 }
 
-TEST(OS0InteractionModeTest, NearbyScanIsExplicitAndFightAlwaysDisablesIt)
+TEST(OS0InteractionModeTest, NearbyScanPreferenceSurvivesTemporaryFight)
 {
 	OS0InteractionMode mode;
 
@@ -47,12 +47,12 @@ TEST(OS0InteractionModeTest, NearbyScanIsExplicitAndFightAlwaysDisablesIt)
 
 	ASSERT_TRUE(mode.beginFight(OS0InteractionSurface::BEHAVIOR));
 	EXPECT_FALSE(mode.nearbyScanEnabled());
+	EXPECT_TRUE(mode.nearbyScanRequested());
 	EXPECT_FALSE(mode.canScanNearby());
 	EXPECT_FALSE(mode.setNearbyScanEnabled(true));
 	EXPECT_FALSE(mode.nearbyScanEnabled());
 
 	mode.returnToNormal();
-	EXPECT_TRUE(mode.setNearbyScanEnabled(true));
 	EXPECT_TRUE(mode.nearbyScanEnabled());
 	EXPECT_TRUE(mode.toggleNearbyScan());
 	EXPECT_FALSE(mode.nearbyScanEnabled());
@@ -72,6 +72,7 @@ TEST(OS0InteractionModeTest, PerceptionSelectsEnvironmentWithoutInventingATarget
 	EXPECT_FALSE(mode.beginPerception());
 	EXPECT_TRUE(mode.isFight());
 	EXPECT_FALSE(mode.nearbyScanEnabled());
+	EXPECT_TRUE(mode.nearbyScanRequested());
 	EXPECT_TRUE(mode.isSurfaceSelected(OS0InteractionSurface::ACTIONS));
 }
 
@@ -99,7 +100,7 @@ TEST(OS0InteractionModeTest, InvalidValuesAreRejectedWithoutMutation)
 	EXPECT_FALSE(mode.nearbyScanEnabled());
 }
 
-TEST(OS0InteractionModeTest, FrameReducerPreservesContextAndRestoresVisibleOwner)
+TEST(OS0InteractionModeTest, FrameReducerIgnoresOverlayVisibility)
 {
 	OS0InteractionMode mode;
 	ASSERT_TRUE(mode.beginInteraction(OS0InteractionSurface::BEHAVIOR));
@@ -107,7 +108,8 @@ TEST(OS0InteractionModeTest, FrameReducerPreservesContextAndRestoresVisibleOwner
 	OS0InteractionFrameFacts facts;
 	facts.context = true;
 	mode.synchronize(facts);
-	EXPECT_TRUE(mode.isSurfaceActive(OS0InteractionSurface::BEHAVIOR));
+	EXPECT_TRUE(mode.isNormal());
+	EXPECT_TRUE(mode.isSurfaceSelected(OS0InteractionSurface::BEHAVIOR));
 
 	facts = {};
 	facts.fight = true;
@@ -118,11 +120,11 @@ TEST(OS0InteractionModeTest, FrameReducerPreservesContextAndRestoresVisibleOwner
 	facts = {};
 	facts.equipment = true;
 	mode.synchronize(facts);
-	EXPECT_TRUE(mode.isInteracting());
-	EXPECT_TRUE(mode.isSurfaceActive(OS0InteractionSurface::EQUIPMENT));
+	EXPECT_TRUE(mode.isNormal());
+	EXPECT_FALSE(mode.isSurfaceActive(OS0InteractionSurface::EQUIPMENT));
 }
 
-TEST(OS0InteractionModeTest, FrameReducerKeepsExplicitCursorAndEnvironmentModes)
+TEST(OS0InteractionModeTest, FrameReducerOnlyKeepsPhysicalControlIntents)
 {
 	OS0InteractionMode mode;
 	OS0InteractionFrameFacts facts;
@@ -134,12 +136,14 @@ TEST(OS0InteractionModeTest, FrameReducerKeepsExplicitCursorAndEnvironmentModes)
 	facts = {};
 	facts.environment = true;
 	mode.synchronize(facts);
-	EXPECT_TRUE(mode.isSurfaceActive(OS0InteractionSurface::ENVIRONMENT));
+	EXPECT_TRUE(mode.isNormal());
+	EXPECT_TRUE(mode.isSurfaceSelected(OS0InteractionSurface::ENVIRONMENT));
 
 	ASSERT_TRUE(mode.beginInteraction(OS0InteractionSurface::EQUIPMENT));
 	facts.equipment = true;
 	mode.synchronize(facts);
-	EXPECT_TRUE(mode.isSurfaceActive(OS0InteractionSurface::EQUIPMENT));
+	EXPECT_TRUE(mode.isNormal());
+	EXPECT_TRUE(mode.isSurfaceSelected(OS0InteractionSurface::EQUIPMENT));
 
 	ASSERT_TRUE(mode.beginInteraction(OS0InteractionSurface::ACTIONS));
 	facts.cursorAction = true;
@@ -152,7 +156,7 @@ TEST(OS0InteractionModeTest, FrameReducerKeepsExplicitCursorAndEnvironmentModes)
 	EXPECT_TRUE(mode.isNormal());
 }
 
-TEST(OS0InteractionModeTest, FightRestoresLastPersistentOwnerWhenWindowsCoexist)
+TEST(OS0InteractionModeTest, FightRestoresSelectionButWindowsDoNotOwnState)
 {
 	OS0InteractionMode mode;
 	ASSERT_TRUE(mode.beginInteraction(OS0InteractionSurface::EQUIPMENT));
@@ -167,8 +171,9 @@ TEST(OS0InteractionModeTest, FightRestoresLastPersistentOwnerWhenWindowsCoexist)
 
 	facts.fight = false;
 	mode.synchronize(facts);
-	EXPECT_TRUE(mode.isInteracting());
-	EXPECT_TRUE(mode.isSurfaceActive(OS0InteractionSurface::EQUIPMENT));
+	EXPECT_TRUE(mode.isNormal());
+	EXPECT_TRUE(mode.isSurfaceSelected(OS0InteractionSurface::EQUIPMENT));
+	EXPECT_FALSE(mode.isSurfaceActive(OS0InteractionSurface::EQUIPMENT));
 }
 
 TEST(OS0InteractionModeTest, ExplicitCancelCanSelectNormalActionsAtomically)
@@ -225,4 +230,28 @@ TEST(OS0InteractionModeTest, TutorialResetClearsScanAndFightHistory)
 	mode.synchronize({});
 	EXPECT_TRUE(mode.isNormal());
 	EXPECT_TRUE(mode.isSurfaceSelected(OS0InteractionSurface::ACTIONS));
+}
+
+TEST(OS0InteractionModeTest, CancellationUnwindsExactlyOneOwnershipLayer)
+{
+	OS0CancellationFacts facts;
+	facts.modal = true;
+	facts.heldItem = true;
+	facts.worldManipulation = true;
+	facts.approach = true;
+	facts.cursorAction = true;
+	EXPECT_EQ(OS0SelectCancellationLayer(facts), OS0CancellationLayer::MODAL);
+
+	facts.modal = false;
+	EXPECT_EQ(OS0SelectCancellationLayer(facts), OS0CancellationLayer::HELD_ITEM);
+	facts.heldItem = false;
+	EXPECT_EQ(OS0SelectCancellationLayer(facts),
+		OS0CancellationLayer::WORLD_MANIPULATION);
+	facts.worldManipulation = false;
+	EXPECT_EQ(OS0SelectCancellationLayer(facts), OS0CancellationLayer::APPROACH);
+	facts.approach = false;
+	EXPECT_EQ(OS0SelectCancellationLayer(facts),
+		OS0CancellationLayer::CURSOR_ACTION);
+	facts.cursorAction = false;
+	EXPECT_EQ(OS0SelectCancellationLayer(facts), OS0CancellationLayer::NONE);
 }

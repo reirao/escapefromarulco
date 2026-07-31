@@ -67,6 +67,10 @@ BOOLEAN OS0HandleViewportPointerEvent(MOUSE_REGION* region, UINT32 reason);
 // Resolves the current tactical pointer afresh and activates its context. This
 // is deliberately a one-shot keyboard intent rather than a polled control key.
 BOOLEAN OS0TriggerHoveredInteraction();
+// Refreshes the live hover relation when either pointer or camera projection
+// changed. Mouse-system MOVE events alone are insufficient because scrolling
+// and zooming move the world underneath a stationary cursor.
+void OS0RefreshWorldHoverFromPointer();
 // True while OS//0 owns a held primary gesture and once more on its release.
 // The legacy RT/TB poller consumes this hand-off to avoid observing the same
 // physical click after the viewport callback already executed it.

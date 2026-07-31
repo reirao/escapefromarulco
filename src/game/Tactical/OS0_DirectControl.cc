@@ -2,7 +2,10 @@
 
 #include "OS0_DirectControl.h"
 
+#include "OS0_IngameUI.h"
+
 #include "Animation_Control.h"
+#include "Cursor_Control.h"
 #include "Game_Clock.h"
 #include "Handle_UI.h"
 #include "Input.h"
@@ -174,6 +177,34 @@ namespace
 		timing.clearMovementFlagsWhenStationary = FALSE;
 	}
 
+	BOOLEAN GetDirectControlMouseWorldCoords(INT16& worldX, INT16& worldY)
+	{
+		// GetMouseWorldCoords deliberately refuses coordinates whenever another
+		// high-priority mouse region owns the pointer. OS//0 projects lightweight
+		// object icons over the world, so that vanilla ownership check made facing
+		// stop exactly when looking at an interactive object. Direct control has
+		// already rejected real modal windows; project the visible pointer directly.
+		auto cursor = GetCursorPos();
+		if (cursor.iX < gsVIEWPORT_START_X || cursor.iX >= gsVIEWPORT_END_X ||
+			cursor.iY < gsVIEWPORT_WINDOW_START_Y ||
+			cursor.iY >= OS0WorldViewportBottom()) return FALSE;
+		OS0MapDisplayToWorldScreen(&cursor.iX, &cursor.iY);
+		const INT16 offsetX = static_cast<INT16>(
+			cursor.iX - g_ui.m_tacticalMapCenterX);
+		const INT16 offsetY = static_cast<INT16>(
+			cursor.iY - g_ui.m_tacticalMapCenterY + 10);
+		INT16 cellX;
+		INT16 cellY;
+		FromScreenToCellCoordinates(offsetX, offsetY, &cellX, &cellY);
+		const INT32 projectedX = static_cast<INT32>(gsRenderCenterX) + cellX;
+		const INT32 projectedY = static_cast<INT32>(gsRenderCenterY) + cellY;
+		if (projectedX < 0 || projectedX >= WORLD_COORD_COLS ||
+			projectedY < 0 || projectedY >= WORLD_COORD_ROWS) return FALSE;
+		worldX = static_cast<INT16>(projectedX);
+		worldY = static_cast<INT16>(projectedY);
+		return TRUE;
+	}
+
 	void FollowMouse(SOLDIERTYPE* soldier, DirectControlTiming& timing,
 		BOOLEAN manualTurn, BOOLEAN applyFacing)
 	{
@@ -182,12 +213,9 @@ namespace
 		if (manualTurn || now < timing.manualFacingUntil ||
 			now < timing.nextMouseFacingAt)
 			return;
-		if (gusMouseXPos < gsVIEWPORT_START_X || gusMouseXPos > gsVIEWPORT_END_X ||
-			gusMouseYPos < gsVIEWPORT_WINDOW_START_Y ||
-			gusMouseYPos > gsVIEWPORT_WINDOW_END_Y) return;
 		INT16 worldX;
 		INT16 worldY;
-		if (!GetMouseWorldCoords(&worldX, &worldY)) return;
+		if (!GetDirectControlMouseWorldCoords(worldX, worldY)) return;
 		if (std::abs(static_cast<INT32>(worldX - soldier->dXPos)) <
 				CELL_X_SIZE / 2 &&
 			std::abs(static_cast<INT32>(worldY - soldier->dYPos)) <
@@ -426,8 +454,7 @@ BOOLEAN OS0HandleTurnBasedDirectControlKey(SOLDIERTYPE* soldier, UINT32 key,
 	return TRUE;
 }
 
-void OS0UpdateDirectControl(SOLDIERTYPE* soldier, BOOLEAN enabled,
-	BOOLEAN attackMode)
+void OS0UpdateDirectControl(SOLDIERTYPE* soldier, BOOLEAN enabled)
 {
 	if (!soldier) return;
 	DirectControlTiming& timing = TimingFor(soldier);
@@ -525,10 +552,17 @@ void OS0UpdateDirectControl(SOLDIERTYPE* soldier, BOOLEAN enabled,
 		}
 	}
 	const BOOLEAN moving = IsMoving(soldier);
-	// Merely selecting a merc must not rotate it throughout an ordinary click
-	// path. The pointer owns facing in FIGHT, or while direct movement is engaged.
-	FollowMouse(soldier, timing, manualTurn,
-		(attackMode || directMoveInput) && !moving);
+	// Q/E is an explicit turn only while the key is physically held. As soon as
+	// the player presses forward without Q/E, the pointer becomes authoritative
+	// again; a previous manual turn must not make W keep walking in an old heading
+	// for the remainder of manualFacingUntil.
+	if (forward && !manualTurn) timing.manualFacingUntil = 0;
+	// In OS//0 the pointer is the operator's look intent in every live-control
+	// state. Movement animation still owns the sprite while traversing a tile;
+	// FollowMouse retains that virtual direction and applies it as soon as the
+	// operator is stationary. This makes normal exploration visibly responsive
+	// without fighting JA2's interpolation.
+	FollowMouse(soldier, timing, manualTurn, !moving);
 
 	const UINT32 now = GetJA2Clock();
 	if (manualTurn && now >= timing.nextTurnAt)

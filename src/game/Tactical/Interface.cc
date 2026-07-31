@@ -260,10 +260,9 @@ void InitializeCurrentPanel()
 	MoveRadarScreen( );
 	if (guiCurrentScreen == GAME_SCREEN)
 	{
-		// Tactical OS//0 owns the dedicated world viewport. The fixed command dock
-		// lives below gsVIEWPORT_END_Y and must never become part of camera scrolling.
-		// Legacy TEAM/SM panels may still exist for non-tactical screens, but are not
-		// allocated merely because a merc was selected in the live sector.
+		// Tactical OS//0 owns the full world viewport. Its field computer floats over
+		// the map; legacy TEAM/SM panels may still exist for non-tactical screens, but
+		// are not allocated merely because a merc was selected in the live sector.
 		gsVIEWPORT_WINDOW_END_Y = gsVIEWPORT_END_Y;
 		gfPanelAllocated = FALSE;
 		HideLegacyTacticalInterfaceForOS0();

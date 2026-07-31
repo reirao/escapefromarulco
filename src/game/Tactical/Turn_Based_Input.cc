@@ -1476,13 +1476,6 @@ static void HandleModNone(UINT32 const key, UIEventKind* const new_event)
 			}
 			break;
 
-		case 'f':
-			// OS//0 uses plain F as a one-shot perception/interact intent. The
-			// viewport resolver samples the pointer now, so camera motion cannot
-			// activate a stale cached hover. Modified F shortcuts remain below.
-			OS0TriggerHoveredInteraction();
-			break;
-
 		case 'g': HandlePlayerTogglingLightEffects(TRUE);                      break;
 		case 'h': ShouldTheHelpScreenComeUp(HELP_SCREEN_TACTICAL, TRUE);       break;
 		case 'i': ToggleItemGlow(!gGameSettings.fOptions[TOPTION_GLOW_ITEMS]); break;
@@ -1691,12 +1684,6 @@ static void HandleModShift(UINT32 const key, UIEventKind* const new_event)
 {
 	switch (key)
 	{
-		case 'f':
-			// Shift is OS//0's held sprint modifier; it must not make the
-			// one-shot perception key disappear while the player approaches.
-			OS0TriggerHoveredInteraction();
-			break;
-
 		case SDLK_SPACE:
 			// Nothing in hand and either not in SM panel, or the matching button
 			// is enabled if we are in SM panel
@@ -2155,6 +2142,15 @@ void GetKeyboardInput(UIEventKind* const puiNewEvent)
 			OS0HandleRealtimeControlKey(InputEvent.usParam, InputEvent.usKeyState,
 				InputEvent.usEvent))
 		{
+			continue;
+		}
+		// F is a global OS//0 perception intent, not a legacy mode shortcut.
+		// Resolve it before JA2's HAND/DOOR/MENU key owners and UI-lock filters;
+		// OS0TriggerHoveredInteraction itself rejects genuine modal surfaces.
+		if (InputEvent.usEvent == KEY_DOWN && InputEvent.usParam == 'f' &&
+			!(InputEvent.usKeyState & (ALT_DOWN | CTRL_DOWN)))
+		{
+			OS0TriggerHoveredInteraction();
 			continue;
 		}
 

@@ -12,12 +12,86 @@
 #include "Map_Screen_Interface.h"
 #include "OS0_IngameUI.h"
 #include "Overhead.h"
+#include "RenderWorld.h"
 #include "Soldier_Find.h"
 #include "UILayout.h"
 
 namespace
 {
 	OS0ViewportGestureState gPointerGestures;
+	struct PointerProjection
+	{
+		INT16 mouseX = -1;
+		INT16 mouseY = -1;
+		INT16 renderX = 0;
+		INT16 renderY = 0;
+		UINT8 level = 0xff;
+		UINT8 zoom = 0;
+		BOOLEAN valid = FALSE;
+	};
+	PointerProjection gHoverProjection;
+
+	BOOLEAN ProjectCurrentPointerToGrid(GridNo& gridNo)
+	{
+		// GetMouseXY intentionally rejects the pointer whenever a higher-priority
+		// mouse region owns it. OS//0's object affordances are such regions, but
+		// they still represent the tactical world beneath them. F therefore needs
+		// the same direct, zoom-aware projection used by realtime facing.
+		INT16 screenX = static_cast<INT16>(gusMouseXPos);
+		INT16 screenY = static_cast<INT16>(gusMouseYPos);
+		OS0MapDisplayToWorldScreen(&screenX, &screenY);
+		const INT16 offsetX = static_cast<INT16>(
+			screenX - g_ui.m_tacticalMapCenterX);
+		const INT16 offsetY = static_cast<INT16>(
+			screenY - g_ui.m_tacticalMapCenterY + 10);
+		INT16 cellX;
+		INT16 cellY;
+		FromScreenToCellCoordinates(offsetX, offsetY, &cellX, &cellY);
+		const INT32 worldX = static_cast<INT32>(gsRenderCenterX) + cellX;
+		const INT32 worldY = static_cast<INT32>(gsRenderCenterY) + cellY;
+		if (worldX < 0 || worldX >= WORLD_COORD_COLS ||
+			worldY < 0 || worldY >= WORLD_COORD_ROWS) return FALSE;
+		const INT16 column = static_cast<INT16>(worldX / CELL_X_SIZE);
+		const INT16 row = static_cast<INT16>(worldY / CELL_Y_SIZE);
+		gridNo = MAPROWCOLTOPOS(row, column);
+		return gridNo >= 0 && gridNo < WORLD_MAX;
+	}
+
+	BOOLEAN ResolveCurrentPointerTarget(SOLDIERTYPE*& target, GridNo& gridNo,
+		UINT8& level, UINT16& tileIndex)
+	{
+		target = nullptr;
+		gridNo = NOWHERE;
+		level = gsInterfaceLevel;
+		tileIndex = NO_TILE;
+		if (!ProjectCurrentPointerToGrid(gridNo)) return FALSE;
+
+		// Vanilla deliberately omits the selected merc from FindSoldier in some
+		// cursor modes. Perception is mode-independent, so use the rendered actor
+		// bounds before falling back to the grid lookup.
+		if (SOLDIERTYPE* const selected = GetSelectedMan();
+			selected && selected->bActive && selected->bTeam == OUR_TEAM &&
+			selected->bLevel == level &&
+			!(selected->uiStatusFlags &
+				(SOLDIER_DEAD | SOLDIER_PASSENGER | SOLDIER_DRIVER)) &&
+			IsPointInSoldierBoundingBox(selected, gusMouseXPos, gusMouseYPos))
+		{
+			target = selected;
+			gridNo = selected->sGridNo;
+			level = selected->bLevel;
+			return TRUE;
+		}
+		target = FindSoldier(gridNo, FINDSOLDIERSAMELEVEL(level));
+		if (target)
+		{
+			gridNo = target->sGridNo;
+			level = target->bLevel;
+			return TRUE;
+		}
+		FindOS0WorldAssetAtScreen(&gridNo, level, &tileIndex,
+			gusMouseXPos, gusMouseYPos);
+		return gridNo >= 0 && gridNo < WORLD_MAX;
+	}
 
 	UINT16 ResolveOS0WorldTarget(GridNo& gridNo)
 	{
@@ -26,18 +100,13 @@ namespace
 			gridNo = gUIFullTarget->sGridNo;
 			return NO_TILE;
 		}
-		INT16 interactiveGrid = NOWHERE;
-		LEVELNODE* const node = GetCurInteractiveTileGridNo(&interactiveGrid);
-		UINT16 tileIndex = node ? node->usIndex : NO_TILE;
-		if (node && interactiveGrid >= 0 && interactiveGrid < WORLD_MAX)
-		{
-			gridNo = interactiveGrid;
-		}
-		else
-		{
-			FindOS0WorldAssetAtScreen(&gridNo, gsInterfaceLevel, &tileIndex,
-				gusMouseXPos, gusMouseYPos);
-		}
+		// RMB/MMB must use the same zoom-aware projection as F and live hover.
+		// guiCurrentCursorGridNo and the vanilla interactive-tile cache can lag a
+		// frame while scrolling, which previously made the radial appear missing.
+		ProjectCurrentPointerToGrid(gridNo);
+		UINT16 tileIndex = NO_TILE;
+		FindOS0WorldAssetAtScreen(&gridNo, gsInterfaceLevel, &tileIndex,
+			gusMouseXPos, gusMouseYPos);
 		return tileIndex;
 	}
 }
@@ -47,7 +116,7 @@ BOOLEAN OS0TriggerHoveredInteraction()
 	// F belongs to the tactical world, not to a window hidden underneath the
 	// pointer. Consume the intent while a modal/managed UI surface owns it.
 	if (OS0CreatorIsActive() ||
-		OS0BlocksWorldInputAt(gusMouseXPos, gusMouseYPos)) return TRUE;
+		OS0BlocksKeyboardWorldInputAt(gusMouseXPos, gusMouseYPos)) return TRUE;
 	if (gfInTalkPanel || (gTacticalStatus.uiFlags & ENGAGED_IN_CONV) ||
 		fShowAssignmentMenu ||
 		InItemDescriptionBox() || InItemStackPopup() || InKeyRingPopup())
@@ -55,54 +124,66 @@ BOOLEAN OS0TriggerHoveredInteraction()
 	if (gusMouseXPos < gsVIEWPORT_START_X || gusMouseXPos >= gsVIEWPORT_END_X ||
 		gusMouseYPos < gsVIEWPORT_WINDOW_START_Y ||
 		gusMouseYPos >= OS0WorldViewportBottom()) return TRUE;
+	// If the pointer is on the small world-attached OPEN icon, retain the exact
+	// bound crate relation instead of projecting the ground behind the glyph.
+	if (OS0BlocksWorldInputAt(gusMouseXPos, gusMouseYPos) &&
+		OS0ActivateCurrentHoverInteraction(gusMouseXPos, gusMouseYPos))
+		return TRUE;
 
 	// Do not trust guiCurrentCursorGridNo/gUIFullTarget here: scrolling can move
 	// the world beneath a stationary pointer without delivering a mouse event.
-	INT16 worldX;
-	INT16 worldY;
-	if (!GetMouseXY(&worldX, &worldY))
+	SOLDIERTYPE* target = nullptr;
+	GridNo gridNo = NOWHERE;
+	UINT8 level = gsInterfaceLevel;
+	UINT16 tileIndex = NO_TILE;
+	if (!ResolveCurrentPointerTarget(target, gridNo, level, tileIndex))
 	{
 		return OS0ActivateHoveredInteraction(nullptr, NOWHERE,
 			gsInterfaceLevel, NO_TILE, gusMouseXPos, gusMouseYPos);
 	}
-	GridNo gridNo = MAPROWCOLTOPOS(worldY, worldX);
-	SOLDIERTYPE* target = nullptr;
-	// Vanilla deliberately omits the selected merc from FindSoldier while the
-	// attack cursor is active.  F is a perception command, so resolve that actor
-	// directly from the current screen pixel before asking the mode-dependent
-	// vanilla target finder.  This also keeps Shift+F from degrading to its
-	// grid-only search path.
-	if (SOLDIERTYPE* const selected = GetSelectedMan();
-		selected && selected->bActive && selected->bTeam == OUR_TEAM &&
-		selected->bLevel == gsInterfaceLevel &&
-		!(selected->uiStatusFlags &
-			(SOLDIER_DEAD | SOLDIER_PASSENGER | SOLDIER_DRIVER)) &&
-		IsPointInSoldierBoundingBox(selected, gusMouseXPos, gusMouseYPos))
-	{
-		target = selected;
-		gridNo = selected->sGridNo;
-	}
-	else
-	{
-		target = FindSoldier(gridNo, FINDSOLDIERSAMELEVEL(gsInterfaceLevel));
-	}
-	// The vanilla interactive-tile pointer is a render cache and can still refer
-	// to the pre-scroll frame. F resolves the current screen pixel directly, but
-	// only when no actor already owns the relation; an overlapping prop must not
-	// rewrite a freshly resolved character target.
-	UINT16 tileIndex = NO_TILE;
-	if (!target)
-	{
-		FindOS0WorldAssetAtScreen(&gridNo, gsInterfaceLevel, &tileIndex,
-			gusMouseXPos, gusMouseYPos);
-	}
-	else
-	{
-		gridNo = target->sGridNo;
-	}
 	return OS0ActivateHoveredInteraction(target, gridNo,
-		target ? target->bLevel : gsInterfaceLevel,
+		level,
 		tileIndex, gusMouseXPos, gusMouseYPos);
+}
+
+void OS0RefreshWorldHoverFromPointer()
+{
+	if (OS0CreatorIsActive() ||
+		OS0BlocksWorldInputAt(gusMouseXPos, gusMouseYPos)) return;
+	const BOOLEAN inViewport =
+		gusMouseXPos >= gsVIEWPORT_START_X && gusMouseXPos < gsVIEWPORT_END_X &&
+		gusMouseYPos >= gsVIEWPORT_WINDOW_START_Y &&
+		gusMouseYPos < OS0WorldViewportBottom();
+	if (!inViewport)
+	{
+		if (gHoverProjection.valid) OS0ClearWorldHover();
+		gHoverProjection.valid = FALSE;
+		return;
+	}
+	const UINT8 zoom = OS0WorldZoomFactor();
+	if (gHoverProjection.valid &&
+		gHoverProjection.mouseX == static_cast<INT16>(gusMouseXPos) &&
+		gHoverProjection.mouseY == static_cast<INT16>(gusMouseYPos) &&
+		gHoverProjection.renderX == gsRenderCenterX &&
+		gHoverProjection.renderY == gsRenderCenterY &&
+		gHoverProjection.level == gsInterfaceLevel &&
+		gHoverProjection.zoom == zoom)
+		return;
+	gHoverProjection = { static_cast<INT16>(gusMouseXPos),
+		static_cast<INT16>(gusMouseYPos), gsRenderCenterX, gsRenderCenterY,
+		static_cast<UINT8>(gsInterfaceLevel), zoom, TRUE };
+
+	SOLDIERTYPE* target = nullptr;
+	GridNo gridNo = NOWHERE;
+	UINT8 level = gsInterfaceLevel;
+	UINT16 tileIndex = NO_TILE;
+	if (!ResolveCurrentPointerTarget(target, gridNo, level, tileIndex))
+	{
+		OS0ClearWorldHover();
+		return;
+	}
+	OS0HoverWorldObject(target, gridNo, level, tileIndex,
+		gusMouseXPos, gusMouseYPos);
 }
 
 BOOLEAN OS0HandleViewportPointerEvent(MOUSE_REGION*, UINT32 reason)
@@ -240,4 +321,5 @@ BOOLEAN OS0OwnsViewportContextButtons()
 void OS0ResetViewportPointerGestures()
 {
 	gPointerGestures.reset();
+	gHoverProjection = {};
 }

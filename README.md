@@ -3,12 +3,15 @@
 An experimental, non-commercial rework of *Jagged Alliance 2* built on
 [JA2 Stracciatella](https://github.com/ja2-stracciatella/ja2-stracciatella).
 
-> **Early alpha:** this build is intentionally unfinished. Expect rough controls,
-> incomplete systems and crashes. The purpose of this release is hands-on testing.
+> **FRAGILE / TESTED early alpha:** this exact Windows source state is compiled and
+> covered by automated tests, but the integrated gameplay is intentionally unfinished.
+> Expect rough controls, incomplete object coverage and crashes. The purpose of this
+> release is hands-on testing, not a stability guarantee.
 
-Current stable playtest: **0.0.1.13**. This checkpoint adds the shared contextual
-character hub, audited `F` perception route and explicit NORMAL/COMBAT control mode
-on top of the `v0.0.1.12` runtime.
+Current prerelease playtest: **0.0.1.13**. The existing release number tracks the
+current fragile-tested checkpoint: creator and crate tutorial, target-bound contextual
+actions, queued approach/revalidation, a movable OS//0 multitool, layered cancellation
+and mouse-facing Normal/Combat control.
 
 ## Download and play
 
@@ -23,25 +26,35 @@ The playtest includes the Windows executable, launcher, runtime DLLs, externaliz
 Stracciatella data, test instructions and crash-log collector. It does **not** contain
 the original JA2 game data. Windows x64 and an existing JA2 installation are required.
 
-## Current prototype
+## Current prototype (all gameplay features are fragile)
+
+`TESTED` in this repository means a reproducible automated build, unit test, package
+inspection or launch check. `FRAGILE` means the code path exists and is available to
+test, but map coverage and combined gameplay states remain incomplete. See
+[FEATURE_WIRING.md](FEATURE_WIRING.md) for the audited status and explicit omissions.
 
 - Direct tactical-sector start without helicopter arrival or starting enemies
-- One modal in-world character creator with a validated name, freely distributed
-  attributes and two selectable traits; the obsolete laptop creator is retired
+- One modal in-world character creator with a validated name, default/free attribute
+  distribution, male/female JA2 tactical body selection and two selectable traits;
+  the generated operator is muted and the obsolete laptop creator is retired
+- One guided crate field test covering hover, contextual actions, automatic approach
+  and taking an item; it depends on a suitable container existing in the sector
 - One UI runtime and one viewport layout boundary shared by creator, windows and input
-- A fixed 38-pixel command dock outside the scrolling/zoomed tactical world
+- One movable/minimizable OS//0 multitool over a full-height tactical viewport
 - Character inventory is optional and opens from the shared character hub or its
   `CHARACTER` command-dock entry
 - Object-first character equipment, pocket and container views anchored in the world
 - One compact field-computer icon with movable Base/Map/Team/Report, Inspector and
   Toolbox windows whose positions persist by stable names
 - Character and container inventories with item drag and drop
-- Context-sensitive object, weapon, loot and stance actions
+- Context-sensitive object, weapon, loot and stance actions resolved from one
+  target-bound relation, including explicit move-to-range and blocked reasons
 - One shared categorized character hub, opened either with `F` over the owned merc
   or with the first `CHARACTER` dock button. Its root pages are `ACTIONS`,
   `ABILITIES / TALENTS`, `EQUIPMENT`, `GROUP` and `GOD`; ability entries are shown
   only when they invoke a real engine-backed action
-- Hover-selected context cursors with middle-click cycling through valid actions
+- Hover-selected context cursors with middle-click cycling through valid actions;
+  `F` and right click open the same object action surface
 - Player-issued AI command for running to cover and choosing prone/crouched stance
 - Extended graphical JA2 long-hold menu for character, inventory and combat actions
 - Star-menu God hub with a movable current-sector asset library and the existing
@@ -63,35 +76,36 @@ the original JA2 game data. Windows x64 and an existing JA2 installation are req
 - Empty-map and `live-editor.dat` load/save workflow that keeps the player squad and
   rolls a failed world replacement back to a temporary map snapshot
 - Zoomed tactical view
-- Explicit NORMAL/COMBAT dock switch with mouse aim, direct single-shot LMB fire,
-  realtime WASD movement and AP-safe one-tile WASD control during player turns
+- Explicit NORMAL/COMBAT multitool switch with mouse-facing, direct single-shot LMB
+  fire, realtime WASD/Shift/Q/E movement and AP-safe one-tile control during turns
+- One-layer-per-press Escape cancellation for modal UI, held items, manipulation,
+  pending object approaches and cursor/combat state
 - Built-in playtest feedback reports
 
-This is a systems prototype, not yet a balanced campaign.
-The exact implementation status and current boundaries are recorded in
-[FEATURE_WIRING.md](FEATURE_WIRING.md).
+This is a systems prototype, not a balanced or stable campaign. JA2 1.13,
+multiplayer/co-op, arbitrary blueprint construction, general rigid-body physics and a
+complete replacement for strategic travel/finance are **not implemented**.
 
 ## Controls and feedback
 
-- **F over your merc:** open the same categorized character hub as the first
-  `CHARACTER` command-dock button
-- **F over a world object or terrain:** perceive the exact hovered relation, enable
-  the nearby environment scan and expose its safe object actions without executing
-  an action automatically
+- **F over your merc:** open the categorized character hub
+- **F over a world object or terrain:** resolve the exact target and open its
+  contextual actions; selecting a distant physical action walks into range first
 - **Alt+F:** retain JA2's tracking shortcut
-- **Escape:** close the active radial and restore the previously visible windows
+- **Escape:** cancel exactly one top layer: modal/radial, held item, active object
+  manipulation, pending approach, then cursor/combat mode
 - **Right click:** context menu for the object or terrain under the cursor
 - **Hold right click:** graphical character/movement menu; its star opens the Asset
   Library/JA2 icon hub and the other symbols control character, gear and combat
 - **Middle click:** cycle the current cursor action
 - **Double click:** open a character, container or world object
-- **Bottom command dock:** open Character, Inspector, world tools, assets, strategy
-  and sandbox modules; it remains fixed while the tactical camera moves
-- **TARGET/WALK symbol in the first dock cell:** switch between `COMBAT` and `NORMAL`.
-  In combat mode the merc follows the mouse, WASD moves, Shift sprints in realtime,
-  Q/E turns and LMB fires. Burst/throw/trajectory attacks confirm on the next click.
-- **Computer icon:** toggle the Toolbox; the Strategy symbol opens Base, Arulco
-  map/radar, Team and Report
+- **OS//0 computer icon:** drag to position; double-click to expand/minimize the
+  Interaction, Salvage, Inspect, Info and God groups
+- **TARGET/WALK symbol:** switch between `COMBAT` and `NORMAL`. The merc faces the
+  mouse, WASD moves, Shift sprints in realtime, Q/E turns and LMB fires in Combat.
+  Burst/throw/trajectory attacks retain their native confirmation step.
+- **Strategy/Info tools:** open the movable Base, Arulco map/radar, Team and Report
+  views; the full legacy strategic feature set is not yet ported
 - **GOD / CATALOG ASSET:** right-click a world asset and classify it for the shared
   construction/resource database
 - **Asset Library:** left-click a card to center its real map instance; right-click the

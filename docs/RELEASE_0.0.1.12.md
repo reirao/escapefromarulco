@@ -1,5 +1,9 @@
 # Escape from Arulco 0.0.1.12 — Stable Runtime Checkpoint
 
+> **Historical checkpoint:** “Stable” in this document is the original checkpoint
+> name, not a current stability guarantee. This package is superseded by the
+> `v0.0.1.13` **FRAGILE / TESTED** prerelease.
+
 This release freezes the current OS0 prototype as the first GitHub **stable**
 playtest after the `v0.0.1.11` consolidated baseline. Stable here means that the
 published Windows package was rebuilt, its automated suite passed, and the game

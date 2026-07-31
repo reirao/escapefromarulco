@@ -22,12 +22,12 @@ struct OS0ImpactVisualEvent
 struct OS0CursorState
 {
 	ContextAction action = ContextAction::MOVE;
-	BOOLEAN attackMode = FALSE;
 };
 
 struct OS0TacticalState
 {
 	BOOLEAN creatorCompleted = FALSE;
+	BOOLEAN fieldTutorialCompleted = FALSE;
 	OS0AssetDamageSystem assetDamage;
 	OS0CoverOrderSystem coverOrders;
 	OS0CarryState carry;

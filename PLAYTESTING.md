@@ -3,6 +3,11 @@
 Thank you for testing this early prototype. Specific reproduction steps are much more
 useful than a general statement that something did not work.
 
+> **FRAGILE / TESTED:** this checklist contains intended acceptance scenarios. It is
+> not a statement that every scenario below has passed. The published build and
+> automated suite are tested; every hands-on gameplay item still needs community
+> confirmation. Mark each result PASS, FAIL or NOT REACHED in your report.
+
 ## Setup
 
 - Windows x64
@@ -20,10 +25,10 @@ playtest in its own folder and point the launcher to the original game directory
 
 1. Start a fresh campaign and complete the single in-world creator using a custom
    name, attributes and two traits. Verify no laptop creator or forced inventory opens.
-2. Scroll and zoom the world while the creator, command dock and movable windows are
-   visible. The dock must remain fixed and the mouse cursor must remain usable.
-   Also open Character, Inspector, Toolbox and Strategy from the bottom command dock;
-   move the three movable windows, reload and verify their positions are preserved.
+2. Scroll and zoom the world while the creator, OS//0 multitool and movable windows
+   are visible. The screen-space controls must not scroll with the world and the mouse
+   cursor must remain usable. Double-click and drag the multitool, open its five groups,
+   reload and verify the tool and movable-window positions are preserved.
 3. Hold the right mouse button over two different owned mercs. Verify the correct merc
    is selected and both graphical JA2 button frames appear.
 4. Click the star in the second frame. Verify the movable Asset Library opens first,
@@ -104,7 +109,7 @@ playtest in its own folder and point the launcher to the original game directory
     continuously without jumping once per tile and without rectangular slot frames.
 43. Begin dragging an item while the character UI, star library or computer is open.
     No window may close, move or auto-collapse merely because the item cursor exists.
-44. Open `TERRAIN` from the command dock. Move the editor across other OS0 windows,
+44. Open `TERRAIN` from the expanded multitool's God tools. Move the editor across other OS0 windows,
     click and drag each header in both overlap orders, and verify the visible front
     window always receives the click without jumping or losing the drag.
 45. In `TILES`, cycle category filters and place/remove one prop, wall and roof tile.
@@ -121,11 +126,11 @@ playtest in its own folder and point the launcher to the original game directory
     forced to fail, the previous map, squad, camera and ambient sound must recover.
 49. Leave the pointer still over a crate, ground item, scenery asset and bare terrain,
     moving the camera between attempts. Press plain `F`: the freshly hovered relation
-    must enable nearby perception and expose its object actions without automatically
-    executing pickup, attack, dig, salvage, carry or any other action. `Alt+F` must
-    retain vanilla tracking mode.
-50. Hover the owned merc and press `F`, then repeat through the first `CHARACTER`
-    command-dock button. Both routes must open the same hub root with `ACTIONS`,
+    must open its contextual action surface without automatically executing pickup,
+    attack, dig, salvage, carry or any other leaf action. `Alt+F` must retain vanilla
+    tracking mode.
+50. Hover the owned merc and press `F`, then repeat through the multitool's `INFO`
+    group. Both routes must open the same hub root with `ACTIONS`,
     `ABILITIES / TALENTS`, `EQUIPMENT`, `GROUP` and `GOD`. Abilities/talents must be
     real executable engine/OS0 actions rather than decorative or promised skills.
 51. Enter every character-hub category. Switching pages must not close the hub;
@@ -133,7 +138,7 @@ playtest in its own folder and point the launcher to the original game directory
     executes exactly once. While a modal hub surface has focus, other OS0 windows
     may disappear only temporarily and must return with their prior visibility and
     position when the modal closes. Repeat by pressing `Escape` at the root.
-52. At both 1x and 2x zoom, click the TARGET/WALK symbol in the first dock cell.
+52. At both 1x and 2x zoom, expand the multitool and click its TARGET/WALK symbol.
     `COMBAT` must aim at the mouse, keep the exit symbol visible, move with WASD and
     fire an ordinary loaded firearm exactly once per LMB gesture. Switch back to
     `NORMAL` during movement and immediately after a shot; neither input nor camera
@@ -144,6 +149,29 @@ playtest in its own folder and point the launcher to the original game directory
     no-AP movement, enemy turn and an interrupt. Locked inputs must wait or be ignored
     without activating legacy JA2 shortcuts. At 2x zoom, start/end combat and scroll
     into every map edge; the crop must not jump and cursor/world targeting must align.
+54. In a fresh test state, choose both tactical body options in the creator and verify
+    the live JA2 sprite changes. Keep the default attribute distribution, then edit one
+    value and select two traits. Camouflage must visibly apply when chosen; the created
+    operator must not play tactical speech.
+55. Follow the marked-crate tutorial exactly. Hovering the marked container must
+    advance the prompt; `F` or RMB must expose `CONTENTS`; choosing it while distant
+    must walk into range and open the spatial contents exactly once. Taking one item
+    must complete the tutorial. Report the map/tileset if no crate can be assigned.
+56. Repeat the distant container flow, then cancel separately with WASD, Escape,
+    Combat mode, a changed/removed target and an interrupted native path. No cancelled
+    route may later open or mutate the old target. An immediately adjacent action must
+    still execute once without an unnecessary path.
+57. Test blocked relations: digging without a shovel, salvage without its tool, moving
+    an overweight object and using an invalidated target. The UI must show the reason
+    and must not enqueue movement or affect another nearby object.
+58. Stack several active layers, then press and release Escape once per layer. Each
+    physical press must cancel only one layer in order: radial/modal, item on cursor,
+    carry/manipulation, pending approach, then action/combat state. Key release must
+    not silently cancel a second layer.
+59. In Normal and Combat, move the pointer around a stationary operator and verify the
+    facing follows it. Hold W continuously, add/release Shift, and steer with Q/E; the
+    character must retain JA2 path/animation ownership without invoking old A/S/D
+    shortcuts. Treat discontinuities at tile/animation boundaries as a bug report.
 
 ## Writing a useful report
 

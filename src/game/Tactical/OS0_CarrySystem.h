@@ -13,6 +13,7 @@ enum class OS0CarryPhase : UINT8
 
 enum class OS0CarryMode : UINT8
 {
+	GRAB,
 	CARRY,
 	PUSH,
 	PULL,
@@ -26,8 +27,26 @@ enum class OS0CarryCancelReason : UINT8
 	CARRIER_DEAD,
 	SECTOR_CHANGED,
 	LEVEL_CHANGED,
+	OBJECT_CHANGED,
 	PATH_FAILED
 };
+
+inline const char* OS0CarryCancelReasonName(
+	OS0CarryCancelReason reason) noexcept
+{
+	switch (reason)
+	{
+		case OS0CarryCancelReason::NONE: return "NONE";
+		case OS0CarryCancelReason::CARRIER_UNAVAILABLE:
+			return "CARRIER UNAVAILABLE";
+		case OS0CarryCancelReason::CARRIER_DEAD: return "CARRIER DEAD";
+		case OS0CarryCancelReason::SECTOR_CHANGED: return "SECTOR CHANGED";
+		case OS0CarryCancelReason::LEVEL_CHANGED: return "LEVEL CHANGED";
+		case OS0CarryCancelReason::OBJECT_CHANGED: return "OBJECT CHANGED";
+		case OS0CarryCancelReason::PATH_FAILED: return "PATH FAILED";
+	}
+	return "UNKNOWN";
+}
 
 struct OS0CarryContinuationFacts
 {
@@ -35,6 +54,7 @@ struct OS0CarryContinuationFacts
 	BOOLEAN carrierAlive = TRUE;
 	BOOLEAN sameSector = TRUE;
 	BOOLEAN sameLevel = TRUE;
+	BOOLEAN objectAvailable = TRUE;
 	BOOLEAN pathValid = TRUE;
 };
 
@@ -52,6 +72,9 @@ struct OS0CarryState
 	UINT8 oldShade = DEFAULT_SHADE_LEVEL;
 	BOOLEAN sourceShaded = FALSE;
 	BOOLEAN lifted = FALSE;
+	// A persistent grab binds carrier and object across multiple movement steps.
+	// mode records the physical step currently inferred (push/pull/carry).
+	BOOLEAN persistentGrab = FALSE;
 
 	BOOLEAN active() const noexcept { return phase != OS0CarryPhase::IDLE; }
 	BOOLEAN pending() const noexcept { return phase == OS0CarryPhase::TARGETING; }
@@ -69,6 +92,7 @@ struct OS0CarryState
 		reset();
 		phase = OS0CarryPhase::TARGETING;
 		mode = newMode;
+		persistentGrab = newMode == OS0CarryMode::GRAB;
 		source = newSource;
 		sourceLevel = newLevel;
 		tileIndex = newTile;
@@ -104,6 +128,7 @@ inline OS0CarryCancelReason OS0ValidateCarryContinuation(
 	if (!facts.carrierAlive) return OS0CarryCancelReason::CARRIER_DEAD;
 	if (!facts.sameSector) return OS0CarryCancelReason::SECTOR_CHANGED;
 	if (!facts.sameLevel) return OS0CarryCancelReason::LEVEL_CHANGED;
+	if (!facts.objectAvailable) return OS0CarryCancelReason::OBJECT_CHANGED;
 	if (state.walking() && !facts.pathValid)
 		return OS0CarryCancelReason::PATH_FAILED;
 	return OS0CarryCancelReason::NONE;
