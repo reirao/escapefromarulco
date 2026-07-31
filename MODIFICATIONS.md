@@ -26,8 +26,9 @@ Strategy First source-code license agreement.
 
 The code is experimental and does not represent an official JA2 Stracciatella release.
 Version headings below are development history, not separate supported releases.
-The current `v0.0.1.13` package is a **FRAGILE / TESTED** prerelease: focused builds
-and automated tests pass, while integrated gameplay still requires manual coverage.
+The current `v0.0.1.23` package is the **STABLE CHECKPOINT / EARLY ALPHA**: the exact
+source, Windows runtime, automated suite and package are reproducible and tested, while
+the explicitly experimental gameplay systems still require broad manual coverage.
 
 ## v0.0.1.11 consolidated baseline
 
@@ -104,6 +105,59 @@ and automated tests pass, while integrated gameplay still requires manual covera
   key-down and key-up unwind multiple unrelated modes.
 - Made pointer-facing a Normal and Combat live-control intent while retaining native
   JA2 movement/path/animation ownership.
+
+## v0.0.1.23 stable interaction checkpoint
+
+- Added one `OS0ItemTransferController` state machine for the complete physical
+  inventory gesture. Inventory slots, equipment, spatial loot, actor relations and
+  the tactical world now share one source press, one held object and at most one
+  release owner instead of reacting independently to the same mouse event.
+- Added a post-dispatch MouseSystem observer for cross-region drag/drop. JA2's legacy
+  dispatcher deliberately withheld `UP` when press and release occurred in different
+  regions; OS0 now forwards that physical release exactly once to the real target.
+- Cleared stale click capture after releases outside every mouse region and reset
+  invalid double-click/tap state after cross-region release. The next unrelated click
+  can no longer remain blocked by a dead source region.
+- Added frame-boundary recovery for SDL focus changes that clear the physical button
+  without emitting an `UP`, preventing an item gesture or suppressed double-click
+  release from remaining captured after Alt-Tab.
+- Started slot and loot drags only after a movement threshold, including the
+  `LOST_MOUSE` boundary. A click cannot turn into a delayed drag, and leaving the
+  source region while holding the button no longer loses the item pickup.
+- Resolved actor, world grid, level and tile freshly at release time rather than using
+  stale hover/cursor globals after camera movement, zoom, panel motion or animation.
+- Made panel backgrounds explicit non-targets and centrally disabled unrelated panel,
+  dock, catalog, feedback and editor controls while an item is held. A drop can no
+  longer also close, drag, retab or execute the window behind it.
+- Added one item-to-actor transfer policy for primary hand, off hand, body equipment,
+  pack and drop. It checks item class, equipment slot, two-handed conflicts, pocket
+  capacity and carried weight; one safe destination is recommended while additional
+  valid choices live behind `MORE OPTIONS`.
+- Kept invalid or full destinations on the native item cursor instead of silently
+  dropping the remainder. Pack placement completes compatible stacks first, then
+  small pockets, then large pockets.
+- Primed JA2's external item cursor as soon as native pointer creation succeeds and
+  reconciled cursors created by legacy paths, stack quantity confirmation and save
+  restoration with the same transfer controller.
+- Removed the duplicate item-details managed window and old transient/dock-entry
+  machinery. Hover details remain inspector content; character inventory, equipment
+  and object contents retain separate explicit surfaces.
+- Replaced heap-backed per-frame action, character-action and window-order vectors
+  with bounded `OS0FixedList` storage, one relational action resolver and stable
+  allocation-free insertion ordering.
+- Avoided copying the full JA2 path buffer on every direct-control replan and stopped
+  copying the cover-order collection every tactical frame.
+- Invalidated world-hover projections at every inventory, equipment, transfer and
+  modal state transition so context icons cannot retain a target from the prior frame.
+- Cleared transient carry, cover, cursor, visual-event and diagnostic state before
+  loading OS0 persistence, preventing actions from the previous tactical world from
+  leaking into a restored save.
+- Made savegame timestamps portable on MinGW by replacing non-standard `strftime`
+  aliases and guarding failed UTC conversion.
+- Expanded focused regression coverage from 178 to 191 tests, including transfer
+  ownership, stack/double-click boundaries, focus-loss recovery, cross-region release,
+  release outside all regions, fixed-capacity limits, persistence reset and window
+  ordering.
 
 ## v0.1.1-alpha hotfix
 

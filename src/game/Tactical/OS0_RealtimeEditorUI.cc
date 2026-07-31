@@ -1637,9 +1637,7 @@ struct OS0RealtimeEditorUI::Impl
 			const size_t absolute = absoluteEntry(filtered);
 			const INT16 column = static_cast<INT16>(i % ENTRY_COLUMNS);
 			const INT16 row = static_cast<INT16>(i / ENTRY_COLUMNS);
-			const INT16 x = bounds.x + MARGIN + column * (cellW + GAP);
-			const INT16 cellX = column == static_cast<INT16>(
-				ENTRY_COLUMNS - 1) ? x : x;
+			const INT16 cellX = bounds.x + MARGIN + column * (cellW + GAP);
 			const INT16 width =
 				column == static_cast<INT16>(ENTRY_COLUMNS - 1) ?
 					innerW - cellW - GAP : cellW;

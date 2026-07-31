@@ -220,14 +220,6 @@ void OS0WindowManager::setSuspended(OS0WindowHandle id,
 	if (suspended && dragging_ == id) cancelDrag();
 }
 
-void OS0WindowManager::hideTransient() noexcept
-{
-	for (size_t i = 0; i < registered_.size(); ++i)
-		if (registered_[i] &&
-			(definitions_[i].features & OS0_WINDOW_TRANSIENT))
-			hide(static_cast<OS0WindowHandle>(i));
-}
-
 BOOLEAN OS0WindowManager::beginDrag(OS0WindowHandle id, INT16 pointerX,
 	INT16 pointerY) noexcept
 {
@@ -273,7 +265,7 @@ void OS0WindowManager::bringToFront(OS0WindowHandle id) noexcept
 	if (!registered(id)) return;
 	if (nextZ_ >= 30000)
 	{
-		std::vector<OS0WindowHandle> const order = renderOrder();
+		OS0WindowOrder const order = renderOrder();
 		INT16 z = 1;
 		for (OS0WindowHandle window : order) state(window).zOrder = z++;
 		nextZ_ = z;
@@ -281,30 +273,28 @@ void OS0WindowManager::bringToFront(OS0WindowHandle id) noexcept
 	state(id).zOrder = nextZ_++;
 }
 
-std::vector<OS0WindowHandle> OS0WindowManager::renderOrder() const
+OS0WindowOrder OS0WindowManager::renderOrder() const noexcept
 {
-	std::vector<OS0WindowHandle> result;
+	OS0WindowOrder result;
 	for (size_t i = 0; i < registered_.size(); ++i)
 		if (registered_[i] && visible(static_cast<OS0WindowHandle>(i)))
 			result.push_back(static_cast<OS0WindowHandle>(i));
-	std::stable_sort(result.begin(), result.end(), [this](auto left, auto right)
+	auto precedes = [this](OS0WindowHandle const left,
+		OS0WindowHandle const right)
 	{
 		return state(left).zOrder < state(right).zOrder;
-	});
-	return result;
-}
-
-std::vector<OS0WindowHandle> OS0WindowManager::dockEntries() const
-{
-	std::vector<OS0WindowHandle> result;
-	for (size_t i = 0; i < registered_.size(); ++i)
-		if (registered_[i] &&
-			(definitions_[i].features & OS0_WINDOW_DOCK_ENTRY))
-			result.push_back(static_cast<OS0WindowHandle>(i));
-	std::stable_sort(result.begin(), result.end(), [this](auto left, auto right)
+	};
+	for (size_t i = 1; i < result.size(); ++i)
 	{
-		return definition(left)->dockOrder < definition(right)->dockOrder;
-	});
+		OS0WindowHandle const entry = result[i];
+		size_t destination = i;
+		while (destination > 0 && precedes(entry, result[destination - 1]))
+		{
+			result[destination] = result[destination - 1];
+			--destination;
+		}
+		result[destination] = entry;
+	}
 	return result;
 }
 

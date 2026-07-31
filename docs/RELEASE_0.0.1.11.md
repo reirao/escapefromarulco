@@ -1,7 +1,7 @@
 # Escape from Arulco 0.0.1.11
 
 > **Historical checkpoint:** this document records an older package and is not the
-> current support or stability statement. Use `RELEASE_0.0.1.13.md` for the present
+> current support or stability statement. Use `RELEASE_0.0.1.23.md` for the present
 > **FRAGILE / TESTED** prerelease status.
 
 This release consolidates the experimental `v0.5.x-alpha` work into a smaller,

@@ -70,6 +70,13 @@ struct DoubleDetectionState {
 	MOUSE_REGION* lastUpRegion;
 	UINT32 lastDownTime;
 
+	void reset()
+	{
+		lastDownRegion = NULL;
+		lastUpRegion = NULL;
+		lastDownTime = 0;
+	}
+
 	// Detect double click or tap event
 	BOOLEAN isDouble(MOUSE_REGION* cur, UINT32 reason) {
 		UINT32 uiCurrTime = GetClock();
@@ -134,6 +141,7 @@ static MOUSE_REGION* MSYS_RegList = NULL;
 
 static MOUSE_REGION* MSYS_PrevRegion = 0;
 static MOUSE_REGION* MSYS_CurrRegion = NULL;
+static MOUSE_SYSTEM_EVENT_HOOK gMouseSystemEventHook = nullptr;
 
 static const INT16 gsFastHelpDelay = 600; // In timer ticks
 
@@ -152,7 +160,20 @@ static void MSYS_TrashRegList(void);
 //
 void MSYS_Shutdown(void)
 {
+	gMouseSystemEventHook = nullptr;
 	MSYS_TrashRegList();
+}
+
+
+void MSYS_SetEventHook(MOUSE_SYSTEM_EVENT_HOOK const hook)
+{
+	gMouseSystemEventHook = hook;
+}
+
+
+MOUSE_REGION* MSYS_GetCurrentRegion()
+{
+	return MSYS_CurrRegion;
 }
 
 
@@ -289,6 +310,25 @@ void MouseSystemHook(UINT16 type, UINT32 button, UINT16 x, UINT16 y)
 
 	MSYS_Action = action;
 	if (action != MSYS_NO_ACTION) MSYS_UpdateMouseRegion();
+	// A release outside every region never reaches either branch in
+	// MSYS_UpdateMouseRegion.  Do not leave the single legacy capture pointing at
+	// the original (possibly since removed) region: it would reject the next
+	// unrelated press.  Same-region and cross-region releases already clear the
+	// capture during dispatch, so a non-null value here is precisely the lost-UP
+	// case.
+	if (g_clicked_region &&
+		((type == MOUSE_BUTTON_UP) || type == TOUCH_FINGER_UP))
+	{
+		g_clicked_region = nullptr;
+		if (type == TOUCH_FINGER_UP)
+			gFingerDoubleTapState.reset();
+		else if (button == MOUSE_BUTTON_LEFT)
+			gLeftButtonDoubleClickState.reset();
+	}
+	// Run only after the region list update/callback has completed. A drag/drop
+	// observer can now distinguish an already handled release from the legacy
+	// cross-region case without racing region mutation or double-dispatching it.
+	if (gMouseSystemEventHook) gMouseSystemEventHook(type, button, x, y);
 }
 
 
@@ -623,11 +663,22 @@ static void MSYS_UpdateMouseRegion(void)
 			// OK here, if we have release a button, UNSET LOCK wherever you are....
 			// Just don't give this button the message....
 			if (MSYS_Action & MSYS_DO_RBUTTON_UP) g_clicked_region = 0;
-			if (MSYS_Action & MSYS_DO_LBUTTON_UP) g_clicked_region = 0;
+			if (MSYS_Action & MSYS_DO_LBUTTON_UP)
+			{
+				g_clicked_region = 0;
+				// A release outside the pressed region is not the middle of a
+				// double-click. Retaining the source pointer here could turn the next
+				// unrelated click into a false double-click (or retain a dead region).
+				gLeftButtonDoubleClickState.reset();
+			}
 			if (MSYS_Action & MSYS_DO_MBUTTON_UP) g_clicked_region = 0;
 			if (MSYS_Action & MSYS_DO_X1BUTTON_UP) g_clicked_region = 0;
 			if (MSYS_Action & MSYS_DO_X2BUTTON_UP) g_clicked_region = 0;
-			if (MSYS_Action & MSYS_DO_TFINGER_UP) g_clicked_region = 0;
+			if (MSYS_Action & MSYS_DO_TFINGER_UP)
+			{
+				g_clicked_region = 0;
+				gFingerDoubleTapState.reset();
+			}
 
 			// OK, you still want move messages however....
 			cur->uiFlags |= MSYS_MOUSE_IN_AREA;

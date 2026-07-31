@@ -1360,7 +1360,7 @@ try
 			basic.bRelativeEquipmentLevel = std::clamp<INT8>(
 				request.relativeEquipmentLevel, 0, 4);
 			basic.bDirection = request.direction >= 0 && request.direction < 8 ?
-				request.direction : NORTHWEST;
+				request.direction : static_cast<INT8>(NORTHWEST);
 			basic.bOrders = found->orders;
 			basic.bAttitude = found->attitude;
 			basic.bBodyType = found->bodyType;

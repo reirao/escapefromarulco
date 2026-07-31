@@ -11,6 +11,7 @@
 #include "MouseSystem.h"
 #include "Map_Screen_Interface.h"
 #include "OS0_IngameUI.h"
+#include "OS0_ItemTransferController.h"
 #include "Overhead.h"
 #include "RenderWorld.h"
 #include "Soldier_Find.h"
@@ -149,7 +150,12 @@ BOOLEAN OS0TriggerHoveredInteraction()
 void OS0RefreshWorldHoverFromPointer()
 {
 	if (OS0CreatorIsActive() ||
-		OS0BlocksWorldInputAt(gusMouseXPos, gusMouseYPos)) return;
+		OS0BlocksWorldInputAt(gusMouseXPos, gusMouseYPos))
+	{
+		if (gHoverProjection.valid) OS0ClearWorldHover();
+		gHoverProjection.valid = FALSE;
+		return;
+	}
 	const BOOLEAN inViewport =
 		gusMouseXPos >= gsVIEWPORT_START_X && gusMouseXPos < gsVIEWPORT_END_X &&
 		gusMouseYPos >= gsVIEWPORT_WINDOW_START_Y &&
@@ -186,6 +192,11 @@ void OS0RefreshWorldHoverFromPointer()
 		gusMouseXPos, gusMouseYPos);
 }
 
+void OS0InvalidateWorldHoverProjection()
+{
+	gHoverProjection.valid = FALSE;
+}
+
 BOOLEAN OS0HandleViewportPointerEvent(MOUSE_REGION*, UINT32 reason)
 {
 	// Character creation is one modal OS//0 flow. Pointer input outside its own
@@ -210,6 +221,9 @@ BOOLEAN OS0HandleViewportPointerEvent(MOUSE_REGION*, UINT32 reason)
 	}
 	if (reason & MSYS_CALLBACK_REASON_LBUTTON_DWN)
 	{
+		OS0ItemTransferController& transfers = OS0GetItemTransferController();
+		transfers.reconcile(gpItemPointer != nullptr);
+		if (gpItemPointer) transfers.beginHeldGesture();
 		const BOOLEAN owned = OS0OwnsViewportPrimaryButton();
 		gPointerGestures.beginPrimary(owned);
 		if (owned)
@@ -249,6 +263,43 @@ BOOLEAN OS0HandleViewportPointerEvent(MOUSE_REGION*, UINT32 reason)
 	}
 	if (reason & MSYS_CALLBACK_REASON_LBUTTON_UP)
 	{
+		OS0ItemTransferController& transfers = OS0GetItemTransferController();
+		transfers.reconcile(gpItemPointer != nullptr);
+		if (!gpItemPointer && transfers.sourcePressed() &&
+			transfers.claimRelease(OS0ItemTransferSurface::WORLD) ==
+				OS0ItemReleaseClaim::SOURCE_CLICK)
+		{
+			// The pointer left its source region before crossing the drag
+			// threshold. This is still the source's click, never a world click.
+			gPointerGestures.releasePrimary();
+			return TRUE;
+		}
+		if (gpItemPointer && transfers.itemHeld())
+		{
+			const OS0ItemReleaseClaim claim =
+				transfers.claimRelease(OS0ItemTransferSurface::WORLD);
+			if (claim == OS0ItemReleaseClaim::ITEM)
+			{
+				SOLDIERTYPE* target = nullptr;
+				GridNo gridNo = NOWHERE;
+				UINT8 level = gsInterfaceLevel;
+				UINT16 tileIndex = NO_TILE;
+				ResolveCurrentPointerTarget(target, gridNo, level, tileIndex);
+				// A controller-owned drag never falls through into JA2's second,
+				// polled drop path. Unsupported relations leave the item held.
+				OS0HandleCursorAction(target, gridNo, level, tileIndex);
+				transfers.completeItemRelease(gpItemPointer != nullptr);
+				gPointerGestures.markHeldItemReleaseHandled();
+				gPointerGestures.releasePrimary();
+				return TRUE;
+			}
+			if (transfers.releaseWasHandled()) return TRUE;
+		}
+		else if (transfers.releaseWasHandled())
+		{
+			// A higher-priority inventory/loot region committed this same UP.
+			return TRUE;
+		}
 		const BOOLEAN owned = gPointerGestures.releasePrimary();
 		GridNo gridNo = guiCurrentCursorGridNo;
 		const UINT16 tileIndex = ResolveOS0WorldTarget(gridNo);
@@ -305,12 +356,18 @@ BOOLEAN OS0HandleViewportPointerEvent(MOUSE_REGION*, UINT32 reason)
 
 BOOLEAN OS0ConsumeHandledHeldItemRelease()
 {
-	return gPointerGestures.consumeHeldItemRelease();
+	const BOOLEAN viewportHandled = gPointerGestures.consumeHeldItemRelease();
+	const BOOLEAN transferHandled =
+		OS0GetItemTransferController().consumeHandledRelease();
+	return viewportHandled || transferHandled;
 }
 
 BOOLEAN OS0ConsumeViewportPrimaryGesture()
 {
-	return gPointerGestures.consumePrimaryGesture();
+	const BOOLEAN viewportHandled = gPointerGestures.consumePrimaryGesture();
+	const BOOLEAN transferHandled =
+		OS0GetItemTransferController().consumeHandledRelease();
+	return viewportHandled || transferHandled;
 }
 
 BOOLEAN OS0OwnsViewportContextButtons()
@@ -321,5 +378,6 @@ BOOLEAN OS0OwnsViewportContextButtons()
 void OS0ResetViewportPointerGestures()
 {
 	gPointerGestures.reset();
+	OS0GetItemTransferController().reset();
 	gHoverProjection = {};
 }

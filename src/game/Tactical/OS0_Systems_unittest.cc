@@ -7,6 +7,8 @@
 #include "OS0_CoverOrderSystem.h"
 #include "OS0_CreatorModel.h"
 #include "OS0_FieldTutorial.h"
+#include "OS0_ItemRelations.h"
+#include "OS0_ItemTransferController.h"
 #include "OS0_RealtimeEditor.h"
 #include "OS0_SectorEconomySystem.h"
 #include "OS0_TacticalSession.h"
@@ -16,7 +18,149 @@
 #include "OS0_WorldInteractionSystem.h"
 #include "SaveLoadGameStates.h"
 
-#include <vector>
+TEST(OS0ItemTransferPolicyTest, StaysSilentUntilAnAccessibleTargetExists)
+{
+	ItemTransferPolicyInput input;
+	input.carryingItem = TRUE;
+	input.allowed.fill(TRUE);
+	EXPECT_TRUE(ResolveItemTransferPolicy(input).actions.empty());
+
+	input.targetAvailable = TRUE;
+	EXPECT_TRUE(ResolveItemTransferPolicy(input).actions.empty());
+
+	input.targetAccessible = TRUE;
+	EXPECT_EQ(ResolveItemTransferPolicy(input).actions.size(), 5u);
+}
+
+TEST(OS0ItemTransferPolicyTest, ExposesOnlyValidRelationsAndSelectsSemanticDefault)
+{
+	ItemTransferPolicyInput armour;
+	armour.carryingItem = TRUE;
+	armour.targetAvailable = TRUE;
+	armour.targetAccessible = TRUE;
+	armour.allowed[static_cast<size_t>(ItemTransferIntent::BODY)] = TRUE;
+	armour.allowed[static_cast<size_t>(ItemTransferIntent::PACK)] = TRUE;
+	armour.allowed[static_cast<size_t>(ItemTransferIntent::DROP)] = TRUE;
+
+	ItemTransferPolicyDecision const decision = ResolveItemTransferPolicy(armour);
+	ASSERT_EQ(decision.actions.size(), 3u);
+	EXPECT_TRUE(decision.allows(ItemTransferIntent::BODY));
+	EXPECT_FALSE(decision.allows(ItemTransferIntent::PRIMARY_HAND));
+	ASSERT_TRUE(decision.hasPreferred);
+	EXPECT_EQ(decision.preferred, ItemTransferIntent::BODY);
+	EXPECT_FALSE(decision.safeToApplyAutomatically);
+
+	armour.allowed[static_cast<size_t>(ItemTransferIntent::BODY)] = FALSE;
+	ItemTransferPolicyDecision const packOnly = ResolveItemTransferPolicy(armour);
+	ASSERT_TRUE(packOnly.hasPreferred);
+	EXPECT_EQ(packOnly.preferred, ItemTransferIntent::PACK);
+	EXPECT_TRUE(packOnly.safeToApplyAutomatically);
+}
+
+TEST(OS0ItemTransferControllerTest, OneGestureHasOneSourceAndOneReleaseTarget)
+{
+	OS0ItemTransferController transfers;
+	EXPECT_TRUE(transfers.beginSourcePress(OS0ItemTransferSurface::LOOT,
+		42, 100, 100));
+	EXPECT_FALSE(transfers.beginSourcePress(OS0ItemTransferSurface::INVENTORY,
+		7, 100, 100));
+	EXPECT_FALSE(transfers.dragThresholdReached(OS0ItemTransferSurface::LOOT,
+		42, 103, 103));
+	EXPECT_TRUE(transfers.dragThresholdReached(OS0ItemTransferSurface::LOOT,
+		42, 104, 100));
+	EXPECT_TRUE(transfers.markItemHeld(OS0ItemTransferSurface::LOOT, 42));
+
+	EXPECT_EQ(transfers.claimRelease(OS0ItemTransferSurface::INVENTORY),
+		OS0ItemReleaseClaim::ITEM);
+	EXPECT_EQ(transfers.claimRelease(OS0ItemTransferSurface::WORLD),
+		OS0ItemReleaseClaim::NONE);
+	transfers.completeItemRelease(FALSE);
+	EXPECT_EQ(transfers.phase(), OS0ItemTransferPhase::IDLE);
+	EXPECT_TRUE(transfers.consumeHandledRelease());
+	EXPECT_FALSE(transfers.consumeHandledRelease());
+}
+
+TEST(OS0ItemTransferControllerTest, HeldItemCanSurviveAContextChoice)
+{
+	OS0ItemTransferController transfers;
+	transfers.adoptExternalHeldItem();
+	EXPECT_TRUE(transfers.beginHeldGesture());
+	EXPECT_EQ(transfers.claimRelease(OS0ItemTransferSurface::WORLD),
+		OS0ItemReleaseClaim::ITEM);
+	transfers.completeItemRelease(TRUE);
+	EXPECT_TRUE(transfers.itemHeld());
+	EXPECT_FALSE(transfers.ownsPhysicalGesture());
+
+	EXPECT_TRUE(transfers.beginHeldGesture());
+	EXPECT_EQ(transfers.claimRelease(OS0ItemTransferSurface::RELATION),
+		OS0ItemReleaseClaim::ITEM);
+	transfers.completeItemRelease(FALSE);
+	EXPECT_FALSE(transfers.itemHeld());
+}
+
+TEST(OS0ItemTransferControllerTest, AClickNeverBecomesALateDrag)
+{
+	OS0ItemTransferController transfers;
+	ASSERT_TRUE(transfers.beginSourcePress(OS0ItemTransferSurface::INVENTORY,
+		11, 25, 25));
+	EXPECT_EQ(transfers.claimRelease(OS0ItemTransferSurface::INVENTORY),
+		OS0ItemReleaseClaim::SOURCE_CLICK);
+	EXPECT_FALSE(transfers.markItemHeld(OS0ItemTransferSurface::INVENTORY, 11));
+	EXPECT_TRUE(transfers.releaseWasHandled());
+}
+
+TEST(OS0ItemTransferControllerTest, PointerCreatedOnButtonUpConsumesThatRelease)
+{
+	OS0ItemTransferController transfers;
+	transfers.adoptExternalHeldItemAfterHandledRelease();
+	EXPECT_TRUE(transfers.itemHeld());
+	EXPECT_FALSE(transfers.ownsPhysicalGesture());
+	EXPECT_TRUE(transfers.consumeHandledRelease());
+	EXPECT_TRUE(transfers.beginHeldGesture());
+	EXPECT_EQ(transfers.claimRelease(OS0ItemTransferSurface::WORLD),
+		OS0ItemReleaseClaim::ITEM);
+}
+
+TEST(OS0ItemTransferControllerTest, DoubleClickSuppressesTheActualUpNotTheDown)
+{
+	OS0ItemTransferController transfers;
+	ASSERT_TRUE(transfers.beginSourcePress(OS0ItemTransferSurface::LOOT,
+		21, 10, 10));
+	transfers.cancelGestureAndConsumeRelease();
+	EXPECT_TRUE(transfers.waitingForSuppressedRelease());
+	EXPECT_FALSE(transfers.consumeHandledRelease());
+	EXPECT_TRUE(transfers.consumeSuppressedRelease());
+	EXPECT_FALSE(transfers.waitingForSuppressedRelease());
+	EXPECT_TRUE(transfers.consumeHandledRelease());
+}
+
+TEST(OS0ItemTransferControllerTest, NewPhysicalDownEndsThePreviousReleaseLatch)
+{
+	OS0ItemTransferController transfers;
+	transfers.adoptExternalHeldItemAfterHandledRelease();
+	ASSERT_TRUE(transfers.releaseWasHandled());
+	transfers.observePrimaryDown();
+	EXPECT_FALSE(transfers.releaseWasHandled());
+	EXPECT_TRUE(transfers.beginHeldGesture());
+}
+
+TEST(OS0ItemTransferControllerTest, FocusLossCannotLeaveAGestureCaptured)
+{
+	OS0ItemTransferController transfers;
+	transfers.adoptExternalHeldItem();
+	ASSERT_TRUE(transfers.beginHeldGesture());
+	EXPECT_FALSE(transfers.recoverLostRelease(TRUE, TRUE));
+	EXPECT_TRUE(transfers.ownsPhysicalGesture());
+	EXPECT_TRUE(transfers.recoverLostRelease(FALSE, TRUE));
+	EXPECT_FALSE(transfers.ownsPhysicalGesture());
+	EXPECT_TRUE(transfers.itemHeld());
+	EXPECT_TRUE(transfers.consumeHandledRelease());
+
+	ASSERT_TRUE(transfers.beginHeldGesture());
+	transfers.cancelGestureAndConsumeRelease();
+	EXPECT_TRUE(transfers.recoverLostRelease(FALSE, FALSE));
+	EXPECT_FALSE(transfers.waitingForSuppressedRelease());
+}
 
 TEST(OS0CoverOrderSystemTest, KeepsIndependentOrdersPerSoldier)
 {
@@ -64,13 +208,21 @@ TEST(OS0ActionRegistryTest, OneDeterministicResolverDrivesCursorSurfaces)
 	facts.hostileTarget = TRUE;
 	facts.armed = TRUE;
 
-	std::vector<ContextAction> const first = ResolveOS0CursorActions(facts);
-	std::vector<ContextAction> const second = ResolveOS0CursorActions(facts);
-	ASSERT_EQ(first, second);
+	OS0InteractionContext context;
+	context.cursor = facts;
+	OS0ResolvedActionList const first = ResolveOS0InteractionActions(context);
+	OS0ResolvedActionList const second = ResolveOS0InteractionActions(context);
 	ASSERT_EQ(first.size(), 3u);
-	EXPECT_EQ(first[0], ContextAction::ATTACK);
-	EXPECT_EQ(first[1], ContextAction::INSPECT);
-	EXPECT_EQ(first[2], ContextAction::MOVE);
+	ASSERT_EQ(first.size(), second.size());
+	for (std::size_t i = 0; i < first.size(); ++i)
+	{
+		EXPECT_EQ(first[i].action, second[i].action);
+		EXPECT_EQ(first[i].enabled, second[i].enabled);
+		EXPECT_EQ(first[i].approach, second[i].approach);
+	}
+	EXPECT_EQ(first[0].action, ContextAction::ATTACK);
+	EXPECT_EQ(first[1].action, ContextAction::INSPECT);
+	EXPECT_EQ(first[2].action, ContextAction::MOVE);
 
 	for (UINT8 value = 0; value < static_cast<UINT8>(ContextAction::COUNT);
 		++value)
@@ -136,8 +288,13 @@ TEST(OS0ActionRegistryTest, EnvironmentCapabilitiesDriveEveryObjectSurface)
 	facts.canSalvage = FALSE;
 	facts.debugCatalog = TRUE;
 
-	std::vector<OS0ResolvedAction> const actions =
-		ResolveOS0EnvironmentActions(facts);
+	OS0InteractionContext context;
+	context.hasEnvironment = TRUE;
+	context.environment = facts;
+	context.environment.actorAvailable = TRUE;
+	context.target.kind = OS0InteractionTargetKind::WORLD_ASSET;
+	OS0ResolvedActionList const actions =
+		ResolveOS0InteractionActions(context);
 	auto enabled = [&](ContextAction action)
 	{
 		auto const found = std::find_if(actions.begin(), actions.end(),
@@ -152,6 +309,35 @@ TEST(OS0ActionRegistryTest, EnvironmentCapabilitiesDriveEveryObjectSurface)
 	EXPECT_TRUE(OS0IsManipulationAction(ContextAction::THROW));
 }
 
+TEST(OS0ActionRegistryTest, MaximumEnvironmentRelationFitsInlineStorage)
+{
+	OS0InteractionContext context;
+	context.hasEnvironment = TRUE;
+	context.target.kind = OS0InteractionTargetKind::WORLD_ASSET;
+	context.environment.actorAvailable = TRUE;
+	context.environment.hasAsset = TRUE;
+	context.environment.hasItems = TRUE;
+	context.environment.openable = TRUE;
+	context.environment.terrain = TRUE;
+	context.environment.near = TRUE;
+	context.environment.moveCandidate = TRUE;
+	context.environment.canMove = TRUE;
+	context.environment.canThrow = TRUE;
+	context.environment.salvageable = TRUE;
+	context.environment.canSalvage = TRUE;
+	context.environment.diggableSurface = TRUE;
+	context.environment.canDig = TRUE;
+	context.environment.buildable = TRUE;
+	context.environment.debugCatalog = TRUE;
+
+	OS0ResolvedActionList const actions =
+		ResolveOS0InteractionActions(context);
+	EXPECT_EQ(actions.size(), OS0ResolvedActionList::CAPACITY);
+	EXPECT_NE(FindOS0ResolvedAction(actions, ContextAction::CONTENTS), nullptr);
+	EXPECT_NE(FindOS0ResolvedAction(actions, ContextAction::CATALOG), nullptr);
+	EXPECT_NE(FindOS0ResolvedAction(actions, ContextAction::MOVE), nullptr);
+}
+
 TEST(OS0ActionRegistryTest, RelationalResolverBindsTargetAndPlansApproach)
 {
 	OS0InteractionContext context;
@@ -163,7 +349,7 @@ TEST(OS0ActionRegistryTest, RelationalResolverBindsTargetAndPlansApproach)
 	context.environment.openable = TRUE;
 	context.environment.near = FALSE;
 
-	std::vector<OS0ResolvedAction> const actions =
+	OS0ResolvedActionList const actions =
 		ResolveOS0InteractionActions(context);
 	OS0ResolvedAction const* const contents =
 		FindOS0ResolvedAction(actions, ContextAction::CONTENTS);
@@ -187,7 +373,7 @@ TEST(OS0ActionRegistryTest, RelationalResolverExplainsBlockedToolAction)
 	context.environment.diggableSurface = TRUE;
 	context.environment.canDig = FALSE;
 
-	std::vector<OS0ResolvedAction> const actions =
+	OS0ResolvedActionList const actions =
 		ResolveOS0InteractionActions(context);
 	OS0ResolvedAction const* const dig =
 		FindOS0ResolvedAction(actions, ContextAction::DIG);
@@ -207,7 +393,7 @@ TEST(OS0ActionRegistryTest, HostileArmedRelationDefaultsToBoundAttack)
 	context.cursor.hostileTarget = TRUE;
 	context.cursor.armed = TRUE;
 
-	std::vector<OS0ResolvedAction> const actions =
+	OS0ResolvedActionList const actions =
 		ResolveOS0InteractionActions(context);
 	OS0ResolvedAction const* const primary =
 		PrimaryOS0InteractionAction(actions);
@@ -390,12 +576,12 @@ TEST(OS0WindowManagerTest, TemplatesShareDragClampAndZOrder)
 		OS0UIIcon::HAND, OS0WindowPresentation::FLOATING,
 		{ 20, 30, 140, 90 }, 80, 50,
 		OS0_WINDOW_MOVABLE | OS0_WINDOW_BLOCKS_WORLD_INPUT |
-		OS0_WINDOW_PERSIST_POSITION, TRUE, 1, 0 }));
+		OS0_WINDOW_PERSIST_POSITION, TRUE, 1 }));
 	ASSERT_TRUE(windows.registerTemplate({ 2, "editor", "World editor",
 		OS0UIIcon::TOOLKIT, OS0WindowPresentation::FLOATING,
 		{ 170, 10, 120, 150 }, 90, 80,
 		OS0_WINDOW_MOVABLE | OS0_WINDOW_BLOCKS_WORLD_INPUT |
-		OS0_WINDOW_PERSIST_POSITION, TRUE, 2, 1 }));
+		OS0_WINDOW_PERSIST_POSITION, TRUE, 2 }));
 
 	EXPECT_EQ(windows.hitTest(180, 40), 2);
 	ASSERT_TRUE(windows.beginDrag(1, 25, 35));
@@ -414,7 +600,7 @@ TEST(OS0WindowManagerTest, SuspensionDoesNotDestroyRequestedVisibility)
 		OS0UIIcon::EXAMINE, OS0WindowPresentation::FLOATING,
 		{ 10, 10, 100, 80 }, 40, 30,
 		OS0_WINDOW_MOVABLE | OS0_WINDOW_COLLAPSE_DURING_AIM,
-		TRUE, 1, 0 }));
+		TRUE, 1 }));
 	EXPECT_TRUE(windows.requestedVisible(3));
 	EXPECT_TRUE(windows.visible(3));
 	windows.setSuspended(OS0WindowSuspendReason::AIM, TRUE);
@@ -435,14 +621,14 @@ TEST(OS0WindowManagerTest, RadialsUseTheirAnchorAndModalsBlockWorkspace)
 	ASSERT_TRUE(windows.registerTemplate({ 5, "context", "Context",
 		OS0UIIcon::TARGET, OS0WindowPresentation::RADIAL,
 		{ 320, 200, 184, 184 }, 80, 80,
-		OS0_WINDOW_BLOCKS_WORLD_INPUT, TRUE, 10, -1 }));
+		OS0_WINDOW_BLOCKS_WORLD_INPUT, TRUE, 10 }));
 	EXPECT_EQ(windows.hitTest(235, 115), 5);
 	EXPECT_EQ(windows.hitTest(220, 100), OS0_INVALID_WINDOW);
 
 	ASSERT_TRUE(windows.registerTemplate({ 6, "modal", "Modal",
 		OS0UIIcon::LOOK, OS0WindowPresentation::MODAL,
 		{ 250, 170, 140, 100 }, 80, 60,
-		OS0_WINDOW_BLOCKS_WORLD_INPUT, TRUE, 20, -1 }));
+		OS0_WINDOW_BLOCKS_WORLD_INPUT, TRUE, 20 }));
 	EXPECT_TRUE(windows.blocksWorldInputAt(5, 5));
 }
 
@@ -453,7 +639,7 @@ TEST(OS0WindowManagerTest, LayoutRoundTripScalesReusableTemplates)
 	ASSERT_TRUE(source.registerTemplate({ 4, "sector", "Sector",
 		OS0UIIcon::LOOK, OS0WindowPresentation::FLOATING,
 		{ 100, 80, 200, 100 }, 80, 40,
-		OS0_WINDOW_PERSIST_POSITION, FALSE, 1, 0 }));
+		OS0_WINDOW_PERSIST_POSITION, FALSE, 1 }));
 	source.setBounds(4, { 320, 200, 200, 100 });
 	ST::string const serialized = source.serializeLayout(640, 480);
 
@@ -462,7 +648,7 @@ TEST(OS0WindowManagerTest, LayoutRoundTripScalesReusableTemplates)
 	ASSERT_TRUE(restored.registerTemplate({ 4, "sector", "Sector",
 		OS0UIIcon::LOOK, OS0WindowPresentation::FLOATING,
 		{ 0, 0, 200, 100 }, 80, 40,
-		OS0_WINDOW_PERSIST_POSITION, FALSE, 1, 0 }));
+		OS0_WINDOW_PERSIST_POSITION, FALSE, 1 }));
 	ASSERT_TRUE(restored.restoreLayout(serialized, 1280, 960));
 	EXPECT_EQ(restored.bounds(4).x, 640);
 	EXPECT_EQ(restored.bounds(4).y, 400);
@@ -684,10 +870,22 @@ TEST(OS0TacticalSessionTest, PersistsSimulationAndClearsOnlyTransientState)
 	SavedGameStates roundTrip;
 	roundTrip.Deserialize(states.Serialize());
 	OS0TacticalSession loaded;
+	loaded.state().coverOrders.issue({ 9, 2222, 0,
+		OS0CoverStance::PRONE });
+	ASSERT_TRUE(loaded.state().carry.begin(2222, 0, 55, 1));
+	loaded.state().cursor.action = ContextAction::ATTACK;
+	loaded.state().pendingVisualEvents.push_back({ 2222,
+		OS0AssetMaterial::STONE, 1 });
+	loaded.state().pendingDiagnostics.push_back("stale diagnostic");
 	loaded.loadPersistentState(roundTrip);
 
 	EXPECT_TRUE(loaded.state().creatorCompleted);
 	EXPECT_TRUE(loaded.state().fieldTutorialCompleted);
+	EXPECT_TRUE(loaded.state().coverOrders.orders().empty());
+	EXPECT_FALSE(loaded.state().carry.active());
+	EXPECT_EQ(loaded.state().cursor.action, ContextAction::MOVE);
+	EXPECT_TRUE(loaded.state().pendingVisualEvents.empty());
+	EXPECT_TRUE(loaded.state().pendingDiagnostics.empty());
 	EXPECT_EQ(loaded.state().assetDamage.durability(key, 160), 135);
 	EXPECT_EQ(loaded.state().sectorEconomy.resource(sector,
 		OS0ResourceKind::SCRAP), 777);

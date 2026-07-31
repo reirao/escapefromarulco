@@ -52,16 +52,15 @@ namespace
 
 	constexpr UINT16 FLOATING_FEATURES = OS0_WINDOW_MOVABLE |
 		OS0_WINDOW_CLOSABLE | OS0_WINDOW_BLOCKS_WORLD_INPUT |
-		OS0_WINDOW_PERSIST_POSITION | OS0_WINDOW_COLLAPSE_DURING_AIM |
-		OS0_WINDOW_DOCK_ENTRY;
+		OS0_WINDOW_PERSIST_POSITION | OS0_WINDOW_COLLAPSE_DURING_AIM;
 	constexpr UINT16 PASS_THROUGH_FLOATING_FEATURES =
 		FLOATING_FEATURES & ~OS0_WINDOW_BLOCKS_WORLD_INPUT;
 	constexpr UINT16 RADIAL_FEATURES = OS0_WINDOW_BLOCKS_WORLD_INPUT |
-		OS0_WINDOW_TRANSIENT | OS0_WINDOW_COLLAPSE_DURING_AIM;
+		OS0_WINDOW_COLLAPSE_DURING_AIM;
 	// Spatial item/equipment projections consist of individual sprite hit
 	// regions, not an opaque rectangular panel. Their regions own the symbols;
 	// the manager must not turn the empty space between them into a click shield.
-	constexpr UINT16 WORLD_ATTACHED_FEATURES = OS0_WINDOW_TRANSIENT |
+	constexpr UINT16 WORLD_ATTACHED_FEATURES =
 		OS0_WINDOW_COLLAPSE_DURING_AIM;
 
 	constexpr OS0WindowHandle Handle(OS0ManagedWindow window)
@@ -73,49 +72,45 @@ namespace
 		static_cast<size_t>(OS0ManagedWindow::COUNT)> WINDOW_TEMPLATES{{
 		{ Handle(OS0ManagedWindow::INVENTORY), "character", "CHARACTER",
 			OS0UIIcon::HAND, OS0WindowPresentation::FLOATING,
-			{ 145, 12, 465, 184 }, 360, 160, FLOATING_FEATURES, FALSE, 30, 0 },
+			{ 145, 12, 465, 184 }, 360, 160, FLOATING_FEATURES, FALSE, 30 },
 		{ Handle(OS0ManagedWindow::CONTEXT), "context", "CONTEXT",
 			OS0UIIcon::TARGET, OS0WindowPresentation::RADIAL,
-			{ 0, 0, 168, 200 }, 120, 80, RADIAL_FEATURES, FALSE, 80, -1 },
+			{ 0, 0, 168, 200 }, 120, 80, RADIAL_FEATURES, FALSE, 80 },
 		{ Handle(OS0ManagedWindow::LOOT), "loot", "OBJECT CONTENTS",
 			OS0UIIcon::OPEN, OS0WindowPresentation::WORLD_ATTACHED,
-			{ 0, 0, 300, 170 }, 180, 100, WORLD_ATTACHED_FEATURES, FALSE, 45, -1 },
+			{ 0, 0, 300, 170 }, 180, 100, WORLD_ATTACHED_FEATURES, FALSE, 45 },
 		{ Handle(OS0ManagedWindow::EQUIPMENT), "equipment", "EQUIPMENT",
 			OS0UIIcon::HAND, OS0WindowPresentation::WORLD_ATTACHED,
-			{ 0, 0, 240, 190 }, 160, 120, WORLD_ATTACHED_FEATURES, FALSE, 50, -1 },
+			{ 0, 0, 240, 190 }, 160, 120, WORLD_ATTACHED_FEATURES, FALSE, 50 },
 		{ Handle(OS0ManagedWindow::STACK_SPLIT), "stack-split", "MOVE STACK",
 			OS0UIIcon::HAND, OS0WindowPresentation::MODAL,
 			{ 208, 180, 224, 82 }, 224, 82,
-			OS0_WINDOW_BLOCKS_WORLD_INPUT, FALSE, 100, -1 },
+			OS0_WINDOW_BLOCKS_WORLD_INPUT, FALSE, 100 },
 		{ Handle(OS0ManagedWindow::ASSET_LIBRARY), "asset-library", "ASSET LIBRARY",
 			OS0UIIcon::KEYRING, OS0WindowPresentation::FLOATING,
-			{ 110, 76, 420, 250 }, 320, 210, FLOATING_FEATURES, FALSE, 35, 5 },
+			{ 110, 76, 420, 250 }, 320, 210, FLOATING_FEATURES, FALSE, 35 },
 		{ Handle(OS0ManagedWindow::ASSET_CATALOG), "asset-catalog", "ASSET RECORD",
 			OS0UIIcon::LOOK, OS0WindowPresentation::MODAL,
 			{ 161, 110, 318, 194 }, 280, 170,
-			OS0_WINDOW_BLOCKS_WORLD_INPUT, FALSE, 90, -1 },
-		{ Handle(OS0ManagedWindow::ITEM_DETAILS), "item-details", "ITEM DETAILS",
-			OS0UIIcon::EXAMINE, OS0WindowPresentation::FLOATING,
-			{ 190, 100, 260, 160 }, 220, 120,
-			PASS_THROUGH_FLOATING_FEATURES, FALSE, 55, 1 },
+			OS0_WINDOW_BLOCKS_WORLD_INPUT, FALSE, 90 },
 		{ Handle(OS0ManagedWindow::SECTOR), "sector", "LIVE STRATEGY",
 			OS0UIIcon::WALK, OS0WindowPresentation::FLOATING,
-			{ 332, 180, 300, 226 }, 260, 190, FLOATING_FEATURES, FALSE, 20, 6 },
+			{ 332, 180, 300, 226 }, 260, 190, FLOATING_FEATURES, FALSE, 20 },
 		{ Handle(OS0ManagedWindow::INSPECTOR), "inspector", "OBJECT / INSPECTOR",
 			OS0UIIcon::LOOK, OS0WindowPresentation::FLOATING,
 			{ 8, 330, 310, 96 }, 240, 84,
-			PASS_THROUGH_FLOATING_FEATURES, TRUE, 10, 3 },
+			PASS_THROUGH_FLOATING_FEATURES, TRUE, 10 },
 		{ Handle(OS0ManagedWindow::TOOLBOX), "toolbox", "OS//0 TOOLBOX",
 			OS0UIIcon::KEYRING, OS0WindowPresentation::FLOATING,
-			{ 500, 280, 132, 132 }, 120, 116, FLOATING_FEATURES, FALSE, 25, 8 },
+			{ 500, 280, 132, 132 }, 120, 116, FLOATING_FEATURES, FALSE, 25 },
 		{ Handle(OS0ManagedWindow::ENVIRONMENT), "environment",
 			"ENVIRONMENT / ABILITIES", OS0UIIcon::TOOLKIT,
 			OS0WindowPresentation::FLOATING, { 386, 160, 246, 104 }, 210, 92,
-			FLOATING_FEATURES, FALSE, 22, 4 },
+			FLOATING_FEATURES, FALSE, 22 },
 		{ Handle(OS0ManagedWindow::REALTIME_EDITOR), "realtime-editor",
 			"WORLD EDITOR / LIVE", OS0UIIcon::WIRE_CUTTER,
 			OS0WindowPresentation::FLOATING, { 62, 50, 516, 306 }, 420, 260,
-			FLOATING_FEATURES, FALSE, 60, 7 }
+			FLOATING_FEATURES, FALSE, 60 }
 	}};
 }
 
@@ -260,7 +255,6 @@ void OS0UIRuntime::hideTransientWorldPanels() noexcept
 	hide(OS0UIPanel::CONTEXT);
 	hide(OS0UIPanel::LOOT);
 	hide(OS0UIPanel::STACK_SPLIT);
-	hide(OS0UIPanel::ITEM_DETAILS);
 }
 
 OS0UIWindowState& OS0UIRuntime::panel(OS0UIPanel panel) noexcept

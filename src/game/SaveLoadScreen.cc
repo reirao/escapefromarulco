@@ -676,9 +676,14 @@ static void DoSaveGame(const ST::string &saveName, const ST::string &saveDescrip
 
 static void SaveNewSave() {
 	time_t now;
-    time(&now);
-    char buf[sizeof "2011-10-08T07:07:09Z"];
-    strftime(buf, sizeof buf, "%FT%TZ", gmtime(&now));
+	time(&now);
+	char buf[sizeof "2011-10-08T07:07:09Z"] = "unknown-time";
+	if (std::tm const* const utc = std::gmtime(&now))
+	{
+		// Keep the ISO-8601 filename format portable: MinGW's strftime does
+		// not promise the non-standard %F and %T aliases.
+		strftime(buf, sizeof buf, "%Y-%m-%dT%H:%M:%SZ", utc);
+	}
 	auto description = GetGameDescription();
 	// Building the filename from date and description should never lead to conflicts
 	// We need to sanitize the filename afterwards
@@ -930,7 +935,7 @@ static BOOLEAN DisplaySaveGameEntry(const std::vector<SaveGameInfo>::iterator& e
 		// Number of mercs on the team
 		// If only 1 merc is on the team use "merc" else "mercs"
 		UINT8          const n_mercs = header.ubNumOfMercsOnPlayersTeam;
-		ST::string merc = n_mercs == 1 ?
+		ST::string const& merc = n_mercs == 1 ?
 			MercAccountText[MERC_ACCOUNT_MERC] :
 			pMessageStrings[MSG_MERCS];
 		ST::string merc_count = ST::format("{} {}", n_mercs, merc);

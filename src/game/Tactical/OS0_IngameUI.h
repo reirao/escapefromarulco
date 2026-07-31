@@ -42,7 +42,6 @@ void OS0HoverWorldObject(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 void OS0ClearWorldHover();
 BOOLEAN OS0BlocksWorldInputAt(INT16 screenX, INT16 screenY);
 BOOLEAN OS0BlocksKeyboardWorldInputAt(INT16 screenX, INT16 screenY);
-BOOLEAN OS0CombatModeActive();
 BOOLEAN OS0OwnsViewportPrimaryButton();
 void OS0CycleCursorAction(SOLDIERTYPE* target, GridNo gridNo, UINT8 level, UINT16 tileIndex);
 void OS0CancelCursorAction();

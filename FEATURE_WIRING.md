@@ -1,7 +1,7 @@
 # Feature wiring audit
 
 This matrix compares public prototype claims with the runtime path in the current
-`v0.0.1.13` source replacement.
+`v0.0.1.23` stable-checkpoint source replacement.
 
 Every present gameplay row is deliberately labelled **Fragile-tested**. That means
 the route exists in source and has focused automated/build coverage where practical;
@@ -20,14 +20,15 @@ record that every manual scenario passed.
 | Unified window focus and persistence | Fragile-tested | `OS0WindowManager` owns bounds, visibility, suspension, drag, clamp, saved position and render Z order. The native JA2 child mouse-region list is projected from that same order, including immediate focus transfer when a header drag begins. |
 | Object-derived interaction | Fragile-tested | Hover selection uses the real map sprite, the stable world marker and the object-anchored icon fan. Container contents remain spatially arranged around their owning object instead of a generic list window. |
 | Pixel-accurate scenery selection | Fragile-tested | Hover and all mouse-button actions scan nearby visible object/structure sprites by opaque pixel instead of relying only on the ground cell. Multi-tile structures resolve to their canonical base object. |
-| Character inventory drag/drop | Fragile-tested | Uses JA2's item-pointer and placement functions, so slot rules and item stacks remain engine-owned. |
-| Container inventory drag/drop | Fragile-tested | Double-click and right-click `OPEN CONTENTS` share one path; the container's own scaled world sprite becomes the centre of its spatial item layout. |
+| Character inventory drag/drop | Stable core / experimental content | Uses JA2's item pointer and placement rules plus one `OS0ItemTransferController`. Press, threshold drag, held object and release have one owner across slots, equipment, relations and world targets; invalid destinations keep the item held. |
+| Container inventory drag/drop | Stable core / experimental content | Double-click and right-click `OPEN CONTENTS` share one path; the container's own scaled world sprite becomes the centre of its spatial item layout. Cross-region and lost-focus releases are recovered without invoking the world behind a panel. |
 | Deterministic container loot | Fragile-tested | First open seeds material and useful/damaged equipment; an invisible world-item marker prevents refilling and is saved with sector world items. |
 | Context actions | Fragile-tested | Object, terrain, character, loot and weapon entries call real JA2 or OS0 actions rather than display-only labels. |
 | Categorized character hub | Fragile-tested | Plain `F` over the owned merc and the multitool `INFO` group enter the same registry-driven hub. Its root exposes `ACTIONS`, `ABILITIES / TALENTS`, `EQUIPMENT`, `GROUP` and `GOD`; abilities/talents are listed only when backed by an executable engine or OS0 action. Page selection remains inside the hub, `BACK` returns to its root and only leaf actions dispatch gameplay commands. |
 | Character radial actions | Fragile-tested | Right-clicking a merc anchors a circular JA2-icon action ring to that actor. Every icon owns a stable mouse region and keeps the detailed action name as hover text. |
-| In-world equipment view | Fragile-tested | Equipment expands around the merc and PACK unfolds only the real pocket slots. Dragging an item onto a character exposes registry-driven hand, pack and drop intents with safe swap/fallback behavior. |
+| In-world equipment view | Fragile-tested | Equipment expands around the merc and PACK unfolds only real JA2 slots. The shared relation policy checks item class, two-handed conflicts, body slot, stack capacity and carried weight, exposes one direct preferred destination and places alternatives behind `MORE OPTIONS`. |
 | Stack quantity transfer | Fragile-tested | Dragging a stack opens an OS0 quantity dialog with single-step, all, take and cancel controls before attaching the chosen count to JA2's native item cursor. |
+| Mouse-event transfer boundary | Stable core | A post-dispatch MouseSystem observer recovers cross-region `UP`, clears releases outside all regions, resets invalid double-click state and reconciles SDL focus loss. The drop target is projected freshly at physical release. |
 | Perception trigger / hover / middle-click cycle | Fragile-tested | Plain `F` freshly resolves the exact hovered relation and opens its contextual actions without auto-executing a leaf action. `F` over the owned merc instead opens the shared character hub; `Alt+F` remains vanilla tracking. Hover uses the viewport movement callback and middle click cycles the same target's valid action set. |
 | Relational action and approach queue | Fragile-tested | Hover, `F`, RMB, MMB, environment panels and execution consume one ordered target-bound resolver. Physical actions report immediate, move-to-range or blocked state; queued approaches use native pathing and revalidate actor, sector, level, target and relation before the action runs. |
 | Layered cancellation | Fragile-tested | One physical Escape press chooses one highest-priority layer: modal/drag, held item, world manipulation, queued approach, then cursor/combat. Player movement, combat entry, target mutation, path interruption and timeout also cancel owned pending work. |

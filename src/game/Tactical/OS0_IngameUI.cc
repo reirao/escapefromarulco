@@ -12,6 +12,7 @@
 #include "OS0_DirectControl.h"
 #include "OS0_FieldTutorial.h"
 #include "OS0_ItemRelations.h"
+#include "OS0_ItemTransferController.h"
 #include "OS0_MouseRegionZOrder.h"
 #include "OS0_RealtimeEditor.h"
 #include "OS0_RealtimeEditorUI.h"
@@ -385,9 +386,6 @@ namespace
 	OBJECTTYPE const* gLastItemCursorPointer = nullptr;
 	UINT16 gLastItemCursorItem = NOTHING;
 	UINT32 gNextItemCursorRefreshAt = 0;
-	INT8 gLootDragCandidate = -1;
-	INT16 gLootDragStartX = 0;
-	INT16 gLootDragStartY = 0;
 	UINT32 gLootIgnoreInputUntil = 0;
 	UINT32 gPanelInteractionGuardUntil = 0;
 	BOOLEAN gBagVisibleBeforeTalk = TRUE;
@@ -414,8 +412,6 @@ namespace
 	INT16 gEquipmentCentreY = 0;
 	INT16& gStackSplitX = gUIRuntime.panel(OS0UIPanel::STACK_SPLIT).x;
 	INT16& gStackSplitY = gUIRuntime.panel(OS0UIPanel::STACK_SPLIT).y;
-	INT16 gHoverX = 0;
-	INT16 gHoverY = 0;
 	ComputerMode gMode = ComputerMode::INFO;
 	SOLDIERTYPE* gInspectedSoldier = nullptr;
 	// The equipment window is an independent live view. World inspection and
@@ -424,15 +420,8 @@ namespace
 	GridNo gInspectedGridNo = NOWHERE;
 	UINT8 gInspectedLevel = 0;
 	UINT16 gInspectedTileIndex = NO_TILE;
-	BOOLEAN& gItemDetailsVisible =
-		gUIRuntime.visibilityRef(OS0UIPanel::ITEM_DETAILS);
-	OBJECTTYPE gItemDetailsObject{};
-	ST::string gItemDetailsName;
 	SectorPanelMode gSectorPanelMode = SectorPanelMode::BASE;
 	SGPSector gStrategicSelectedSector{ 9, 1, 0 };
-	UINT32 gExplodedViewStarted = 0;
-	GridNo gExplodedViewGridNo = NOWHERE;
-	UINT16 gExplodedViewTileIndex = NO_TILE;
 	BOOLEAN& gTutorialActive = gUIRuntime.creatorActiveRef();
 	UINT8& gTutorialStep = gUIRuntime.creatorStageValueRef();
 	OS0CreatorModel gCreatorModel;
@@ -657,6 +646,9 @@ namespace
 	void ContextActionCallback(MOUSE_REGION* region, UINT32 reason);
 	void EquipmentPackCallback(MOUSE_REGION* region, UINT32 reason);
 	void ItemTransferIntentCallback(MOUSE_REGION* region, UINT32 reason);
+	void ItemTransferMoreCallback(MOUSE_REGION* region, UINT32 reason);
+	ItemTransferPolicyDecision CurrentItemTransferDecision(SOLDIERTYPE* actor);
+	BOOLEAN ApplyItemTransferIntent(SOLDIERTYPE* actor, ItemTransferIntent intent);
 	void StackSplitCallback(MOUSE_REGION* region, UINT32 reason);
 	void OperationsActionCallback(MOUSE_REGION* region, UINT32 reason);
 	void GodIconCallback(MOUSE_REGION* region, UINT32 reason);
@@ -717,7 +709,9 @@ namespace
 	std::array<MOUSE_REGION, 7> gEquipmentRegions;
 	MOUSE_REGION gEquipmentPackRegion;
 	std::array<MOUSE_REGION, gOS0ItemTransferIntents.size()> gItemTransferIntentRegions;
+	MOUSE_REGION gItemTransferMoreRegion;
 	SOLDIERTYPE* gItemTransferTarget = nullptr;
+	BOOLEAN gItemTransferMoreVisible = FALSE;
 	MOUSE_REGION gStackSplitBlock;
 	std::array<MOUSE_REGION, 5> gStackSplitRegions;
 	MOUSE_REGION gOrbRegion;
@@ -1721,18 +1715,6 @@ namespace
 		BltVideoObject(FRAME_BUFFER, tile.hTileSurface, tile.usRegionIndex, x, y);
 	}
 
-	void StartExplodedView(GridNo gridNo, UINT16 tileIndex, BOOLEAN force)
-	{
-		if (gridNo < 0 || tileIndex >= NUMBEROFTILES) return;
-		if (force || gridNo != gExplodedViewGridNo ||
-			tileIndex != gExplodedViewTileIndex)
-		{
-			gExplodedViewGridNo = gridNo;
-			gExplodedViewTileIndex = tileIndex;
-			gExplodedViewStarted = GetJA2Clock();
-		}
-	}
-
 	UINT16 ResolveWorldTileIndex(GridNo gridNo, UINT8 level, UINT16 supplied)
 	{
 		if (supplied < NUMBEROFTILES) return supplied;
@@ -2060,11 +2042,11 @@ namespace
 		entry.enabled = TRUE;
 	}
 
-	std::vector<CharacterActionSpec> BuildCharacterActions(SOLDIERTYPE* soldier)
+	OS0FixedList<CharacterActionSpec, 21> BuildCharacterActions(
+		SOLDIERTYPE* soldier)
 	{
-		std::vector<CharacterActionSpec> actions;
+		OS0FixedList<CharacterActionSpec, 21> actions;
 		if (!soldier || soldier->bTeam != OUR_TEAM) return actions;
-		actions.reserve(20);
 		auto add = [&](ContextAction action, CharacterHubCategory category,
 			const ST::string& label, BOOLEAN enabled = TRUE)
 		{
@@ -2142,7 +2124,7 @@ namespace
 		CharacterHubCategory category = CharacterHubCategory::COUNT)
 	{
 		gContextEntryCount = 0;
-		const std::vector<CharacterActionSpec> actions =
+		const OS0FixedList<CharacterActionSpec, 21> actions =
 			BuildCharacterActions(soldier);
 		if (category == CharacterHubCategory::COUNT)
 		{
@@ -2463,6 +2445,7 @@ namespace
 			{
 				AddItemToPool(soldier->sGridNo, &object, VISIBLE,
 					soldier->bLevel, 0, -1);
+				OS0InvalidateWorldHoverProjection();
 			}
 		}
 	}
@@ -2508,6 +2491,7 @@ namespace
 		CreateItems(OS0ResourceItem(kind), 100,
 			std::min<UINT8>(amount, MAX_OBJECTS_PER_SLOT), &resource);
 		AddItemToPool(gridNo, &resource, HIDDEN_IN_OBJECT, level, 0, -1);
+		OS0InvalidateWorldHoverProjection();
 	}
 
 	BOOLEAN IsContainerSeedMarker(WORLDITEM const& item)
@@ -2565,6 +2549,7 @@ namespace
 		marker.bActionValue = 0;
 		marker.ubTolerance = OS0_CONTAINER_MARKER;
 		AddItemToPool(gridNo, &marker, HIDDEN_ITEM, level, 0, -1);
+		OS0InvalidateWorldHoverProjection();
 		RecordFeedbackEvent(ST::format("CONTAINER SEEDED grid {} tile {}",
 			gridNo, tileIndex));
 	}
@@ -2580,6 +2565,7 @@ namespace
 		if (!OS0DepositResources(CurrentSectorEconomy(), CurrentSectorKey(),
 			kind, amount)) return FALSE;
 		RemoveItemFromPool(worldItem);
+		OS0InvalidateWorldHoverProjection();
 		RecordFeedbackEvent(ST::format("STOCKPILE +{} {}", amount,
 			OS0ResourceName(kind)));
 		return TRUE;
@@ -2715,7 +2701,7 @@ namespace
 		return {};
 	}
 
-	std::vector<OS0ResolvedAction> ResolveInteractionAt(SOLDIERTYPE* target,
+	OS0ResolvedActionList ResolveInteractionAt(SOLDIERTYPE* target,
 		GridNo gridNo, UINT8 level, UINT16 tileIndex)
 	{
 		SOLDIERTYPE* const selected = GetSelectedMan();
@@ -2846,7 +2832,7 @@ namespace
 	}
 
 	ContextAction PrimaryProximityAction(
-		std::vector<OS0ResolvedAction> const& actions)
+		OS0ResolvedActionList const& actions)
 	{
 		OS0ResolvedAction const* const primary =
 			PrimaryOS0InteractionAction(actions);
@@ -2861,7 +2847,7 @@ namespace
 			if (gNearbyHints[i].gridNo == gridNo &&
 				gNearbyHints[i].tileIndex == tileIndex) return;
 		}
-		std::vector<OS0ResolvedAction> const actions =
+		OS0ResolvedActionList const actions =
 			ResolveInteractionAt(nullptr, gridNo, level, tileIndex);
 		ContextAction const primary = PrimaryProximityAction(actions);
 		if (primary == ContextAction::COUNT) return;
@@ -3030,6 +3016,7 @@ namespace
 		gLootVisible = TRUE;
 		RecordFeedbackEvent(ST::format("SALVAGE {} +{} {} grid {}",
 			profile.displayName, amount, OS0ResourceName(profile.resource), dropGrid));
+		OS0InvalidateWorldHoverProjection();
 		return TRUE;
 	}
 
@@ -3092,6 +3079,7 @@ namespace
 		gLootTileIndex = NO_TILE;
 		gContentsMode = ContentsMode::WORLD;
 		gLootVisible = TRUE;
+		OS0InvalidateWorldHoverProjection();
 		return TRUE;
 	}
 
@@ -3140,7 +3128,7 @@ namespace
 			level = target->bLevel;
 			tileIndex = NO_TILE;
 		}
-		std::vector<OS0ResolvedAction> const actions =
+		OS0ResolvedActionList const actions =
 			ResolveInteractionAt(target, gridNo, level, tileIndex);
 		OS0ResolvedAction const* const resolved =
 			FindOS0ResolvedAction(actions, action);
@@ -3412,9 +3400,12 @@ namespace
 	{
 		OS0CoverOrderSystem& system =
 			OS0GetTacticalSession().state().coverOrders;
-		std::vector<OS0CoverOrder> const orders = system.orders();
-		for (OS0CoverOrder const& order : orders)
+		auto const& orders = system.orders();
+		// Cancelling erases from the vector. Walking backwards keeps every lower
+		// index valid and avoids copying the whole order list every tactical frame.
+		for (size_t index = orders.size(); index-- > 0;)
 		{
+			OS0CoverOrder const order = orders[index];
 			SOLDIERTYPE* const soldier = ID2Soldier(order.soldier);
 			if (!soldier || !soldier->bActive || soldier->bLife < OKLIFE ||
 				soldier->sSector != gWorldSector || soldier->fBetweenSectors ||
@@ -3650,16 +3641,31 @@ namespace
 		INT16 anchorY;
 		if (!gpItemPointer ||
 			!GetActorDisplayAnchor(gItemTransferTarget, anchorX, anchorY)) return;
+		ItemTransferPolicyDecision const decision =
+			CurrentItemTransferDecision(gItemTransferTarget);
 		for (size_t i = 0; i < gOS0ItemTransferIntents.size(); ++i)
 		{
+			const BOOLEAN direct = decision.hasPreferred &&
+				decision.preferred == gOS0ItemTransferIntents[i].intent;
+			const INT16 offsetX = !gItemTransferMoreVisible && direct ?
+				-34 : gOS0ItemTransferIntents[i].offsetX;
+			const INT16 offsetY = !gItemTransferMoreVisible && direct ?
+				-62 : gOS0ItemTransferIntents[i].offsetY;
 			const INT16 x = std::clamp<INT16>(
-				anchorX + gOS0ItemTransferIntents[i].offsetX,
+				anchorX + offsetX,
 				gsVIEWPORT_START_X + 2, gsVIEWPORT_END_X - 30);
 			const INT16 y = std::clamp<INT16>(
-				anchorY + gOS0ItemTransferIntents[i].offsetY,
+				anchorY + offsetY,
 				gsVIEWPORT_WINDOW_START_Y + 2, gsVIEWPORT_WINDOW_END_Y - 30);
 			MoveRegion(gItemTransferIntentRegions[i], x, y);
 		}
+		const INT16 moreX = std::clamp<INT16>(anchorX +
+			(gItemTransferMoreVisible ? 58 : 8),
+			gsVIEWPORT_START_X + 2, gsVIEWPORT_END_X - 30);
+		const INT16 moreY = std::clamp<INT16>(anchorY +
+			(gItemTransferMoreVisible ? -112 : -62),
+			gsVIEWPORT_WINDOW_START_Y + 2, gsVIEWPORT_WINDOW_END_Y - 30);
+		MoveRegion(gItemTransferMoreRegion, moreX, moreY);
 	}
 
 	BOOLEAN GetActorDisplayAnchor(SOLDIERTYPE const* soldier, INT16& x, INT16& y)
@@ -3825,6 +3831,9 @@ namespace
 
 	void SetBagRegionsEnabled(BOOLEAN enabled)
 	{
+		// Prime EXTERN_CURSOR before ChangeCursor touches any newly enabled region.
+		// RefreshHeldItemCursor is cached, so the normal per-frame path stays cheap.
+		RefreshHeldItemCursor();
 		OS0WindowManager const& windows = gUIRuntime.windowManager();
 		const BOOLEAN bagVisible = gUIRuntime.visible(OS0UIPanel::INVENTORY);
 		const BOOLEAN contextVisible = gUIRuntime.visible(OS0UIPanel::CONTEXT);
@@ -3955,9 +3964,19 @@ namespace
 		setVisible(gEquipmentPackRegion, gEquipmentExplodedVisible &&
 			gEquipmentSoldier && gEquipmentSoldier->bTeam == OUR_TEAM &&
 			!contextVisible && !gAimAutoCollapsed);
-		for (MOUSE_REGION& r : gItemTransferIntentRegions)
-			setVisible(r, gpItemPointer && gItemTransferTarget &&
-				CanAccessSoldierContents(gItemTransferTarget) && !contextVisible);
+		ItemTransferPolicyDecision const transfer =
+			CurrentItemTransferDecision(gItemTransferTarget);
+		if (!transfer.hasAlternatives()) gItemTransferMoreVisible = FALSE;
+		for (size_t i = 0; i < gItemTransferIntentRegions.size(); ++i)
+		{
+			ItemTransferIntent const intent = gOS0ItemTransferIntents[i].intent;
+			const BOOLEAN direct = transfer.hasPreferred &&
+				transfer.preferred == intent;
+			setVisible(gItemTransferIntentRegions[i], !contextVisible &&
+				transfer.allows(intent) && (direct || gItemTransferMoreVisible));
+		}
+		setVisible(gItemTransferMoreRegion, !contextVisible &&
+			transfer.hasAlternatives());
 		if (enabled && gTutorialActive && !contextVisible && !catalogVisible)
 		{
 			gTutorialContinue.Enable();
@@ -3997,13 +4016,40 @@ namespace
 		gStackSplitBlock.ChangeCursor(gpItemPointer ? EXTERN_CURSOR : CURSOR_NORMAL);
 		for (MOUSE_REGION& r : gStackSplitRegions)
 			r.ChangeCursor(gpItemPointer ? EXTERN_CURSOR : CURSOR_NORMAL);
-		RefreshHeldItemCursor();
 		if (OS0GetRealtimeEditorUI().initialized())
 		{
 			OS0GetRealtimeEditorUI().setInputEnabled(enabled &&
 				!contextVisible && !gStackSplitVisible && !catalogVisible &&
 				!gTutorialActive && !gAimAutoCollapsed && !gpItemPointer);
 			OS0GetRealtimeEditorUI().update();
+		}
+		if (gpItemPointer)
+		{
+			// Transfer mode has a deliberately small input surface. The slot,
+			// equipment, loot and relation regions above remain enabled; every
+			// unrelated control is disabled centrally so a drop can never also
+			// close, drag, retab or execute the window underneath it.
+			gBagGrabber.Disable();
+			gBagClose.Disable();
+			gGodLibraryGrabber.Disable();
+			gGodLibraryClose.Disable();
+			for (MOUSE_REGION& r : gGodIconRegions) r.Disable();
+			for (MOUSE_REGION& r : gAssetLibraryRegions) r.Disable();
+			for (MOUSE_REGION& r : gAssetCatalogRegions) r.Disable();
+			for (MOUSE_REGION& r : gContextRegions) r.Disable();
+			for (MOUSE_REGION& r : gFloatingPanelGrabbers) r.Disable();
+			for (MOUSE_REGION& r : gFloatingPanelCloses) r.Disable();
+			for (MOUSE_REGION& r : gToolboxRegions) r.Disable();
+			for (MOUSE_REGION& r : gEnvironmentSkillRegions) r.Disable();
+			for (MOUSE_REGION& r : gPanelDockRegions) r.Disable();
+			for (MOUSE_REGION& r : gFeedbackRegions) r.Disable();
+			for (MOUSE_REGION& r : gSectorUpgradeRegions) r.Disable();
+			for (MOUSE_REGION& r : gSectorTabRegions) r.Disable();
+			for (MOUSE_REGION& r : gOpsActionRegions) r.Disable();
+			gStrategicMapRegion.Disable();
+			gSectorTeamRegion.Disable();
+			gOrbRegion.Disable();
+			gCombatModeRegion.Disable();
 		}
 		SyncManagedMouseRegionZOrder(windows);
 	}
@@ -4241,9 +4287,23 @@ namespace
 		return moved;
 	}
 
-	void BagBlockCallback(MOUSE_REGION*, UINT32)
+	void BagBlockCallback(MOUSE_REGION*, UINT32 reason)
 	{
-		// Intentionally consumes clicks so they do not reach the tactical world.
+		// A panel background is an explicit non-target. It consumes the complete
+		// held-item gesture but leaves the native item cursor intact. This prevents
+		// blank pixels from forwarding the same UP to a world drop behind the panel.
+		OS0ItemTransferController& transfers = OS0GetItemTransferController();
+		if ((reason & MSYS_CALLBACK_REASON_POINTER_DWN) && gpItemPointer)
+		{
+			transfers.reconcile(TRUE);
+			transfers.beginHeldGesture();
+		}
+		if ((reason & MSYS_CALLBACK_REASON_POINTER_UP) && gpItemPointer &&
+			transfers.claimRelease(OS0ItemTransferSurface::RELATION) ==
+				OS0ItemReleaseClaim::ITEM)
+			transfers.completeItemRelease(TRUE);
+		else if ((reason & MSYS_CALLBACK_REASON_POINTER_UP) && !gpItemPointer)
+			transfers.claimRelease(OS0ItemTransferSurface::RELATION);
 	}
 
 	void BagGrabberCallback(MOUSE_REGION*, UINT32 reason)
@@ -4744,6 +4804,7 @@ namespace
 							break;
 						}
 						RemoveItemFromPool(worldItem);
+						OS0InvalidateWorldHoverProjection();
 						OS0EquipObject(selected, &object, NO_SLOT);
 						if (object.usItem != NOTHING)
 							AddItemToPool(gContextGridNo, &object, VISIBLE,
@@ -4799,8 +4860,11 @@ namespace
 						const GridNo dropGrid = selected ?
 							selected->sGridNo : gContextGridNo;
 						if (dropGrid >= 0 && dropGrid < WORLD_MAX)
+						{
 							AddItemToPool(dropGrid, &ammo, VISIBLE,
 								selected ? selected->bLevel : gContextLevel, 0, -1);
+							OS0InvalidateWorldHoverProjection();
+						}
 					}
 				}
 				break;
@@ -4820,19 +4884,12 @@ namespace
 				}
 			if (detailObject && detailObject->usItem != NOTHING)
 			{
-				const OBJECTTYPE details = *detailObject;
 				const ST::string detailsName =
 					GCM->getItem(detailObject->usItem)->getName();
 				// Release the radial first: its normal close clears transient hover
 				// content.  Publish the pinned details afterwards so they survive.
 				CloseContextMenu();
-				gItemDetailsObject = details;
-				gItemDetailsName = detailsName;
-				// Details are inspector content, not a second inventory window.  The
-				// old path made an invisible ITEM_DETAILS window modal and opened the
-				// loot panel as a side effect, which could strand direct control.
-				gItemDetailsVisible = FALSE;
-				gHoverTitle = gItemDetailsName;
+				gHoverTitle = detailsName;
 				gHoverDetail = ST::format("ITEM {} / CONDITION {}% / STACK {}",
 					detailObject->usItem, detailObject->bStatus[0],
 					detailObject->ubNumberOfObjects);
@@ -4861,6 +4918,7 @@ namespace
 							break;
 						}
 						RemoveItemFromPool(worldItem);
+						OS0InvalidateWorldHoverProjection();
 						OS0EquipObject(selected, &object, NO_SLOT);
 						if (object.usItem != NOTHING)
 							AddItemToPool(gContextGridNo, &object, VISIBLE,
@@ -4889,7 +4947,11 @@ namespace
 					{
 						OBJECTTYPE object = worldItem.o;
 						RemoveItemFromPool(worldItem);
+						OS0InvalidateWorldHoverProjection();
 						InternalBeginItemPointer(selected, &object, NO_SLOT);
+						if (gpItemPointer)
+							OS0GetItemTransferController().
+								adoptExternalHeldItemAfterHandledRelease();
 					}
 				}
 				else if (subject && gContextInventorySlot != NO_SLOT &&
@@ -4902,7 +4964,12 @@ namespace
 						OBJECTTYPE object{};
 						GetObjFrom(&subject->inv[gContextInventorySlot], 0, &object);
 						if (object.usItem != NOTHING)
+						{
 							InternalBeginItemPointer(selected, &object, NO_SLOT);
+							if (gpItemPointer)
+								OS0GetItemTransferController().
+									adoptExternalHeldItemAfterHandledRelease();
+						}
 					}
 				}
 				break;
@@ -5079,6 +5146,8 @@ namespace
 		gStackSplitSoldier = nullptr;
 		gStackSplitSlot = NO_SLOT;
 		InternalBeginItemPointer(soldier, &moving, slot);
+		if (gpItemPointer)
+			OS0GetItemTransferController().adoptExternalHeldItemAfterHandledRelease();
 		RecordFeedbackEvent(ST::format("STACK MOVE {} OBJECTS", amount));
 		SetBagRegionsEnabled(TRUE);
 		SetRenderFlags(RENDER_FLAG_FULL);
@@ -5105,6 +5174,26 @@ namespace
 
 	void EquipmentPackCallback(MOUSE_REGION*, UINT32 reason)
 	{
+		OS0ItemTransferController& transfers = OS0GetItemTransferController();
+		if ((reason & MSYS_CALLBACK_REASON_POINTER_DWN) && gpItemPointer)
+		{
+			transfers.reconcile(TRUE);
+			transfers.beginHeldGesture();
+			return;
+		}
+		if ((reason & MSYS_CALLBACK_REASON_POINTER_UP) && gpItemPointer)
+		{
+			if (transfers.claimRelease(OS0ItemTransferSurface::RELATION) !=
+				OS0ItemReleaseClaim::ITEM) return;
+			if (gEquipmentExplodedVisible && gEquipmentSoldier &&
+				CurrentItemTransferDecision(gEquipmentSoldier).allows(
+					ItemTransferIntent::PACK))
+				ApplyItemTransferIntent(gEquipmentSoldier, ItemTransferIntent::PACK);
+			else
+				RecordFeedbackEvent("PACK / ITEM DOES NOT FIT");
+			transfers.completeItemRelease(gpItemPointer != nullptr);
+			return;
+		}
 		if (!(reason & MSYS_CALLBACK_REASON_POINTER_UP) ||
 			!gEquipmentExplodedVisible || !gEquipmentSoldier) return;
 		gInventorySoldier = gEquipmentSoldier;
@@ -5119,6 +5208,7 @@ namespace
 	{
 		if (!gpItemPointer || !actor) return;
 		AddItemToPool(actor->sGridNo, gpItemPointer, VISIBLE, actor->bLevel, 0, -1);
+		OS0InvalidateWorldHoverProjection();
 		NotifySoldiersToLookforItems();
 		EndItemPointer();
 	}
@@ -5147,11 +5237,30 @@ namespace
 		if (!actor || !gpItemPointer || !CanAccessSoldierContents(actor)) return FALSE;
 		if (intent == ItemTransferIntent::DROP) return TRUE;
 		if (!OS0CanAcceptCarriedObject(actor, *gpItemPointer)) return FALSE;
-		if (intent == ItemTransferIntent::PACK) return TRUE;
+		if (intent == ItemTransferIntent::PACK)
+			return OS0CanPackObject(actor, *gpItemPointer);
+		if ((intent == ItemTransferIntent::PRIMARY_HAND ||
+			intent == ItemTransferIntent::SECONDARY_HAND) &&
+			!OS0HasActiveHandUse(*gpItemPointer)) return FALSE;
 		const INT8 slot = ItemTransferIntentSlot(actor, intent);
 		if (slot == NO_SLOT) return FALSE;
 		OBJECTTYPE preview = *gpItemPointer;
 		return CanItemFitInPosition(actor, &preview, slot, FALSE);
+	}
+
+	ItemTransferPolicyDecision CurrentItemTransferDecision(SOLDIERTYPE* actor)
+	{
+		ItemTransferPolicyInput input;
+		input.carryingItem = gpItemPointer && gpItemPointer->usItem != NOTHING;
+		input.targetAvailable = actor != nullptr;
+		input.targetAccessible = actor && CanAccessSoldierContents(actor);
+		if (input.carryingItem && input.targetAccessible)
+		{
+			for (ItemTransferIntentSpec const& spec : gOS0ItemTransferIntents)
+				input.allowed[static_cast<size_t>(spec.intent)] =
+					ItemTransferIntentAllowed(actor, spec.intent);
+		}
+		return ResolveItemTransferPolicy(input);
 	}
 
 	ST::string ItemTransferIntentLabel(SOLDIERTYPE* actor, ItemTransferIntent intent)
@@ -5214,20 +5323,34 @@ namespace
 		return TRUE;
 	}
 
-	void ItemTransferIntentCallback(MOUSE_REGION* region, UINT32 reason)
+	BOOLEAN PlacePointerInActorPack(SOLDIERTYPE* actor)
 	{
-		if (!(reason & MSYS_CALLBACK_REASON_POINTER_UP) || !gpItemPointer ||
-			!gItemTransferTarget || !CanAccessSoldierContents(gItemTransferTarget)) return;
-		const size_t index = static_cast<size_t>(region->GetUserData<0>());
-		if (index >= gOS0ItemTransferIntents.size()) return;
-		SOLDIERTYPE* const actor = gItemTransferTarget;
-		const ItemTransferIntent intent = gOS0ItemTransferIntents[index].intent;
-		if (!ItemTransferIntentAllowed(actor, intent))
+		if (!actor || !gpItemPointer ||
+			!OS0CanPackObject(actor, *gpItemPointer)) return FALSE;
+		auto fillRange = [actor](INT8 first, INT8 last, BOOLEAN existingStack)
 		{
-			RecordFeedbackEvent(ST::format("TRANSFER BLOCKED / {}",
-				ItemTransferIntentLabel(actor, intent)));
-			return;
-		}
+			for (INT8 slot = first; slot <= last && gpItemPointer &&
+				gpItemPointer->ubNumberOfObjects > 0; ++slot)
+			{
+				OBJECTTYPE const& stored = actor->inv[slot];
+				const BOOLEAN sameStack = stored.usItem == gpItemPointer->usItem;
+				if (existingStack ? !sameStack : stored.usItem != NOTHING) continue;
+				if (ItemSlotLimit(gpItemPointer->usItem, slot) == 0) continue;
+				PlaceObject(actor, slot, gpItemPointer);
+			}
+		};
+		// Finish compatible stacks first, then prefer small pockets so large slots
+		// remain available for objects that cannot fit anywhere else.
+		fillRange(BIGPOCK1POS, SMALLPOCK8POS, TRUE);
+		fillRange(SMALLPOCK1POS, SMALLPOCK8POS, FALSE);
+		fillRange(BIGPOCK1POS, BIGPOCK4POS, FALSE);
+		return gpItemPointer->ubNumberOfObjects == 0;
+	}
+
+	BOOLEAN ApplyItemTransferIntent(SOLDIERTYPE* actor, ItemTransferIntent intent)
+	{
+		if (!actor || !gpItemPointer ||
+			!CurrentItemTransferDecision(actor).allows(intent)) return FALSE;
 		switch (intent)
 		{
 			case ItemTransferIntent::PRIMARY_HAND:
@@ -5240,9 +5363,10 @@ namespace
 				PlacePointerInActorSlot(actor, ItemTransferIntentSlot(actor, intent));
 				break;
 			case ItemTransferIntent::PACK:
-				if (!AutoPlaceObject(actor, gpItemPointer, TRUE) ||
-					(gpItemPointer && gpItemPointer->ubNumberOfObjects > 0))
-					DropPointerAtActor(actor);
+				// The policy has already verified enough pocket capacity. If an engine
+				// edge case still leaves a remainder, keep it on the cursor instead of
+				// silently dropping it at the actor's feet.
+				PlacePointerInActorPack(actor);
 				break;
 			case ItemTransferIntent::DROP:
 				DropPointerAtActor(actor);
@@ -5250,35 +5374,147 @@ namespace
 		}
 		if (gpItemPointer && gpItemPointer->ubNumberOfObjects == 0) EndItemPointer();
 		if (!gpItemPointer) gItemTransferTarget = nullptr;
+		gItemTransferMoreVisible = FALSE;
 		PositionBagRegions();
 		SetBagRegionsEnabled(TRUE);
 		SetRenderFlags(RENDER_FLAG_FULL);
+		return TRUE;
+	}
+
+	void ItemTransferIntentCallback(MOUSE_REGION* region, UINT32 reason)
+	{
+		OS0ItemTransferController& transfers = OS0GetItemTransferController();
+		if (reason & MSYS_CALLBACK_REASON_POINTER_DWN)
+		{
+			transfers.reconcile(gpItemPointer != nullptr);
+			transfers.beginHeldGesture();
+			return;
+		}
+		if (!(reason & MSYS_CALLBACK_REASON_POINTER_UP) || !gpItemPointer) return;
+		if (transfers.claimRelease(OS0ItemTransferSurface::RELATION) !=
+			OS0ItemReleaseClaim::ITEM) return;
+		if (!gItemTransferTarget || !CanAccessSoldierContents(gItemTransferTarget))
+		{
+			transfers.completeItemRelease(TRUE);
+			return;
+		}
+		const size_t index = static_cast<size_t>(region->GetUserData<0>());
+		if (index >= gOS0ItemTransferIntents.size())
+		{
+			transfers.completeItemRelease(TRUE);
+			return;
+		}
+		SOLDIERTYPE* const actor = gItemTransferTarget;
+		const ItemTransferIntent intent = gOS0ItemTransferIntents[index].intent;
+		ItemTransferPolicyDecision const decision =
+			CurrentItemTransferDecision(actor);
+		if (!decision.allows(intent))
+		{
+			RecordFeedbackEvent(ST::format("TRANSFER BLOCKED / {}",
+				ItemTransferIntentLabel(actor, intent)));
+			transfers.completeItemRelease(TRUE);
+			return;
+		}
+		ApplyItemTransferIntent(actor, intent);
+		transfers.completeItemRelease(gpItemPointer != nullptr);
+	}
+
+	void ItemTransferMoreCallback(MOUSE_REGION*, UINT32 reason)
+	{
+		OS0ItemTransferController& transfers = OS0GetItemTransferController();
+		if (reason & MSYS_CALLBACK_REASON_POINTER_DWN)
+		{
+			transfers.reconcile(gpItemPointer != nullptr);
+			transfers.beginHeldGesture();
+			return;
+		}
+		if (!(reason & MSYS_CALLBACK_REASON_POINTER_UP) || !gpItemPointer) return;
+		if (transfers.claimRelease(OS0ItemTransferSurface::RELATION) !=
+			OS0ItemReleaseClaim::ITEM) return;
+		if (!gItemTransferTarget)
+		{
+			transfers.completeItemRelease(TRUE);
+			return;
+		}
+		ItemTransferPolicyDecision const decision =
+			CurrentItemTransferDecision(gItemTransferTarget);
+		if (!decision.hasAlternatives())
+		{
+			transfers.completeItemRelease(TRUE);
+			return;
+		}
+		gItemTransferMoreVisible = !gItemTransferMoreVisible;
+		PositionItemTransferIntentRegions();
+		SetBagRegionsEnabled(TRUE);
+		SetRenderFlags(RENDER_FLAG_FULL);
+		transfers.completeItemRelease(TRUE);
 	}
 
 	void SlotCallback(MOUSE_REGION* region, UINT32 reason)
 	{
-		if (GetJA2Clock() < gPanelInteractionGuardUntil) return;
+		OS0ItemTransferController& transfers = OS0GetItemTransferController();
+		if (GetJA2Clock() < gPanelInteractionGuardUntil)
+		{
+			if ((reason & MSYS_CALLBACK_REASON_POINTER_UP) && gpItemPointer &&
+				transfers.claimRelease(OS0ItemTransferSurface::INVENTORY) ==
+					OS0ItemReleaseClaim::ITEM)
+				transfers.completeItemRelease(TRUE);
+			return;
+		}
 		SOLDIERTYPE* const soldier = gInventorySoldier ?
 			gInventorySoldier : GetSelectedMan();
 		SOLDIERTYPE* const selected = GetSelectedMan();
-		if (!soldier || !CanAccessSoldierContents(soldier)) return;
+		if (!soldier || !CanAccessSoldierContents(soldier))
+		{
+			if ((reason & MSYS_CALLBACK_REASON_POINTER_UP) && gpItemPointer &&
+				transfers.claimRelease(OS0ItemTransferSurface::INVENTORY) ==
+					OS0ItemReleaseClaim::ITEM)
+				transfers.completeItemRelease(TRUE);
+			return;
+		}
 		const INT8 slot = static_cast<INT8>(region->GetUserData<0>());
+		const UINT32 sourceId = (static_cast<UINT32>(soldier->ubID) << 8) |
+			static_cast<UINT8>(slot);
 
 		if ((reason & MSYS_CALLBACK_REASON_RBUTTON_UP) &&
 			gpItemPointer == nullptr && soldier->inv[slot].usItem != NOTHING)
 		{
 			OpenInventoryItemContext(soldier, slot);
 		}
-		else if ((reason & MSYS_CALLBACK_REASON_POINTER_DWN) &&
-			gpItemPointer == nullptr && soldier->inv[slot].usItem != NOTHING)
+		else if (reason & MSYS_CALLBACK_REASON_POINTER_DWN)
 		{
+			if (gpItemPointer)
+			{
+				transfers.reconcile(TRUE);
+				transfers.beginHeldGesture();
+				return;
+			}
+			if (soldier->inv[slot].usItem != NOTHING)
+				transfers.beginSourcePress(OS0ItemTransferSurface::INVENTORY,
+					sourceId, gusMouseXPos, gusMouseYPos);
+		}
+		else if (!gpItemPointer &&
+			transfers.sourceMatches(OS0ItemTransferSurface::INVENTORY, sourceId) &&
+			(((reason & MSYS_CALLBACK_REASON_MOVE) &&
+				(region->ButtonState & MSYS_LEFT_BUTTON) &&
+				transfers.dragThresholdReached(OS0ItemTransferSurface::INVENTORY,
+					sourceId, gusMouseXPos, gusMouseYPos)) ||
+			 ((reason & MSYS_CALLBACK_REASON_LOST_MOUSE) &&
+				(IsMouseButtonDown(MOUSE_BUTTON_LEFT) || IsMainFingerDown()))))
+		{
+			if (soldier->inv[slot].usItem == NOTHING)
+			{
+				transfers.cancelGestureAndConsumeRelease();
+				return;
+			}
 			if (soldier == selected && soldier->inv[slot].ubNumberOfObjects > 1)
 			{
+				// Quantity selection is its own modal transaction. It consumes this
+				// drag before creating a new native item pointer.
+				transfers.cancelGestureAndConsumeRelease();
 				BeginStackSplit(soldier, slot);
 				return;
 			}
-			// Hand control to JA2. Its native item cursor can place this object
-			// in another pocket, give/throw it, or drop it onto a world tile.
 			if (soldier == selected)
 			{
 				BeginItemPointer(soldier, slot);
@@ -5289,26 +5525,56 @@ namespace
 				GetObjFrom(&soldier->inv[slot], 0, &looted);
 				if (looted.usItem != NOTHING) InternalBeginItemPointer(selected, &looted, NO_SLOT);
 			}
+			if (gpItemPointer)
+				transfers.markItemHeld(OS0ItemTransferSurface::INVENTORY, sourceId);
+			else
+				transfers.cancelGestureAndConsumeRelease();
 		}
 		else if ((reason & MSYS_CALLBACK_REASON_POINTER_UP) && gpItemPointer)
 		{
+			if (transfers.claimRelease(OS0ItemTransferSurface::INVENTORY) !=
+				OS0ItemReleaseClaim::ITEM) return;
 			if (!OS0CanAcceptCarriedObject(soldier, *gpItemPointer))
 				RecordFeedbackEvent("LOAD LIMIT 125% / SLOT REJECTED");
 			else if (!PlacePointerInActorSlot(soldier, slot))
 				RecordFeedbackEvent("ITEM / SLOT RELATION NOT COMPATIBLE");
+			transfers.completeItemRelease(gpItemPointer != nullptr);
+		}
+		else if (reason & MSYS_CALLBACK_REASON_POINTER_UP)
+		{
+			transfers.claimRelease(OS0ItemTransferSurface::INVENTORY);
 		}
 	}
 
 	void LootSlotCallback(MOUSE_REGION* region, UINT32 reason)
 	{
+		OS0ItemTransferController& transfers = OS0GetItemTransferController();
 		// The double-click which opened this window may still be completing.
 		// Never let that same physical gesture activate or close its contents.
-		if (GetJA2Clock() < gPanelInteractionGuardUntil) return;
-		if (GetJA2Clock() < gLootIgnoreInputUntil) return;
+		if (GetJA2Clock() < gPanelInteractionGuardUntil ||
+			GetJA2Clock() < gLootIgnoreInputUntil)
+		{
+			if ((reason & MSYS_CALLBACK_REASON_POINTER_UP) && gpItemPointer &&
+				transfers.claimRelease(OS0ItemTransferSurface::LOOT) ==
+					OS0ItemReleaseClaim::ITEM)
+				transfers.completeItemRelease(TRUE);
+			return;
+		}
 		SOLDIERTYPE* const selected = GetSelectedMan();
-		if (!selected || gLootGridNo < 0 || gLootGridNo >= WORLD_MAX) return;
+		if (!selected || gLootGridNo < 0 || gLootGridNo >= WORLD_MAX)
+		{
+			if ((reason & MSYS_CALLBACK_REASON_POINTER_UP) && gpItemPointer &&
+				transfers.claimRelease(OS0ItemTransferSurface::LOOT) ==
+					OS0ItemReleaseClaim::ITEM)
+				transfers.completeItemRelease(TRUE);
+			return;
+		}
 		if (PythSpacesAway(selected->sGridNo, gLootGridNo) > 2)
 		{
+			if ((reason & MSYS_CALLBACK_REASON_POINTER_UP) && gpItemPointer &&
+				transfers.claimRelease(OS0ItemTransferSurface::LOOT) ==
+					OS0ItemReleaseClaim::ITEM)
+				transfers.completeItemRelease(TRUE);
 			gLootVisible = FALSE;
 			SetBagRegionsEnabled(TRUE);
 			SetRenderFlags(RENDER_FLAG_FULL);
@@ -5316,11 +5582,13 @@ namespace
 		}
 		const size_t slot = static_cast<size_t>(region->GetUserData<0>());
 		if (slot >= gLootWorldItems.size()) return;
+		const INT32 itemIndex = gLootWorldItems[slot];
+		const UINT32 sourceId = itemIndex >= 0 ? static_cast<UINT32>(itemIndex) :
+			static_cast<UINT32>(slot);
 
 		if (reason & MSYS_CALLBACK_REASON_LBUTTON_DOUBLECLICK)
 		{
-			gLootDragCandidate = -1;
-			const INT32 itemIndex = gLootWorldItems[slot];
+			transfers.cancelGestureAndConsumeRelease();
 			if (itemIndex < 0 || static_cast<size_t>(itemIndex) >= gWorldItems.size()) return;
 			WORLDITEM& worldItem = GetWorldItem(itemIndex);
 			if (!worldItem.fExists || worldItem.o.usItem == NOTHING) return;
@@ -5338,43 +5606,71 @@ namespace
 		}
 		if ((reason & MSYS_CALLBACK_REASON_RBUTTON_UP) && !gpItemPointer)
 		{
-			gLootDragCandidate = -1;
-			const INT32 itemIndex = gLootWorldItems[slot];
 			OpenLootItemContext(itemIndex);
 		}
-		else if ((reason & MSYS_CALLBACK_REASON_POINTER_DWN) && !gpItemPointer)
+		else if (reason & MSYS_CALLBACK_REASON_POINTER_DWN)
 		{
-			// Do not remove the item yet. A double-click starts with this same
-			// event, so drag begins only after the pointer actually moves.
-			gLootDragCandidate = static_cast<INT8>(slot);
-			gLootDragStartX = gusMouseXPos;
-			gLootDragStartY = gusMouseYPos;
+			if (gpItemPointer)
+			{
+				transfers.reconcile(TRUE);
+				transfers.beginHeldGesture();
+			}
+			else
+			{
+				// Do not remove the item yet. A double-click starts with this same
+				// event, so drag begins only after the pointer actually moves.
+				transfers.beginSourcePress(OS0ItemTransferSurface::LOOT,
+					sourceId, gusMouseXPos, gusMouseYPos);
+			}
 		}
-		else if ((reason & MSYS_CALLBACK_REASON_MOVE) && !gpItemPointer &&
-			gLootDragCandidate == static_cast<INT8>(slot) &&
-			(region->ButtonState & MSYS_LEFT_BUTTON) &&
-			(std::abs(gusMouseXPos - gLootDragStartX) >= 4 ||
-			 std::abs(gusMouseYPos - gLootDragStartY) >= 4))
+		else if (!gpItemPointer &&
+			transfers.sourceMatches(OS0ItemTransferSurface::LOOT, sourceId) &&
+			(((reason & MSYS_CALLBACK_REASON_MOVE) &&
+				(region->ButtonState & MSYS_LEFT_BUTTON) &&
+				transfers.dragThresholdReached(OS0ItemTransferSurface::LOOT,
+					sourceId, gusMouseXPos, gusMouseYPos)) ||
+			 ((reason & MSYS_CALLBACK_REASON_LOST_MOUSE) &&
+				(IsMouseButtonDown(MOUSE_BUTTON_LEFT) || IsMainFingerDown()))))
 		{
-			const INT32 itemIndex = gLootWorldItems[slot];
-			gLootDragCandidate = -1;
 			if (itemIndex < 0 || static_cast<size_t>(itemIndex) >= gWorldItems.size()) return;
 			WORLDITEM& worldItem = GetWorldItem(itemIndex);
 			if (!worldItem.fExists || worldItem.o.usItem == NOTHING) return;
 			OBJECTTYPE object = worldItem.o;
 			RemoveItemFromPool(worldItem);
+			OS0InvalidateWorldHoverProjection();
 			InternalBeginItemPointer(selected, &object, NO_SLOT);
+			if (!gpItemPointer)
+			{
+				AddItemToPool(gLootGridNo, &object, VISIBLE, gLootLevel, 0, -1);
+				transfers.cancelGestureAndConsumeRelease();
+				return;
+			}
+			transfers.markItemHeld(OS0ItemTransferSurface::LOOT, sourceId);
+			// Taking an item from a container enters one clear state: item held,
+			// container still open. Destination affordances only appear when the
+			// cursor actually reaches an accessible actor.
+			gItemTransferTarget = nullptr;
+			gItemTransferMoreVisible = FALSE;
+			gEquipmentExplodedVisible = FALSE;
+			SetBagRegionsEnabled(TRUE);
 			SetRenderFlags(RENDER_FLAG_FULL);
 		}
 		else if ((reason & MSYS_CALLBACK_REASON_POINTER_UP) && gpItemPointer)
 		{
+			if (transfers.claimRelease(OS0ItemTransferSurface::LOOT) !=
+				OS0ItemReleaseClaim::ITEM) return;
 			if (AddItemToPool(gLootGridNo, gpItemPointer, VISIBLE,
-				gLootLevel, 0, -1) >= 0) EndItemPointer();
+				gLootLevel, 0, -1) >= 0)
+			{
+				OS0InvalidateWorldHoverProjection();
+				EndItemPointer();
+			}
+			transfers.completeItemRelease(gpItemPointer != nullptr);
 			SetRenderFlags(RENDER_FLAG_FULL);
 		}
 		else if (reason & MSYS_CALLBACK_REASON_POINTER_UP)
 		{
-			gLootDragCandidate = -1;
+			transfers.claimRelease(OS0ItemTransferSurface::LOOT);
 		}
 	}
 
@@ -5456,6 +5752,19 @@ namespace
 			CreateSoldierPalettes(*soldier);
 			fInterfacePanelDirty = DIRTYLEVEL2;
 		}
+	}
+
+	BOOLEAN PointerInsideItemTransferContext(SOLDIERTYPE const* actor)
+	{
+		INT16 anchorX;
+		INT16 anchorY;
+		if (!actor || !GetActorDisplayAnchor(actor, anchorX, anchorY)) return FALSE;
+		// Keep the context alive while the pointer travels from the body to one of
+		// its radial destinations. This fixes the old vanish-before-click behaviour
+		// without turning the projection into a persistent window.
+		const INT32 dx = static_cast<INT32>(gusMouseXPos) - anchorX;
+		const INT32 dy = static_cast<INT32>(gusMouseYPos) - anchorY;
+		return std::abs(dx) <= 132 && dy >= -132 && dy <= 42;
 	}
 
 	void EnsureSelectedOperatorTraitEffects()
@@ -5751,7 +6060,7 @@ namespace
 			!gEnvironmentEntries[index].enabled ||
 			gEnvironmentGridNo < 0 || gEnvironmentGridNo >= WORLD_MAX) return;
 		ContextAction const action = gEnvironmentEntries[index].action;
-		std::vector<OS0ResolvedAction> const resolved =
+		OS0ResolvedActionList const resolved =
 			ResolveInteractionAt(nullptr, gEnvironmentGridNo,
 				gEnvironmentLevel, gEnvironmentTileIndex);
 		if (OS0ResolvedAction const* const match =
@@ -6923,6 +7232,9 @@ namespace
 	{
 		if (gContextVisible || !gpItemPointer || !gItemTransferTarget ||
 			!CanAccessSoldierContents(gItemTransferTarget)) return;
+		ItemTransferPolicyDecision const decision =
+			CurrentItemTransferDecision(gItemTransferTarget);
+		if (decision.actions.empty()) return;
 		PositionItemTransferIntentRegions();
 		INT16 anchorX;
 		INT16 anchorY;
@@ -6937,6 +7249,11 @@ namespace
 			gOS0ItemTransferIntents.size()> helpCache{};
 		for (size_t i = 0; i < gOS0ItemTransferIntents.size(); ++i)
 		{
+			ItemTransferIntent const intent = gOS0ItemTransferIntents[i].intent;
+			const BOOLEAN preferred = decision.hasPreferred &&
+				decision.preferred == intent;
+			if (!decision.allows(intent) ||
+				(!preferred && !gItemTransferMoreVisible)) continue;
 			MOUSE_REGION const& region = gItemTransferIntentRegions[i];
 			const INT16 x = region.RegionTopLeftX;
 			const INT16 y = region.RegionTopLeftY;
@@ -6950,17 +7267,14 @@ namespace
 				std::max(anchorX, cx), cy, muted);
 			const BOOLEAN hot = gusMouseXPos >= x && gusMouseXPos <= x + 28 &&
 				gusMouseYPos >= y && gusMouseYPos <= y + 28;
-			const BOOLEAN allowed = ItemTransferIntentAllowed(gItemTransferTarget,
-				gOS0ItemTransferIntents[i].intent);
 			DrawIconCorners(x, y, 28, 28,
-				!allowed ? Get16BPPColor(FROMRGB(42, 42, 42)) :
-				(hot ? red : muted));
+				(hot || preferred) ? red : muted);
 			OS0UIAssets().draw(gOS0ItemTransferIntents[i].icon,
 				FRAME_BUFFER, x + 4, y + 4);
 			const ST::string relation = ItemTransferIntentLabel(gItemTransferTarget,
-				gOS0ItemTransferIntents[i].intent);
+				intent);
 			const ST::string help = ST::format("{}\n{}", relation,
-				allowed ? "CLICK TO APPLY" : "NOT COMPATIBLE");
+				preferred ? "RECOMMENDED / CLICK TO APPLY" : "CLICK TO APPLY");
 			if (helpCache[i] != help)
 			{
 				helpCache[i] = help;
@@ -6975,6 +7289,38 @@ namespace
 					gsVIEWPORT_END_X - 95),
 					std::max<INT16>(gsVIEWPORT_WINDOW_START_Y, y - 11),
 					relation.left(32));
+			}
+		}
+		if (decision.hasAlternatives())
+		{
+			MOUSE_REGION const& more = gItemTransferMoreRegion;
+			const INT16 x = more.RegionTopLeftX;
+			const INT16 y = more.RegionTopLeftY;
+			const INT16 cx = x + 14;
+			const INT16 cy = y + 14;
+			dirtyLeft = std::min(dirtyLeft, x);
+			dirtyTop = std::min<INT16>(dirtyTop, y - 11);
+			dirtyRight = std::max<INT16>(dirtyRight, x + 88);
+			dirtyBottom = std::max<INT16>(dirtyBottom, y + 28);
+			ColorFillVideoSurfaceArea(FRAME_BUFFER, std::min(anchorX, cx), cy,
+				std::max(anchorX, cx), cy, muted);
+			const BOOLEAN hot = gusMouseXPos >= x && gusMouseXPos <= x + 28 &&
+				gusMouseYPos >= y && gusMouseYPos <= y + 28;
+			DrawIconCorners(x, y, 28, 28, hot ? red : muted);
+			OS0UIAssets().draw(gItemTransferMoreVisible ? OS0UIIcon::CANCEL :
+				OS0UIIcon::KEYRING, FRAME_BUFFER, x + 4, y + 4);
+			gItemTransferMoreRegion.SetFastHelpText(gItemTransferMoreVisible ?
+				"LESS OPTIONS / CLICK TO COLLAPSE" :
+				"MORE OPTIONS / CLICK TO EXPAND");
+			if (hot)
+			{
+				SetFont(TINYFONT1);
+				SetFontBackground(FONT_MCOLOR_BLACK);
+				SetFontForeground(FONT_WHITE);
+				MPrint(std::clamp<INT16>(x - 18, gsVIEWPORT_START_X,
+					gsVIEWPORT_END_X - 95),
+					std::max<INT16>(gsVIEWPORT_WINDOW_START_Y, y - 11),
+					gItemTransferMoreVisible ? "LESS OPTIONS" : "MORE OPTIONS");
 			}
 		}
 		InvalidateRegion(dirtyLeft - 2, dirtyTop - 2,
@@ -7373,8 +7719,6 @@ namespace
 			FloatingPanelId::INSPECTOR)) || !gHoverVisible || gTutorialActive ||
 			gAimAutoCollapsed)
 			return;
-		gHoverX = panel.x;
-		gHoverY = panel.y;
 		const UINT16 red = Get16BPPColor(FROMRGB(205, 12, 12));
 		const UINT16 muted = Get16BPPColor(FROMRGB(92, 8, 8));
 		const UINT16 dark = Get16BPPColor(FROMRGB(4, 7, 7));
@@ -7481,7 +7825,6 @@ namespace
 				gInspectedGridNo = carry.destination;
 				gLootGridNo = carry.destination;
 				CaptureInspectorPreview(carry.destination, gInspectedLevel);
-				StartExplodedView(carry.destination, gInspectedTileIndex, TRUE);
 			}
 			if (gEnvironmentGridNo == carry.source)
 				RefreshEnvironmentTarget(carry.destination, carry.destinationLevel,
@@ -7502,6 +7845,7 @@ namespace
 					OS0GetTacticalSession().state().pendingVisualEvents.push_back({
 						carry.destination, OS0AssetMaterial::COMPOSITE, 2 });
 			}
+			OS0InvalidateWorldHoverProjection();
 			return TRUE;
 		}
 		catch (...)
@@ -8363,6 +8707,7 @@ namespace
 		StopFeedbackEditing();
 		if (gpItemPointer) CancelItemPointer();
 		gItemTransferTarget = nullptr;
+		gItemTransferMoreVisible = FALSE;
 		ClearWorldMoveState();
 		gPendingWorldAction.reset();
 		CloseContextMenu();
@@ -8380,7 +8725,6 @@ namespace
 		gLootVisible = FALSE;
 		gEquipmentExplodedVisible = FALSE;
 		gStackSplitVisible = FALSE;
-		gItemDetailsVisible = FALSE;
 		gHoverVisible = FALSE;
 		gEquipmentSoldier = nullptr;
 		gStackSplitSoldier = nullptr;
@@ -8439,8 +8783,10 @@ namespace
 		if (worldSwap) PrepareRealtimeEditorWorldSwap();
 		editor.update();
 		BOOLEAN worldSwapSucceeded = FALSE;
+		BOOLEAN worldChanged = FALSE;
 		for (OS0EditorCommandResult const& result : editor.drainResults())
 		{
+			worldChanged = static_cast<BOOLEAN>(worldChanged || result.worldChanged);
 			RecordFeedbackEvent(ST::format("EDITOR {} / {}",
 				result.success ? "OK" : "ERROR", result.message));
 			if ((result.type == OS0EditorCommandType::NEW_BLANK_MAP ||
@@ -8448,6 +8794,7 @@ namespace
 				result.success)
 				worldSwapSucceeded = TRUE;
 		}
+		if (worldChanged) OS0InvalidateWorldHoverProjection();
 		if (worldSwap) FinishRealtimeEditorWorldSwap(worldSwapSucceeded);
 		OS0GetRealtimeEditorUI().update();
 		if (OS0GetRealtimeEditorUI().active() && !gpItemPointer)
@@ -8492,10 +8839,6 @@ namespace
 			case OS0ManagedWindow::ASSET_CATALOG:
 				DrawAssetCatalog();
 				break;
-			case OS0ManagedWindow::ITEM_DETAILS:
-				// ITEM_DETAILS is retained as a persistence-compatible ID. Details
-				// are projected through INSPECTOR; there is no duplicate window.
-				break;
 			case OS0ManagedWindow::SECTOR:
 				DrawSectorPanel();
 				break;
@@ -8522,12 +8865,100 @@ namespace
 			gUIRuntime.windowManager().renderOrder())
 			DrawManagedWindow(id);
 	}
+
+	void OS0MouseSystemEventHook(UINT16 const type, UINT32 const button,
+		UINT16 const x, UINT16 const y)
+	{
+		if (!gInitialized) return;
+		const BOOLEAN primaryDown =
+			(type == MOUSE_BUTTON_DOWN && button == MOUSE_BUTTON_LEFT) ||
+			type == TOUCH_FINGER_DOWN;
+		const BOOLEAN primaryUp =
+			(type == MOUSE_BUTTON_UP && button == MOUSE_BUTTON_LEFT) ||
+			type == TOUCH_FINGER_UP;
+		if (!primaryDown && !primaryUp) return;
+
+		OS0ItemTransferController& transfers = OS0GetItemTransferController();
+		transfers.reconcile(gpItemPointer != nullptr);
+		if (primaryDown)
+		{
+			transfers.observePrimaryDown();
+			// A native item cursor can begin outside one of our explicit regions
+			// (stack split, context command, save restore). The physical DOWN still
+			// starts exactly one controller gesture.
+			if (gpItemPointer && !transfers.ownsPhysicalGesture())
+				transfers.beginHeldGesture();
+			return;
+		}
+		if (transfers.consumeSuppressedRelease()) return;
+		if (transfers.releaseWasHandled()) return;
+		if (!transfers.ownsPhysicalGesture()) return;
+		if (!gpItemPointer)
+		{
+			// DOWN belonged to a source slot, but the pointer left before a drag
+			// was established. Consume it as a source click, never as a world click.
+			transfers.claimRelease(OS0ItemTransferSurface::EXTERNAL);
+			return;
+		}
+
+		MOUSE_REGION* const current = MSYS_GetCurrentRegion();
+		const UINT32 reason = type == TOUCH_FINGER_UP ?
+			MSYS_CALLBACK_REASON_TFINGER_UP : MSYS_CALLBACK_REASON_LBUTTON_UP;
+		for (MOUSE_REGION& region : gSlotRegions)
+		{
+			if (current == &region) { SlotCallback(&region, reason); return; }
+		}
+		for (MOUSE_REGION& region : gEquipmentRegions)
+		{
+			if (current == &region) { SlotCallback(&region, reason); return; }
+		}
+		for (MOUSE_REGION& region : gLootRegions)
+		{
+			if (current == &region) { LootSlotCallback(&region, reason); return; }
+		}
+		for (MOUSE_REGION& region : gItemTransferIntentRegions)
+		{
+			if (current == &region)
+			{
+				ItemTransferIntentCallback(&region, reason);
+				return;
+			}
+		}
+		if (current == &gItemTransferMoreRegion)
+		{
+			ItemTransferMoreCallback(current, reason);
+			return;
+		}
+		if (current == &gEquipmentPackRegion)
+		{
+			EquipmentPackCallback(current, reason);
+			return;
+		}
+
+		if (OS0BlocksWorldInputAt(static_cast<INT16>(x), static_cast<INT16>(y)))
+		{
+			if (transfers.claimRelease(OS0ItemTransferSurface::RELATION) ==
+				OS0ItemReleaseClaim::ITEM)
+				transfers.completeItemRelease(TRUE);
+			return;
+		}
+
+		// The viewport callback normally never receives this UP because JA2 still
+		// remembers the original source region. Re-enter its semantic resolver
+		// once; it now projects the target afresh instead of trusting stale hover.
+		OS0HandleViewportPointerEvent(&gViewportRegion, reason);
+		if (!transfers.releaseWasHandled() && transfers.ownsPhysicalGesture() &&
+			transfers.claimRelease(OS0ItemTransferSurface::EXTERNAL) ==
+				OS0ItemReleaseClaim::ITEM)
+			transfers.completeItemRelease(TRUE);
+	}
 }
 
 
 void InitializeOS0IngameUI()
 {
 	if (gInitialized) return;
+	OS0GetItemTransferController().reset();
 	gNextCombatProjectionAt = 0;
 	gPendingWorldAction.reset();
 	gMultiToolExpanded = FALSE;
@@ -8747,13 +9178,13 @@ void InitializeOS0IngameUI()
 	{
 		const SlotLayout& slot = gSlots[i];
 		MSYS_DefineRegion(&gSlotRegions[i], 0, 0, slot.w, slot.h,
-			MSYS_PRIORITY_HIGHEST, CURSOR_NORMAL, MSYS_NO_CALLBACK, SlotCallback);
+			MSYS_PRIORITY_HIGHEST, CURSOR_NORMAL, SlotCallback, SlotCallback);
 		gSlotRegions[i].SetUserData<0>(slot.slot);
 	}
 	for (size_t i = 0; i < gEquipmentRegions.size(); ++i)
 	{
 		MSYS_DefineRegion(&gEquipmentRegions[i], 0, 0, 34, 25,
-			MSYS_PRIORITY_HIGHEST, CURSOR_NORMAL, MSYS_NO_CALLBACK, SlotCallback);
+			MSYS_PRIORITY_HIGHEST, CURSOR_NORMAL, SlotCallback, SlotCallback);
 		gEquipmentRegions[i].SetUserData<0>(gExplodedEquipmentSlots[i]);
 		gEquipmentRegions[i].Disable();
 	}
@@ -8769,6 +9200,10 @@ void InitializeOS0IngameUI()
 		gItemTransferIntentRegions[i].SetUserData<0>(i);
 		gItemTransferIntentRegions[i].Disable();
 	}
+	MSYS_DefineRegion(&gItemTransferMoreRegion, 0, 0, 28, 28,
+		MSYS_PRIORITY_HIGHEST, CURSOR_NORMAL, MSYS_NO_CALLBACK,
+		ItemTransferMoreCallback);
+	gItemTransferMoreRegion.Disable();
 	MSYS_DefineRegion(&gStackSplitBlock, 0, 0, 224, 82,
 		MSYS_PRIORITY_HIGH, CURSOR_NORMAL, MSYS_NO_CALLBACK, BagBlockCallback);
 	gStackSplitBlock.Disable();
@@ -8851,6 +9286,7 @@ void InitializeOS0IngameUI()
 	// updating it, while a crash or forced process exit can no longer lose the
 	// last successfully loaded/default arrangement.
 	SaveUILayout();
+	MSYS_SetEventHook(OS0MouseSystemEventHook);
 	SetRenderFlags(RENDER_FLAG_FULL);
 }
 
@@ -8858,6 +9294,7 @@ void InitializeOS0IngameUI()
 void ShutdownOS0IngameUI()
 {
 	if (!gInitialized) return;
+	MSYS_SetEventHook(nullptr);
 	SaveUILayout();
 	OS0GetRealtimeEditorUI().shutdown();
 	ClearWorldMoveState();
@@ -8865,12 +9302,15 @@ void ShutdownOS0IngameUI()
 	gFieldTutorial.notify(OS0FieldTutorialEvent::DISMISS);
 	ResetFieldTutorialTarget();
 	OS0ResetViewportPointerGestures();
+	OS0GetItemTransferController().reset();
 	CloseContextMenu();
 	gHoverVisible = FALSE;
 	gHoverActionBinding = {};
 	gHoverActionCycleIndex = 0;
 	gHoverActionExplicit = FALSE;
 	if (gpItemPointer) CancelItemPointer();
+	gItemTransferTarget = nullptr;
+	gItemTransferMoreVisible = FALSE;
 	MSYS_RemoveRegion(&gBagBlock);
 	MSYS_RemoveRegion(&gBagGrabber);
 	MSYS_RemoveRegion(&gBagClose);
@@ -8900,6 +9340,7 @@ void ShutdownOS0IngameUI()
 	for (MOUSE_REGION& r : gEquipmentRegions) MSYS_RemoveRegion(&r);
 	MSYS_RemoveRegion(&gEquipmentPackRegion);
 	for (MOUSE_REGION& r : gItemTransferIntentRegions) MSYS_RemoveRegion(&r);
+	MSYS_RemoveRegion(&gItemTransferMoreRegion);
 	MSYS_RemoveRegion(&gStackSplitBlock);
 	for (MOUSE_REGION& r : gStackSplitRegions) MSYS_RemoveRegion(&r);
 	MSYS_RemoveRegion(&gOrbRegion);
@@ -8949,7 +9390,6 @@ void ShutdownOS0IngameUI()
 	gStackSplitVisible = FALSE;
 	gStackSplitSoldier = nullptr;
 	gStackSplitSlot = NO_SLOT;
-	gLootDragCandidate = -1;
 	gPanelInteractionGuardUntil = 0;
 	gLootIgnoreInputUntil = 0;
 	gAimAutoCollapsed = FALSE;
@@ -9045,6 +9485,7 @@ void UpdateOS0TacticalSession()
 	if (!gpItemPointer && gItemTransferTarget)
 	{
 		gItemTransferTarget = nullptr;
+		gItemTransferMoreVisible = FALSE;
 		inputRegionsDirty = TRUE;
 	}
 	fRenderRadarScreen = FALSE;
@@ -9139,6 +9580,17 @@ void UpdateOS0TacticalSession()
 void RenderOS0IngameUI()
 {
 	if (!gInitialized) InitializeOS0IngameUI();
+	// Native JA2 paths (save restore, stack split and cancel) may create or end
+	// the cursor outside an OS//0 region callback. Reconcile once per frame so a
+	// stale transaction can never keep UI/world input captured.
+	OS0ItemTransferController& transfers = OS0GetItemTransferController();
+	transfers.reconcile(gpItemPointer != nullptr);
+	// Focus changes may make SDL report the button as released without emitting
+	// a final region event. Recover at the frame boundary, after input dispatch,
+	// so neither a slot nor the viewport can remain permanently captured.
+	transfers.recoverLostRelease(
+		IsMouseButtonDown(MOUSE_BUTTON_LEFT) || IsMainFingerDown(),
+		gpItemPointer != nullptr);
 	if (!gTutorialActive && gBagVisible)
 		CaptureAnimatedMercPreview(gInventorySoldier ?
 			gInventorySoldier : GetSelectedMan());
@@ -9185,12 +9637,6 @@ void RenderOS0IngameUI()
 BOOLEAN OS0CreatorIsActive()
 {
 	return gInitialized && gTutorialActive;
-}
-
-
-BOOLEAN OS0CombatModeActive()
-{
-	return gInitialized && CombatModeActive();
 }
 
 
@@ -9318,7 +9764,6 @@ BOOLEAN OS0SelectWorldObject(SOLDIERTYPE* target, GridNo gridNo,
 	{
 		InteractionMode().beginInteraction(target->bTeam == OUR_TEAM ?
 			OS0InteractionSurface::EQUIPMENT : OS0InteractionSurface::ACTIONS);
-		gItemDetailsVisible = FALSE;
 		gInspectedSoldier = target;
 		gInspectedGridNo = NOWHERE;
 		gContentsMode = ContentsMode::SOLDIER;
@@ -9353,7 +9798,6 @@ BOOLEAN OS0SelectWorldObject(SOLDIERTYPE* target, GridNo gridNo,
 	gInspectedLevel = level;
 	gInspectedTileIndex = tileIndex;
 	RefreshEnvironmentTarget(gridNo, level, tileIndex);
-	StartExplodedView(gridNo, tileIndex, TRUE);
 	gLootGridNo = gridNo;
 	gLootLevel = level;
 	gLootTileIndex = tileIndex;
@@ -9365,7 +9809,6 @@ BOOLEAN OS0SelectWorldObject(SOLDIERTYPE* target, GridNo gridNo,
 	// not close the loot window that the double-click has just opened.
 	if (!sameWorldSelection)
 	{
-		gItemDetailsVisible = FALSE;
 		gLootVisible = FALSE;
 	}
 	CaptureInspectorPreview(gridNo, level);
@@ -9379,7 +9822,8 @@ void OS0HoverWorldObject(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 	UINT16 tileIndex, INT16 screenX, INT16 screenY)
 {
 	tileIndex = ResolveWorldTileIndex(gridNo, level, tileIndex);
-	const UINT16 heldItem = gpItemPointer ? gpItemPointer->usItem : NOTHING;
+	const UINT16 heldItem = gpItemPointer ? gpItemPointer->usItem :
+		static_cast<UINT16>(NOTHING);
 	const BOOLEAN cursorContextChanged = target != gHoverCursorSoldier ||
 		gridNo != gHoverCursorGridNo || level != gHoverCursorLevel ||
 		tileIndex != gHoverCursorTileIndex;
@@ -9397,7 +9841,7 @@ void OS0HoverWorldObject(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 		gHoverActionExplicit = FALSE;
 		if (!CarryState().active())
 		{
-			std::vector<OS0ResolvedAction> const actions =
+			OS0ResolvedActionList const actions =
 				ResolveInteractionAt(target, gridNo, level, tileIndex);
 			if (OS0ResolvedAction const* const primary =
 				PrimaryOS0InteractionAction(actions))
@@ -9405,26 +9849,25 @@ void OS0HoverWorldObject(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 		}
 	}
 	// This relation is evaluated every frame, not only when the world hover key
-	// changes. Starting an item drag while already over the actor used to miss the
-	// transition completely and no transfer destinations appeared.
+	// changes. Holding an item is deliberately not permission to open the actor's
+	// character sheet or every equipment slot: only the policy-filtered relation
+	// symbols are projected while the pointer is actually over an accessible actor.
 	if (gpItemPointer && target && CanAccessSoldierContents(target))
 	{
-		const BOOLEAN transferTargetChanged = gItemTransferTarget != target ||
-			gEquipmentSoldier != target || !gEquipmentExplodedVisible;
+		const BOOLEAN transferTargetChanged = gItemTransferTarget != target;
 		gItemTransferTarget = target;
-		gEquipmentSoldier = target;
-		gInventorySoldier = target;
-		gEquipmentExplodedVisible = TRUE;
 		if (transferTargetChanged)
 		{
-			PositionEquipmentRegions();
-			PositionBagRegions();
+			gItemTransferMoreVisible = FALSE;
+			PositionItemTransferIntentRegions();
 			SetBagRegionsEnabled(TRUE);
 		}
 	}
-	else if (gpItemPointer && gItemTransferTarget)
+	else if (gpItemPointer && gItemTransferTarget &&
+		!PointerInsideItemTransferContext(gItemTransferTarget))
 	{
 		gItemTransferTarget = nullptr;
+		gItemTransferMoreVisible = FALSE;
 		SetBagRegionsEnabled(TRUE);
 	}
 	const BOOLEAN validGrid = gridNo >= 0 && gridNo < WORLD_MAX;
@@ -9757,7 +10200,7 @@ void OS0OpenContextMenu(SOLDIERTYPE* target, GridNo gridNo, UINT8 level,
 void OS0CycleCursorAction(SOLDIERTYPE* target, GridNo gridNo, UINT8 level, UINT16 tileIndex)
 {
 	tileIndex = ResolveWorldTileIndex(gridNo, level, tileIndex);
-	std::vector<OS0ResolvedAction> const resolved =
+	OS0ResolvedActionList const resolved =
 		ResolveInteractionAt(target, gridNo, level, tileIndex);
 	std::array<ContextAction, 12> available{};
 	size_t count = 0;
@@ -9796,6 +10239,7 @@ void OS0CancelCursorAction()
 	{
 		CancelItemPointer();
 		gItemTransferTarget = nullptr;
+		gItemTransferMoreVisible = FALSE;
 		RecordFeedbackEvent("HELD ITEM RETURNED TO INVENTORY");
 	}
 	StopOwnedCarryMovement();
@@ -9851,6 +10295,7 @@ namespace
 			case OS0CancellationLayer::HELD_ITEM:
 				CancelItemPointer();
 				gItemTransferTarget = nullptr;
+				gItemTransferMoreVisible = FALSE;
 				RecordFeedbackEvent("HELD ITEM RETURNED TO INVENTORY");
 				break;
 			case OS0CancellationLayer::WORLD_MANIPULATION:
@@ -9900,7 +10345,7 @@ namespace
 			if (!carry.walking())
 			{
 				const UINT8 facing = actor->bDirection < NUM_WORLD_DIRECTIONS ?
-					actor->bDirection : NORTH;
+					actor->bDirection : static_cast<UINT8>(NORTH);
 				SendSoldierSetDesiredDirectionEvent(actor,
 					turnLeft ? OneCCDirection(facing) : OneCDirection(facing));
 			}
@@ -9909,7 +10354,7 @@ namespace
 		if (carry.walking()) return TRUE;
 
 		UINT8 direction = actor->bDirection < NUM_WORLD_DIRECTIONS ?
-			actor->bDirection : NORTH;
+			actor->bDirection : static_cast<UINT8>(NORTH);
 		if (key == SDLK_s || key == 'S') direction = OppositeDirection(direction);
 		else if (key == SDLK_a || key == 'A')
 			direction = OneCCDirection(OneCCDirection(direction));
@@ -10003,15 +10448,21 @@ BOOLEAN OS0HandleHeldItemAction(SOLDIERTYPE* target, GridNo gridNo,
 	SOLDIERTYPE* const actor = gpItemPointerSoldier;
 
 	// The actor is a relation target, not an implicit inventory bucket. Clicking
-	// the actor keeps the item held and exposes valid body/hand/pack/drop actions;
-	// the chosen symbol performs exactly one registered transfer.
+	// keeps the item held and exposes only policy-approved relations; it never
+	// opens the character sheet and the exploded equipment UI as side effects.
 	if (target && CanAccessSoldierContents(target))
 	{
+		if (gItemTransferTarget != target) gItemTransferMoreVisible = FALSE;
 		gItemTransferTarget = target;
-		gEquipmentSoldier = target;
-		gInventorySoldier = target;
-		gEquipmentExplodedVisible = TRUE;
-		PositionEquipmentRegions();
+		ItemTransferPolicyDecision const decision =
+			CurrentItemTransferDecision(target);
+		if (decision.safeToApplyAutomatically && decision.hasPreferred)
+		{
+			RecordFeedbackEvent(ST::format("ITEM TARGET {} / AUTO {}",
+				target->name, ItemTransferIntentLabel(target, decision.preferred)));
+			ApplyItemTransferIntent(target, decision.preferred);
+			return TRUE;
+		}
 		PositionItemTransferIntentRegions();
 		SetBagRegionsEnabled(TRUE);
 		SetRenderFlags(RENDER_FLAG_FULL);
@@ -10059,8 +10510,10 @@ BOOLEAN OS0HandleHeldItemAction(SOLDIERTYPE* target, GridNo gridNo,
 				return TRUE;
 			}
 			AddItemToPool(gridNo, gpItemPointer, HIDDEN_IN_OBJECT, level, 0, -1);
+			OS0InvalidateWorldHoverProjection();
 			EndItemPointer();
 			gItemTransferTarget = nullptr;
+			gItemTransferMoreVisible = FALSE;
 			OS0OpenWorldContainer(gridNo, level, tileIndex);
 			return TRUE;
 		}
@@ -10082,8 +10535,10 @@ BOOLEAN OS0HandleHeldItemAction(SOLDIERTYPE* target, GridNo gridNo,
 	// Empty ground is a real relation too. Dropping is explicit and never falls
 	// through to a swallowed vanilla release after OS//0 claimed the gesture.
 	AddItemToPool(gridNo, gpItemPointer, VISIBLE, level, 0, -1);
+	OS0InvalidateWorldHoverProjection();
 	EndItemPointer();
 	gItemTransferTarget = nullptr;
+	gItemTransferMoreVisible = FALSE;
 	RecordFeedbackEvent(ST::format("ITEM DROPPED / GRID {}", gridNo));
 	SetRenderFlags(RENDER_FLAG_FULL);
 	return TRUE;
@@ -10299,7 +10754,7 @@ void OS0OpenWorldContainer(GridNo gridNo, UINT8 level, UINT16 tileIndex)
 	if (SOLDIERTYPE* const selected = GetSelectedMan();
 		selected && PythSpacesAway(selected->sGridNo, gridNo) > 2)
 	{
-		std::vector<OS0ResolvedAction> const actions =
+		OS0ResolvedActionList const actions =
 			ResolveInteractionAt(nullptr, gridNo, level, tileIndex);
 		if (OS0ResolvedAction const* const contents =
 			FindOS0ResolvedAction(actions, ContextAction::CONTENTS))
@@ -10318,21 +10773,17 @@ void OS0OpenWorldContainer(GridNo gridNo, UINT8 level, UINT16 tileIndex)
 	gInspectedGridNo = gridNo;
 	gInspectedLevel = level;
 	gInspectedTileIndex = tileIndex;
-	gItemDetailsVisible = FALSE;
-	StartExplodedView(gridNo, tileIndex, TRUE);
 	gMode = ComputerMode::CONTENTS;
 	gContentsMode = ContentsMode::WORLD;
 	const BOOLEAN hasContents = GetItemPool(gridNo, level) != nullptr;
 	gLootVisible = hasContents && IsInspectedWorldAssetNear();
-	gInventoryVisible = TRUE;
-	if (SOLDIERTYPE* const selected = GetSelectedMan())
-	{
-		// Loot remains a set of world sprites. The receiving destinations are the
-		// real body equipment and pocket slots attached to the active operator.
-		gInventorySoldier = selected;
-		gEquipmentSoldier = selected;
-		gEquipmentExplodedVisible = gLootVisible;
-	}
+	// A container owns only its own spatial loot projection. Opening it must not
+	// mutate character-window visibility or fan every body slot around the merc.
+	// Transfer context starts only after an item is held over a valid target.
+	gInventoryVisible = FALSE;
+	gItemTransferTarget = nullptr;
+	gItemTransferMoreVisible = FALSE;
+	gEquipmentExplodedVisible = FALSE;
 	gPanelInteractionGuardUntil = GetJA2Clock() + 140;
 	if (gLootVisible) gLootIgnoreInputUntil = GetJA2Clock() + 300;
 	if (FieldTutorialTargetMatches(gridNo, level, tileIndex))

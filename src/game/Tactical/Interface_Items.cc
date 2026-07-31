@@ -2685,6 +2685,9 @@ void InternalBeginItemPointer( SOLDIERTYPE *pSoldier, OBJECTTYPE *pObject, INT8 
 	SetItemPointer(&gItemPointer, pSoldier);
 	gbItemPointerSrcSlot = bHandPos;
 	gbItemPointerLocateGood = TRUE;
+	// Establish the external cursor before any mouse region can switch to it.
+	// OS//0's spatial loot regions update during this same pointer callback.
+	SetMouseCursorFromCurrentItem();
 
 	// OS//0 uses the native item cursor without allocating JA2's old
 	// single-merc inventory panel. Touching that panel's buttons here can

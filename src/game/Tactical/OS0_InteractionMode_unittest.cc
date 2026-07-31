@@ -100,13 +100,12 @@ TEST(OS0InteractionModeTest, InvalidValuesAreRejectedWithoutMutation)
 	EXPECT_FALSE(mode.nearbyScanEnabled());
 }
 
-TEST(OS0InteractionModeTest, FrameReducerIgnoresOverlayVisibility)
+TEST(OS0InteractionModeTest, FrameReducerRequiresPhysicalControlIntent)
 {
 	OS0InteractionMode mode;
 	ASSERT_TRUE(mode.beginInteraction(OS0InteractionSurface::BEHAVIOR));
 
 	OS0InteractionFrameFacts facts;
-	facts.context = true;
 	mode.synchronize(facts);
 	EXPECT_TRUE(mode.isNormal());
 	EXPECT_TRUE(mode.isSurfaceSelected(OS0InteractionSurface::BEHAVIOR));
@@ -118,7 +117,6 @@ TEST(OS0InteractionModeTest, FrameReducerIgnoresOverlayVisibility)
 	EXPECT_TRUE(mode.isSurfaceActive(OS0InteractionSurface::ACTIONS));
 
 	facts = {};
-	facts.equipment = true;
 	mode.synchronize(facts);
 	EXPECT_TRUE(mode.isNormal());
 	EXPECT_FALSE(mode.isSurfaceActive(OS0InteractionSurface::EQUIPMENT));
@@ -134,13 +132,11 @@ TEST(OS0InteractionModeTest, FrameReducerOnlyKeepsPhysicalControlIntents)
 	EXPECT_TRUE(mode.isSurfaceActive(OS0InteractionSurface::ENVIRONMENT));
 
 	facts = {};
-	facts.environment = true;
 	mode.synchronize(facts);
 	EXPECT_TRUE(mode.isNormal());
 	EXPECT_TRUE(mode.isSurfaceSelected(OS0InteractionSurface::ENVIRONMENT));
 
 	ASSERT_TRUE(mode.beginInteraction(OS0InteractionSurface::EQUIPMENT));
-	facts.equipment = true;
 	mode.synchronize(facts);
 	EXPECT_TRUE(mode.isNormal());
 	EXPECT_TRUE(mode.isSurfaceSelected(OS0InteractionSurface::EQUIPMENT));
@@ -162,8 +158,6 @@ TEST(OS0InteractionModeTest, FightRestoresSelectionButWindowsDoNotOwnState)
 	ASSERT_TRUE(mode.beginInteraction(OS0InteractionSurface::EQUIPMENT));
 
 	OS0InteractionFrameFacts facts;
-	facts.environment = true;
-	facts.equipment = true;
 	facts.fight = true;
 	mode.synchronize(facts);
 	EXPECT_TRUE(mode.isFight());

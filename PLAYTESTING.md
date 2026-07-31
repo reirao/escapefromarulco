@@ -3,10 +3,10 @@
 Thank you for testing this early prototype. Specific reproduction steps are much more
 useful than a general statement that something did not work.
 
-> **FRAGILE / TESTED:** this checklist contains intended acceptance scenarios. It is
-> not a statement that every scenario below has passed. The published build and
-> automated suite are tested; every hands-on gameplay item still needs community
-> confirmation. Mark each result PASS, FAIL or NOT REACHED in your report.
+> **v0.0.1.23 STABLE CHECKPOINT / EARLY ALPHA:** source, Windows package, automated
+> suite and startup path are the tested baseline. This checklist contains broader
+> gameplay acceptance scenarios and is not a statement that every map/state combination
+> has passed. Mark each result PASS, FAIL or NOT REACHED in your report.
 
 ## Setup
 
@@ -65,8 +65,9 @@ playtest in its own folder and point the launcher to the original game directory
     right-click `OPEN CONTENTS`; both paths must seed and display loot exactly once.
 25. Select several different world assets. Verify each OS0 window shows the object's
     real pixel silhouette and the world marker settles without restarting on hover.
-26. Choose `DETAILS / ATTACHMENTS` on ground and inventory items. Verify the OS0 detail
-    window opens immediately, remains responsive and lists ammunition/attachments.
+26. Choose `DETAILS / ATTACHMENTS` on ground and inventory items. Verify the movable
+    Inspector updates immediately and lists ammunition/attachments without opening a
+    duplicate item-details or container window.
 27. Click `STRATEGIC MAP`, switch among `BASE`, `ARULCO MAP` and `TEAM`, select map
     sectors, then select and center an operator from the team list without leaving play.
 28. At 2x zoom, scroll to all four map limits and verify the true edge is visible and
@@ -172,6 +173,18 @@ playtest in its own folder and point the launcher to the original game directory
     facing follows it. Hold W continuously, add/release Shift, and steer with Q/E; the
     character must retain JA2 path/animation ownership without invoking old A/S/D
     shortcuts. Treat discontinuities at tile/animation boundaries as a bug report.
+60. Drag one item from a crate across multiple overlapping windows and release it in a
+    merc hand, body slot, pack and world tile in separate attempts. Exactly one target
+    may react. Releasing over blank panel space must keep the item held and must not
+    drop it into the world behind the panel.
+61. Fill both hands and every pocket, then drag another object onto the merc. Only
+    valid relations may be shown; a rejected hand/pack/body choice must retain the
+    object on the cursor. Open `MORE OPTIONS` and verify every displayed alternative
+    is legal for that item and actor.
+62. Begin a drag in one inventory/loot region and release in another without pausing.
+    Immediately click an unrelated control; it must react normally. Repeat once by
+    releasing outside the visible OS0 controls and once by Alt-Tabbing while holding
+    the button. No stale drag, false double-click or blocked next click may remain.
 
 ## Writing a useful report
 

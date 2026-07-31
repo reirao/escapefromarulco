@@ -3,20 +3,20 @@
 An experimental, non-commercial rework of *Jagged Alliance 2* built on
 [JA2 Stracciatella](https://github.com/ja2-stracciatella/ja2-stracciatella).
 
-> **FRAGILE / TESTED early alpha:** this exact Windows source state is compiled and
-> covered by automated tests, but the integrated gameplay is intentionally unfinished.
-> Expect rough controls, incomplete object coverage and crashes. The purpose of this
-> release is hands-on testing, not a stability guarantee.
+> **STABLE CHECKPOINT / EARLY ALPHA:** this exact Windows source state is the new
+> reproducible baseline: it is fully compiled, covered by automated tests, package
+> inspection and a launch smoke test. The campaign-scale gameplay remains deliberately
+> unfinished, so incomplete object coverage and experimental systems are still expected.
 
-Current prerelease playtest: **0.0.1.13**. The existing release number tracks the
-current fragile-tested checkpoint: creator and crate tutorial, target-bound contextual
-actions, queued approach/revalidation, a movable OS//0 multitool, layered cancellation
-and mouse-facing Normal/Combat control.
+Current stable playtest checkpoint: **0.0.1.23**. It combines the creator and crate
+tutorial, target-bound contextual actions, queued approach/revalidation, movable OS//0
+workspace, layered cancellation and mouse-facing Normal/Combat control with a hardened
+single-owner item-transfer and mouse-event pipeline.
 
 ## Download and play
 
-1. Open the [v0.0.1.13 release](https://github.com/reirao/escapefromarulco/releases/tag/v0.0.1.13).
-2. Download `Escape-from-Arulco-Playtest-v0.0.1.13.zip`.
+1. Open the [v0.0.1.23 release](https://github.com/reirao/escapefromarulco/releases/tag/v0.0.1.23).
+2. Download `Escape-from-Arulco-Playtest-v0.0.1.23.zip`.
 3. Extract the complete ZIP into a writable folder.
 4. Run `START_PLAYTEST.cmd`.
 5. In the launcher, select your own legally installed JA2 or JA2 Gold directory.
@@ -26,11 +26,12 @@ The playtest includes the Windows executable, launcher, runtime DLLs, externaliz
 Stracciatella data, test instructions and crash-log collector. It does **not** contain
 the original JA2 game data. Windows x64 and an existing JA2 installation are required.
 
-## Current prototype (all gameplay features are fragile)
+## Current prototype (experimental gameplay on the stable checkpoint)
 
-`TESTED` in this repository means a reproducible automated build, unit test, package
-inspection or launch check. `FRAGILE` means the code path exists and is available to
-test, but map coverage and combined gameplay states remain incomplete. See
+`STABLE CHECKPOINT` means the exact source, build, package and startup path are the
+recommended reproducible baseline. `TESTED` means a reproducible automated build,
+unit test, package inspection or launch check. `FRAGILE` means a gameplay path exists
+and is available to test, but map coverage and combined states remain incomplete. See
 [FEATURE_WIRING.md](FEATURE_WIRING.md) for the audited status and explicit omissions.
 
 - Direct tactical-sector start without helicopter arrival or starting enemies

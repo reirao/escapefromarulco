@@ -56,6 +56,7 @@ set(LOCAL_JA2_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/OS0_FieldTutorial.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/OS0_InteractionMode.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/OS0_ItemRelations.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/OS0_ItemTransferController.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/OS0_MouseRegionZOrder.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/OS0_RealtimeEditor.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/OS0_RealtimeEditorUI.cc

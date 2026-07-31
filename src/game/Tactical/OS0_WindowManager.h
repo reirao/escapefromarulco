@@ -1,12 +1,12 @@
 #pragma once
 
 #include "JA2Types.h"
+#include "OS0_FixedList.h"
 #include "OS0_UIAssetManager.h"
 
 #include <array>
 #include <cstddef>
 #include <string_theory/string>
-#include <vector>
 
 struct OS0UIRect
 {
@@ -21,6 +21,7 @@ struct OS0UIRect
 using OS0WindowHandle = UINT8;
 constexpr OS0WindowHandle OS0_INVALID_WINDOW = 0xff;
 constexpr size_t OS0_MAX_WINDOWS = 24;
+using OS0WindowOrder = OS0FixedList<OS0WindowHandle, OS0_MAX_WINDOWS>;
 
 enum class OS0WindowPresentation : UINT8
 {
@@ -36,9 +37,7 @@ enum OS0WindowFeature : UINT16
 	OS0_WINDOW_CLOSABLE = 1U << 1,
 	OS0_WINDOW_BLOCKS_WORLD_INPUT = 1U << 2,
 	OS0_WINDOW_PERSIST_POSITION = 1U << 3,
-	OS0_WINDOW_TRANSIENT = 1U << 4,
-	OS0_WINDOW_COLLAPSE_DURING_AIM = 1U << 5,
-	OS0_WINDOW_DOCK_ENTRY = 1U << 6
+	OS0_WINDOW_COLLAPSE_DURING_AIM = 1U << 4
 };
 
 enum class OS0WindowSuspendReason : UINT8
@@ -64,7 +63,6 @@ struct OS0WindowTemplate
 		OS0_WINDOW_COLLAPSE_DURING_AIM;
 	BOOLEAN defaultVisible = FALSE;
 	INT16 defaultLayer = 0;
-	INT16 dockOrder = -1;
 };
 
 // One state representation is shared by every OS0 window. visible
@@ -111,8 +109,6 @@ public:
 	void setSuspended(OS0WindowSuspendReason reason, BOOLEAN suspended) noexcept;
 	void setSuspended(OS0WindowHandle id, OS0WindowSuspendReason reason,
 		BOOLEAN suspended) noexcept;
-	void hideTransient() noexcept;
-
 	BOOLEAN beginDrag(OS0WindowHandle id, INT16 pointerX,
 		INT16 pointerY) noexcept;
 	BOOLEAN dragTo(INT16 pointerX, INT16 pointerY) noexcept;
@@ -121,8 +117,7 @@ public:
 	OS0WindowHandle draggingWindow() const noexcept { return dragging_; }
 	void bringToFront(OS0WindowHandle id) noexcept;
 
-	std::vector<OS0WindowHandle> renderOrder() const;
-	std::vector<OS0WindowHandle> dockEntries() const;
+	OS0WindowOrder renderOrder() const noexcept;
 	OS0WindowHandle hitTest(INT16 pointX, INT16 pointY) const noexcept;
 	BOOLEAN blocksWorldInputAt(INT16 pointX, INT16 pointY) const noexcept;
 

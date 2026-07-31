@@ -184,74 +184,10 @@ OS0CursorMode ContextActionCursor(ContextAction action)
 	return GetContextActionDescriptor(action).cursor;
 }
 
-std::vector<ContextAction> ResolveOS0CursorActions(OS0ActionFacts const& facts)
-{
-	std::vector<ContextAction> actions;
-	auto add = [&](ContextAction action)
-	{
-		if (std::find(actions.begin(), actions.end(), action) == actions.end())
-			actions.push_back(action);
-	};
-
-	if (facts.hasTarget)
-	{
-		if (facts.ownTarget)
-		{
-			add(ContextAction::USE);
-			add(ContextAction::INSPECT);
-		}
-		else
-		{
-			if (facts.hostileTarget && facts.armed) add(ContextAction::ATTACK);
-			if (!facts.hostileTarget) add(ContextAction::TALK);
-			add(ContextAction::INSPECT);
-			if (!facts.hostileTarget && facts.armed) add(ContextAction::ATTACK);
-		}
-	}
-	else if (facts.hasItems || facts.openable)
-	{
-		add(ContextAction::USE);
-		add(ContextAction::INSPECT);
-		if (facts.movable) add(ContextAction::CARRY);
-	}
-	else if (facts.movable)
-	{
-		add(ContextAction::CARRY);
-		add(ContextAction::INSPECT);
-		add(ContextAction::USE);
-	}
-	else if (facts.hasAsset)
-	{
-		add(ContextAction::INSPECT);
-		if (facts.armed) add(ContextAction::ATTACK);
-	}
-	add(ContextAction::MOVE);
-	return actions;
-}
-
-std::vector<OS0ResolvedAction> ResolveOS0EnvironmentActions(
-	OS0EnvironmentActionFacts const& facts)
-{
-	// Compatibility adapter for older callers and tests. All semantics live in
-	// the relational resolver so no second list can silently drift from the
-	// hover/F/RMB/MMB execution path.
-	OS0InteractionContext context;
-	context.environment = facts;
-	// The legacy API predates actor availability; retain its historical
-	// capability-only contract while delegating ordering and enablement.
-	context.environment.actorAvailable = TRUE;
-	context.hasEnvironment = TRUE;
-	context.target.kind = facts.hasAsset ? OS0InteractionTargetKind::WORLD_ASSET :
-		(facts.hasItems ? OS0InteractionTargetKind::WORLD_ITEM :
-			OS0InteractionTargetKind::TERRAIN);
-	return ResolveOS0InteractionActions(context);
-}
-
-std::vector<OS0ResolvedAction> ResolveOS0InteractionActions(
+OS0ResolvedActionList ResolveOS0InteractionActions(
 	OS0InteractionContext const& context)
 {
-	std::vector<OS0ResolvedAction> actions;
-	actions.reserve(12);
+	OS0ResolvedActionList actions;
 	auto add = [&](ContextAction const action, BOOLEAN const enabled,
 		OS0ActionApproach const approach = OS0ActionApproach::IMMEDIATE,
 		OS0ActionBlockReason const reason = OS0ActionBlockReason::NONE)
@@ -272,8 +208,42 @@ std::vector<OS0ResolvedAction> ResolveOS0InteractionActions(
 
 	if (!context.hasEnvironment)
 	{
-		for (ContextAction const action : ResolveOS0CursorActions(context.cursor))
-			add(action, TRUE);
+		OS0ActionFacts const& facts = context.cursor;
+		if (facts.hasTarget)
+		{
+			if (facts.ownTarget)
+			{
+				add(ContextAction::USE, TRUE);
+				add(ContextAction::INSPECT, TRUE);
+			}
+			else
+			{
+				if (facts.hostileTarget && facts.armed)
+					add(ContextAction::ATTACK, TRUE);
+				if (!facts.hostileTarget) add(ContextAction::TALK, TRUE);
+				add(ContextAction::INSPECT, TRUE);
+				if (!facts.hostileTarget && facts.armed)
+					add(ContextAction::ATTACK, TRUE);
+			}
+		}
+		else if (facts.hasItems || facts.openable)
+		{
+			add(ContextAction::USE, TRUE);
+			add(ContextAction::INSPECT, TRUE);
+			if (facts.movable) add(ContextAction::CARRY, TRUE);
+		}
+		else if (facts.movable)
+		{
+			add(ContextAction::CARRY, TRUE);
+			add(ContextAction::INSPECT, TRUE);
+			add(ContextAction::USE, TRUE);
+		}
+		else if (facts.hasAsset)
+		{
+			add(ContextAction::INSPECT, TRUE);
+			if (facts.armed) add(ContextAction::ATTACK, TRUE);
+		}
+		add(ContextAction::MOVE, TRUE);
 	}
 	else
 	{
@@ -324,17 +294,30 @@ std::vector<OS0ResolvedAction> ResolveOS0InteractionActions(
 		add(ContextAction::MOVE, TRUE);
 	}
 
-	std::stable_sort(actions.begin(), actions.end(),
-		[](OS0ResolvedAction const& lhs, OS0ResolvedAction const& rhs)
+	auto precedes = [](OS0ResolvedAction const& lhs,
+		OS0ResolvedAction const& rhs)
+	{
+		if (lhs.enabled != rhs.enabled) return lhs.enabled > rhs.enabled;
+		return lhs.score < rhs.score;
+	};
+	// The result has at most twelve entries. A stable insertion sort is faster
+	// at this size and, unlike std::stable_sort, never requests a merge buffer.
+	for (std::size_t i = 1; i < actions.size(); ++i)
+	{
+		OS0ResolvedAction entry = actions[i];
+		std::size_t destination = i;
+		while (destination > 0 && precedes(entry, actions[destination - 1]))
 		{
-			if (lhs.enabled != rhs.enabled) return lhs.enabled > rhs.enabled;
-			return lhs.score < rhs.score;
-		});
+			actions[destination] = actions[destination - 1];
+			--destination;
+		}
+		actions[destination] = entry;
+	}
 	return actions;
 }
 
 OS0ResolvedAction const* FindOS0ResolvedAction(
-	std::vector<OS0ResolvedAction> const& actions,
+	OS0ResolvedActionList const& actions,
 	ContextAction const action) noexcept
 {
 	auto const found = std::find_if(actions.begin(), actions.end(),
@@ -344,7 +327,7 @@ OS0ResolvedAction const* FindOS0ResolvedAction(
 }
 
 OS0ResolvedAction const* PrimaryOS0InteractionAction(
-	std::vector<OS0ResolvedAction> const& actions) noexcept
+	OS0ResolvedActionList const& actions) noexcept
 {
 	auto const found = std::find_if(actions.begin(), actions.end(),
 		[](OS0ResolvedAction const& entry)

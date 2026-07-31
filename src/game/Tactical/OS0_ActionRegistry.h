@@ -1,9 +1,8 @@
 #pragma once
 
 #include "JA2Types.h"
+#include "OS0_FixedList.h"
 #include "OS0_UIAssetManager.h"
-
-#include <vector>
 
 enum class ContextAction : UINT8
 {
@@ -114,9 +113,6 @@ struct OS0ActionFacts
 	BOOLEAN armed = FALSE;
 };
 
-// One ordered resolution is projected by hover, MMB and the cursor/tool UI.
-std::vector<ContextAction> ResolveOS0CursorActions(OS0ActionFacts const& facts);
-
 struct OS0EnvironmentActionFacts
 {
 	BOOLEAN actorAvailable = FALSE;
@@ -194,6 +190,12 @@ struct OS0ResolvedAction
 	INT16 score = 0;
 };
 
+// Context actions are resolved from the pointer every time its target changes.
+// The complete environment relation currently contains at most twelve unique
+// actions, so keeping the result inline avoids a heap allocation in this hot
+// hover/input path.
+using OS0ResolvedActionList = OS0FixedList<OS0ResolvedAction, 12>;
+
 struct OS0InteractionContext
 {
 	OS0ActionFacts cursor{};
@@ -202,21 +204,15 @@ struct OS0InteractionContext
 	BOOLEAN hasEnvironment = FALSE;
 };
 
-// Full object relation consumed by the object fan, proximity hints and the
-// environment-skills window. UI surfaces must not invent their own capability
-// lists.
-std::vector<OS0ResolvedAction> ResolveOS0EnvironmentActions(
-	OS0EnvironmentActionFacts const& facts);
-
 // Authoritative relation resolver. Hover, F, RMB, MMB, environment panels and
 // direct execution all consume this same ordered result. Each action keeps the
 // exact target it was resolved for and declares whether it is immediate,
 // requires an approach path, or is impossible.
-std::vector<OS0ResolvedAction> ResolveOS0InteractionActions(
+OS0ResolvedActionList ResolveOS0InteractionActions(
 	OS0InteractionContext const& context);
 OS0ResolvedAction const* FindOS0ResolvedAction(
-	std::vector<OS0ResolvedAction> const& actions, ContextAction action) noexcept;
+	OS0ResolvedActionList const& actions, ContextAction action) noexcept;
 OS0ResolvedAction const* PrimaryOS0InteractionAction(
-	std::vector<OS0ResolvedAction> const& actions) noexcept;
+	OS0ResolvedActionList const& actions) noexcept;
 const char* OS0ActionBlockReasonName(OS0ActionBlockReason reason) noexcept;
 BOOLEAN OS0IsManipulationAction(ContextAction action) noexcept;

@@ -1,8 +1,8 @@
 # Escape from Arulco / OS0 tactical architecture
 
 > **Current status:** this is the intended ownership model and an implementation
-> audit, not a claim of production stability. The current `v0.0.1.13` runtime is
-> **FRAGILE / TESTED**; remaining integration debt is listed below and the public
+> audit, not a claim of campaign completeness. The current `v0.0.1.23` runtime is
+> the **STABLE CHECKPOINT / EARLY ALPHA**; remaining integration debt is listed below and the public
 > feature truth is maintained in `FEATURE_WIRING.md`.
 
 This document describes the current ownership boundaries of the newest local
@@ -40,7 +40,8 @@ It must not mirror soldier inventories, structures or sector ownership.
 | `OS0CycleCursorAction`, `ApplyCursorTool` | registry cursor descriptors | session cursor/attack state | JA2 UI mode events | session cursor state and action registry | completed typed mapping (`MOVE`, `USE`, `CARRY`, etc.) |
 | `ProjectControlModeToEngine` | canonical NORMAL/COMBAT state | pending safe projection | JA2 MOVE/ACTION events | OS0 session state | never overwrites firing, movement, interrupt or lock events; normalizes legacy cursor modes before combat |
 | `OS0ViewportGestureState` | button-down owner | primary gesture/release hand-off | RT/TB legacy mouse pollers | viewport input adapter | one physical LMB gesture has exactly one owner and one release |
-| inventory and item-transfer callbacks | real soldier inventory, item pointer | real inventory and world pools | `PlaceObject`, `AutoPlaceObject` | UI callback plus `OS0_ItemRelations` | UI callback invokes item-relation service |
+| inventory and item transfer | real soldier inventory, native item pointer and physical mouse gesture | real inventory and world pools | `PlaceObject`, item-pointer and world-drop services | `OS0ItemTransferController` for ownership plus `OS0_ItemRelations` for policy | one source, one held object and one release target; invalid destinations retain the native cursor |
+| mouse-region release bridge | physical mouse/touch event and current native region | transfer ownership only | post-dispatch `MouseSystemHook` observer | `MouseSystem` bridge plus viewport adapter | recovers cross-region/outside-region/focus-loss release without changing JA2 inventory ownership |
 | panel positioning/dragging/regions | `OS0WindowManager`, persisted layout and window geometry | visibility, drag positions, focus and canonical Z order | mouse system plus `OS0_MouseRegionZOrder` | window manager plus native region adapter | child controls are projected into manager Z order without recreating callbacks or drag capture |
 | feedback/report functions | event ring and text input | report state and log file | keyboard hook / file I/O | UI file | `FeedbackSink` |
 | zoom mapping | zoom state and viewport | zoom buffer | framebuffer and coordinate transforms | UI file | viewport service owned by tactical session |
@@ -144,6 +145,11 @@ work when the native list already matches the manager.
    removed from surface `uiFacilitiesFlags`; native facility flags remain intact.
 7. Built-in and user asset catalogs are merged by one service, while resource and
    upgrade transactions are owned by gameplay modules rather than draw code.
+8. `OS0ItemTransferController` owns the physical item gesture while JA2 remains the
+   only object carrier. Inventory, loot, actor relations and world drops cannot claim
+   the same release twice.
+9. MouseSystem clears stale click capture outside all regions and exposes a
+   post-dispatch observer for the legacy cross-region release gap.
 
 ## Remaining technical debt
 
@@ -217,4 +223,6 @@ automated tests cover parallel cover orders, order cancellation, level-aware
 asset damage, lifecycle persistence, action-resolution parity, economy
 serialization/migration, catalog overrides, carry cancellation, window-manager
 state, native child-region Z ordering, clipped terrain brushes and guarded road
-macro bounds.
+macro bounds. The v0.0.1.23 gate additionally covers transfer ownership, relation
+capacity, double-click/stack boundaries, cross-region release, release outside all
+regions and focus-loss recovery; the complete suite contains 191 tests.

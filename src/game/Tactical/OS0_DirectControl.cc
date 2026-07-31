@@ -70,7 +70,7 @@ namespace
 	UINT8 ActualFacing(SOLDIERTYPE const* soldier)
 	{
 		return soldier->bDirection < NUM_WORLD_DIRECTIONS ?
-			soldier->bDirection : NORTH;
+			soldier->bDirection : static_cast<UINT8>(NORTH);
 	}
 
 	void EnsureLookDirection(SOLDIERTYPE const* soldier,
@@ -274,7 +274,7 @@ namespace
 		TravelIntent const& intent, UINT8 const stance, BOOLEAN const moving,
 		BOOLEAN const sprint)
 	{
-		const UINT16 base = sprint ? RUNNING :
+		const UINT16 base = sprint ? static_cast<UINT16>(RUNNING) :
 			GetMoveStateBasedOnStance(soldier, stance);
 		if (!moving || !intent.reverse || stance == ANIM_PRONE) return base;
 
@@ -629,8 +629,13 @@ void OS0UpdateDirectControl(SOLDIERTYPE* soldier, BOOLEAN enabled)
 	const UINT8 previousPathIndex = soldier->ubPathIndex;
 	const UINT8 previousPathSize = soldier->ubPathDataSize;
 	const BOOLEAN previousPathStored = soldier->bPathStored;
-	std::array<UINT8, MAX_PATH_LIST_SIZE> previousPath{};
-	std::copy_n(soldier->ubPathingData, previousPath.size(),
+	std::array<UINT8, MAX_PATH_LIST_SIZE> previousPath;
+	const size_t previousPathCount = std::min<size_t>(previousPathSize,
+		previousPath.size());
+	// Only the live prefix can be observed when a rejected replan is rolled
+	// back. Copying all MAX_PATH_LIST_SIZE bytes on every 45 ms movement tick
+	// added avoidable work to the direct-control hot path.
+	std::copy_n(soldier->ubPathingData, previousPathCount,
 		previousPath.begin());
 	soldier->fUIMovementFast = sprint;
 	soldier->usUIMovementMode = MovementModeForIntent(soldier, intent, stance,
@@ -651,7 +656,7 @@ void OS0UpdateDirectControl(SOLDIERTYPE* soldier, BOOLEAN enabled)
 		soldier->ubPathIndex = previousPathIndex;
 		soldier->ubPathDataSize = previousPathSize;
 		soldier->bPathStored = previousPathStored;
-		std::copy(previousPath.begin(), previousPath.end(),
+		std::copy_n(previousPath.begin(), previousPathCount,
 			soldier->ubPathingData);
 		TrimDirectControlRouteTail(soldier, timing);
 		timing.nextStepAt = now + 120;

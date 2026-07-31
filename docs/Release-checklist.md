@@ -2,8 +2,8 @@
 
 > **Upstream historical document:** this is JA2 Stracciatella's original release
 > checklist and mentions upstream milestones/platform packages. It is not evidence
-> that Escape from Arulco publishes or tests those targets. The OS//0 `v0.0.1.13`
-> prerelease currently publishes one **FRAGILE / TESTED Windows x64 playtest**.
+> that Escape from Arulco publishes or tests those targets. The OS//0 `v0.0.1.23`
+> release publishes one **STABLE CHECKPOINT / EARLY ALPHA Windows x64 playtest**.
 
 ## Pre-release development
 

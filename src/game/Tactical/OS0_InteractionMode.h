@@ -33,9 +33,6 @@ struct OS0InteractionFrameFacts
 {
 	bool tutorial = false;
 	bool fight = false;
-	bool context = false;
-	bool environment = false;
-	bool equipment = false;
 	bool cursorAction = false;
 	OS0InteractionSurface cursorSurface = OS0InteractionSurface::ACTIONS;
 	bool passiveInteraction = false;

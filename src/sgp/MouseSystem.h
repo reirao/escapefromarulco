@@ -33,6 +33,8 @@
 struct MOUSE_REGION;
 
 typedef std::function<void(MOUSE_REGION*, UINT32)> MOUSE_CALLBACK;
+typedef void (*MOUSE_SYSTEM_EVENT_HOOK)(UINT16 type, UINT32 button,
+	UINT16 x, UINT16 y);
 
 struct MOUSE_REGION
 {
@@ -149,6 +151,12 @@ void MSYS_SetCurrentCursor(UINT16 Cursor);
 
 // External
 void MSYS_Shutdown(void);
+// Optional post-dispatch observer for systems that implement drag/drop across
+// mouse regions. The legacy dispatcher intentionally withholds UP from both
+// regions when DOWN and UP occur in different regions; the observer sees the
+// physical event after normal callbacks and can recover such cross-region drags.
+void MSYS_SetEventHook(MOUSE_SYSTEM_EVENT_HOOK hook);
+MOUSE_REGION* MSYS_GetCurrentRegion();
 void MSYS_DefineRegion(MOUSE_REGION *region,UINT16 tlx,UINT16 tly,UINT16 brx,UINT16 bry,INT8 priority,
 					   UINT16 crsr,MOUSE_CALLBACK movecallback,MOUSE_CALLBACK buttoncallback);
 void MSYS_RemoveRegion(MOUSE_REGION *region);

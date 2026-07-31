@@ -71,6 +71,9 @@ BOOLEAN OS0TriggerHoveredInteraction();
 // changed. Mouse-system MOVE events alone are insufficient because scrolling
 // and zooming move the world underneath a stationary cursor.
 void OS0RefreshWorldHoverFromPointer();
+// Marks the cached pointer-to-world relation stale after an item, structure,
+// terrain layer or editor command mutates the world under a stationary cursor.
+void OS0InvalidateWorldHoverProjection();
 // True while OS//0 owns a held primary gesture and once more on its release.
 // The legacy RT/TB poller consumes this hand-off to avoid observing the same
 // physical click after the viewport callback already executed it.

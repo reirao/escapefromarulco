@@ -222,6 +222,10 @@ BOOLEAN SetCurrentCursorFromDatabase(UINT32 uiCursorIndex)
 		// CHECK FOR EXTERN CURSOR
 		if (uiCursorIndex == EXTERN_CURSOR)
 		{
+			// A region can observe a new item drag one callback before its external
+			// cursor graphic is registered. Never dereference an unprimed/stale VO.
+			if (!guiExternVo || gusExternVoSubIndex >= guiExternVo->SubregionCount())
+				return FALSE;
 			// Erase old cursor
 			EraseMouseCursor();
 

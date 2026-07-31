@@ -75,6 +75,10 @@ void OS0TacticalSession::storePersistentState(SavedGameStates& states) const
 
 void OS0TacticalSession::loadPersistentState(SavedGameStates const& states)
 {
+	// Save data never owns transient pointers, orders or queued visuals. Clear
+	// them before parsing so loading over an active tactical session cannot leak
+	// actions from the previous world into the restored one.
+	endTacticalSector();
 	state_.assetDamage.clear();
 	state_.sectorEconomy.clear();
 	state_.creatorCompleted = FALSE;
