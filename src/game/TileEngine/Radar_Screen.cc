@@ -58,6 +58,8 @@
 static SGPVObject* gusRadarImage;
 BOOLEAN   fRenderRadarScreen = TRUE;
 static INT16       sSelectedSquadLine = -1;
+static BOOLEAN     gLegacyRadarScreenSuppressed = FALSE;
+static BOOLEAN     gSquadListRegionsCreated = FALSE;
 
 BOOLEAN		gfRadarCurrentGuyFlash = FALSE;
 
@@ -68,6 +70,7 @@ static MOUSE_REGION gRadarRegionSquadList[NUMBER_OF_SQUADS];
 static void RadarRegionButtonCallbackPrimary(MOUSE_REGION* pRegion, UINT32 iReason);
 static void RadarRegionButtonCallbackSecondary(MOUSE_REGION* pRegion, UINT32 iReason);
 static void RadarRegionMoveCallback(MOUSE_REGION* pRegion, UINT32 iReason);
+static void DestroySquadListMouseRegions();
 
 
 void InitRadarScreen()
@@ -126,6 +129,8 @@ BOOLEAN BlitRadarScreenImage(SGPVSurface* destination, INT16 x, INT16 y)
 
 void MoveRadarScreen( )
 {
+	if (gLegacyRadarScreenSuppressed) return;
+
 	// check if we are allowed to do anything?
 	if (!fRenderRadarScreen) return;
 
@@ -143,6 +148,8 @@ static void AdjustWorldCenterFromRadarCoords(INT16 sRadarX, INT16 sRadarY);
 static void RadarRegionMoveCallback(MOUSE_REGION* pRegion, UINT32 iReason)
 {
 	INT16 sRadarX, sRadarY;
+
+	if (gLegacyRadarScreenSuppressed) return;
 
 	// check if we are allowed to do anything?
 	if (!fRenderRadarScreen) return;
@@ -166,6 +173,8 @@ static void RadarRegionMoveCallback(MOUSE_REGION* pRegion, UINT32 iReason)
 
 static void RadarRegionButtonCallbackPrimary(MOUSE_REGION* pRegion, UINT32 iReason)
 {
+	if (gLegacyRadarScreenSuppressed) return;
+
 	// check if we are allowed to do anything?
 	if (!fRenderRadarScreen) return;
 
@@ -185,6 +194,8 @@ static void RadarRegionButtonCallbackPrimary(MOUSE_REGION* pRegion, UINT32 iReas
 
 static void RadarRegionButtonCallbackSecondary(MOUSE_REGION* pRegion, UINT32 iReason)
 {
+	if (gLegacyRadarScreenSuppressed) return;
+
 	// check if we are allowed to do anything?
 	if (!fRenderRadarScreen) return;
 
@@ -205,6 +216,17 @@ static void RenderSquadList(void);
 
 void RenderRadarScreen()
 {
+	// Tactical OS//0 supplies both the radar image and squad controls in its own
+	// movable windows.  Returning before region maintenance is intentional: the
+	// old implementation could otherwise recreate an invisible squad click layer
+	// whenever fRenderRadarScreen happened to be false during a modal frame.
+	if (gLegacyRadarScreenSuppressed)
+	{
+		DestroySquadListMouseRegions();
+		gRadarRegion.Disable();
+		return;
+	}
+
 	// create / destroy squad list regions as nessacary
 	CreateDestroyMouseRegionsForSquadList();
 
@@ -364,7 +386,35 @@ static void AdjustWorldCenterFromRadarCoords(INT16 sRadarX, INT16 sRadarY)
 
 void ToggleRadarScreenRender( void )
 {
+	if (gLegacyRadarScreenSuppressed) return;
 	fRenderRadarScreen = ! fRenderRadarScreen;
+}
+
+
+void SetLegacyRadarScreenSuppressed(BOOLEAN const suppressed)
+{
+	if (gLegacyRadarScreenSuppressed == suppressed)
+	{
+		if (suppressed)
+		{
+			DestroySquadListMouseRegions();
+			gRadarRegion.Disable();
+		}
+		return;
+	}
+
+	gLegacyRadarScreenSuppressed = suppressed;
+	if (suppressed)
+	{
+		DestroySquadListMouseRegions();
+		gRadarRegion.Disable();
+	}
+}
+
+
+BOOLEAN IsLegacyRadarScreenSuppressed()
+{
+	return gLegacyRadarScreenSuppressed;
 }
 
 
@@ -375,10 +425,15 @@ static void TacticalSquadListMvtCallback(MOUSE_REGION* pRegion, UINT32 iReason);
 // create destroy squad list regions as needed
 static void CreateDestroyMouseRegionsForSquadList(void)
 {
-	// will check the state of renderradarscreen flag and decide if we need to create mouse regions for
-	static BOOLEAN fCreated = FALSE;
+	if (gLegacyRadarScreenSuppressed)
+	{
+		DestroySquadListMouseRegions();
+		return;
+	}
 
-	if (!fRenderRadarScreen && !fCreated)
+	// will check the state of renderradarscreen flag and decide if we need to create mouse regions for
+
+	if (!fRenderRadarScreen && !gSquadListRegionsCreated)
 	{
 		BltVideoObjectOnce(guiSAVEBUFFER, INTERFACEDIR "/squadpanel.sti", 0, INTERFACE_START_X + 538, gsVIEWPORT_END_Y);
 		RestoreExternBackgroundRect(INTERFACE_START_X + 538, gsVIEWPORT_END_Y, 102, 120);
@@ -410,15 +465,11 @@ static void CreateDestroyMouseRegionsForSquadList(void)
 
 		sSelectedSquadLine = -1;
 
-		fCreated = TRUE;
+		gSquadListRegionsCreated = TRUE;
 	}
-	else if (fRenderRadarScreen && fCreated)
+	else if (fRenderRadarScreen && gSquadListRegionsCreated)
 	{
-		// destroy regions
-		for (UINT i = 0; i < NUMBER_OF_SQUADS; ++i)
-		{
-			MSYS_RemoveRegion(&gRadarRegionSquadList[i]);
-		}
+		DestroySquadListMouseRegions();
 
 		if (guiCurrentScreen == GAME_SCREEN)
 		{
@@ -429,14 +480,26 @@ static void CreateDestroyMouseRegionsForSquadList(void)
 			RenderPausedGameBox();
 		}
 
-		fCreated = FALSE;
 	}
+}
+
+
+static void DestroySquadListMouseRegions()
+{
+	if (!gSquadListRegionsCreated) return;
+	for (UINT i = 0; i < NUMBER_OF_SQUADS; ++i)
+	{
+		MSYS_RemoveRegion(&gRadarRegionSquadList[i]);
+	}
+	gSquadListRegionsCreated = FALSE;
 }
 
 
 // show list of squads
 static void RenderSquadList(void)
 {
+	if (gLegacyRadarScreenSuppressed) return;
+
 	INT16 const dx = RADAR_WINDOW_X;
 	INT16 const dy = RADAR_WINDOW_TM_Y;
 
@@ -479,6 +542,8 @@ static void RenderSquadList(void)
 
 static void TacticalSquadListMvtCallback(MOUSE_REGION* pRegion, UINT32 iReason)
 {
+	if (gLegacyRadarScreenSuppressed) return;
+
 	INT32 iValue = -1;
 
 	iValue = MSYS_GetRegionUserData( pRegion, 0 );
@@ -499,6 +564,8 @@ static void TacticalSquadListMvtCallback(MOUSE_REGION* pRegion, UINT32 iReason)
 
 static void TacticalSquadListBtnCallBack(MOUSE_REGION* pRegion, UINT32 iReason)
 {
+	if (gLegacyRadarScreenSuppressed) return;
+
 	// btn callback handler for team list info region
 	INT32 iValue = 0;
 

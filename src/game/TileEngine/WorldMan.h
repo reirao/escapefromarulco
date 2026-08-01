@@ -18,6 +18,12 @@ class FailedToAddNode : public std::exception
 		}
 };
 
+// Monotonic identity generation for persistent world layers. Deferred UI
+// actions use it to reject a LEVELNODE pointer after native map code has
+// removed/replaced the object, including allocator-address reuse (ABA).
+void NotifyWorldTileMutation();
+UINT32 WorldTileMutationRevision();
+
 
 // Object manipulation functions
 BOOLEAN RemoveObject( UINT32 iMapIndex, UINT16 usIndex );

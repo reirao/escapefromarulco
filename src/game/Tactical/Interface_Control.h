@@ -6,6 +6,11 @@
 
 void SetUpInterface();
 void ResetInterface();
+// World-attached tactical marks are rendered before OS//0 magnifies the world.
+// Native popups, dialogue-adjacent controls and buttons are rendered afterwards
+// so their screen coordinates and pixels remain unchanged.
+void RenderTacticalWorldSpaceInterface(void);
+void RenderTacticalScreenSpaceInterface(void);
 void RenderTopmostTacticalInterface(void);
 void RenderTacticalInterface(void);
 

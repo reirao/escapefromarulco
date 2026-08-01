@@ -78,13 +78,16 @@ OS0WindowHandle OS0WindowManager::fromPersistenceKey(const char* key) const noex
 OS0WindowState& OS0WindowManager::state(OS0WindowHandle id) noexcept
 {
 	const size_t slot = index(id);
-	return states_[slot < states_.size() ? slot : 0];
+	if (slot < states_.size() && registered_[slot]) return states_[slot];
+	invalidState_ = {};
+	return invalidState_;
 }
 
 OS0WindowState const& OS0WindowManager::state(OS0WindowHandle id) const noexcept
 {
 	const size_t slot = index(id);
-	return states_[slot < states_.size() ? slot : 0];
+	return slot < states_.size() && registered_[slot] ?
+		states_[slot] : invalidState_;
 }
 
 void OS0WindowManager::resetToDefaults() noexcept
@@ -342,9 +345,25 @@ BOOLEAN OS0WindowManager::blocksWorldInputAt(INT16 pointX,
 			(definitions_[i].features & OS0_WINDOW_BLOCKS_WORLD_INPUT))
 			return TRUE;
 	}
-	OS0WindowHandle const id = hitTest(pointX, pointY);
-	OS0WindowTemplate const* const spec = definition(id);
-	return spec && (spec->features & OS0_WINDOW_BLOCKS_WORLD_INPUT);
+	// Do not ask only for the top hit: a decorative/pass-through window can be
+	// above an inventory or dialog and must not expose the world underneath it.
+	for (size_t i = 0; i < registered_.size(); ++i)
+	{
+		OS0WindowHandle const id = static_cast<OS0WindowHandle>(i);
+		if (!registered_[i] || !visible(id) ||
+			!(definitions_[i].features & OS0_WINDOW_BLOCKS_WORLD_INPUT))
+			continue;
+		OS0UIRect interactionBounds = bounds(id);
+		if (definitions_[i].presentation == OS0WindowPresentation::RADIAL)
+		{
+			interactionBounds.x = static_cast<INT16>(
+				interactionBounds.x - interactionBounds.w / 2);
+			interactionBounds.y = static_cast<INT16>(
+				interactionBounds.y - interactionBounds.h / 2);
+		}
+		if (interactionBounds.contains(pointX, pointY)) return TRUE;
+	}
+	return FALSE;
 }
 
 ST::string OS0WindowManager::serializeLayout(INT16 screenWidth,

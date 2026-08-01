@@ -146,7 +146,11 @@ BOOLEAN OS0CanPackObject(SOLDIERTYPE const* soldier, OBJECTTYPE const& object)
 			available = limit;
 		else if (stored.usItem == object.usItem &&
 			stored.ubNumberOfObjects < limit)
-			available = static_cast<UINT8>(limit - stored.ubNumberOfObjects);
+		{
+			ItemModel const* const item = GCM->getItem(stored.usItem);
+			if (!item->isKey() || stored.ubKeyID == object.ubKeyID)
+				available = static_cast<UINT8>(limit - stored.ubNumberOfObjects);
+		}
 		if (available >= remaining) return TRUE;
 		remaining = static_cast<UINT16>(remaining - available);
 	}

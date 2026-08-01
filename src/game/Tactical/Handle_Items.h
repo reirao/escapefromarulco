@@ -37,6 +37,11 @@ enum Visibility
 	VISIBLE              =   1
 };
 
+// OS//0 metadata stored alongside a container's spatial contents.  Keeping the
+// discriminator here lets every destruction/move path apply the same ownership
+// rules instead of duplicating a magic ACTION_ITEM check.
+constexpr UINT8 OS0_CONTAINER_SEED_MARKER = 0xE0;
+
 #define	ITEM_LOCATOR_LOCKED 0x02
 
 
@@ -54,8 +59,17 @@ struct ITEM_POOL
 
 ItemHandleResult HandleItem(SOLDIERTYPE* pSoldier, INT16 usGridNo, INT8 bLevel, UINT16 usHandItem, BOOLEAN fFromUI);
 
-// iItemIndex is ignored for player soldiers
+// Legacy pickup request.  OS0 callers with an exact world item must use the
+// guarded overload below so an asynchronously recycled pool index cannot pick
+// up a replacement object.
 void SoldierPickupItem( SOLDIERTYPE *pSoldier, INT32 iItemIndex, INT16 sGridNo, INT8 bZLevel );
+BOOLEAN OS0SoldierPickupExactWorldItem(SOLDIERTYPE* pSoldier,
+	INT32 iItemIndex, INT16 sGridNo, INT8 bZLevel);
+// Gate for OS0 paths which detach a world object without the native pickup
+// animation. It validates exact location/visibility and delegates booby-trap
+// discovery before ownership may move.
+BOOLEAN OS0PrepareWorldItemForDirectDetach(SOLDIERTYPE* pSoldier,
+	INT32 iItemIndex, INT16 sGridNo, UINT8 level);
 
 void HandleSoldierPickupItem( SOLDIERTYPE *pSoldier, INT32 iItemIndex, INT16 sGridNo, INT8 bZLevel );
 void HandleFlashingItems(void);
@@ -76,6 +90,13 @@ void SoldierGetItemFromWorld(SOLDIERTYPE* pSoldier, INT32 iItemIndex, INT16 sGri
 
 INT32 AddItemToPool(INT16 sGridNo, OBJECTTYPE *pObject, Visibility, UINT8 ubLevel, UINT16 usFlags, INT8 bRenderZHeightAboveLevel);
 INT32 InternalAddItemToPool(INT16* psGridNo, OBJECTTYPE* pObject, Visibility, UINT8 ubLevel, UINT16 usFlags, INT8 bRenderZHeightAboveLevel);
+// Reconstruct one serialized world item. Container-owned children keep their
+// saved grid exactly: map modifications are replayed after the item temp file,
+// so snapping them to a not-yet-removed base-map structure would orphan them
+// from a container which was moved onto that structure's former footprint.
+// Every other item retains AddItemToPool's native placement behaviour.
+INT32 OS0RestorePersistedWorldItemToPool(WORLDITEM const& item,
+	GridNo requestedGridNo);
 
 GridNo     AdjustGridNoForItemPlacement(SOLDIERTYPE*, GridNo);
 ITEM_POOL* GetItemPool(UINT16 usMapPos, UINT8 ubLevel);
@@ -86,6 +107,21 @@ void       MoveItemPools(INT16 sStartPos, INT16 sEndPos);
 BOOLEAN SetItemsVisibilityOn(GridNo, UINT8 level, Visibility bAllGreaterThan, BOOLEAN fSetLocator);
 
 void SetItemsVisibilityHidden(GridNo, UINT8 level);
+
+BOOLEAN OS0IsContainerSeedMarker(WORLDITEM const& item);
+// Closed native containers use HIDDEN_IN_OBJECT. Open native containers retain
+// WORLD_ITEM_DONTRENDER while changing visibility to VISIBLE. Both forms are
+// the same container-owned content and must travel/loot/spill together.
+BOOLEAN OS0IsContainerContentItem(WORLDITEM const& item);
+BOOLEAN OS0IsContainerOwnedItem(WORLDITEM const& item);
+// A loose item is a visible physical world object, never a hidden/open
+// container child or OS//0 metadata marker. This is the single predicate used
+// by native hand pickup and the object-action registry.
+BOOLEAN OS0IsActionableLooseWorldItem(WORLDITEM const& item);
+INT32 OS0FindActionableLooseWorldItem(GridNo gridNo, UINT8 level);
+// A destroyed container no longer owns its items. Reveal its real contents in
+// place and remove only OS//0's private seed marker.
+BOOLEAN OS0SpillContainerContents(GridNo gridNo, UINT8 level);
 
 void RenderTopmostFlashingItems(void);
 

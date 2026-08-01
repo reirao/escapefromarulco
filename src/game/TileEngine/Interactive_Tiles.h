@@ -38,4 +38,14 @@ BOOLEAN CheckVideoObjectScreenCoordinateInData(HVOBJECT hSrcVObject, UINT16 usIn
 BOOLEAN FindOS0WorldAssetAtScreen(GridNo* gridNo, UINT8 level,
 	UINT16* tileIndex, INT16 screenX, INT16 screenY);
 
+// Pixel-accurate loose-item picking. The returned index identifies the exact
+// ITEM_POOL entry whose sprite was hit; callers must still revalidate it before
+// detaching because pool order and indices can change after a world mutation.
+BOOLEAN FindOS0WorldItemAtScreen(INT32* worldItemIndex, GridNo* gridNo,
+	UINT8 level, INT16 screenX, INT16 screenY);
+
+// Shared admission rule for persistent scenery. Path footprints, cover glyphs,
+// item nodes and other engine-owned overlays must never become OS//0 assets.
+BOOLEAN IsOS0PersistentWorldAssetNode(LEVELNODE const* node);
+
 #endif

@@ -24,6 +24,12 @@ void InitRadarScreen(void);
 void RenderRadarScreen(void);
 void MoveRadarScreen(void);
 
+// OS//0 owns radar and squad presentation while the live tactical screen is
+// active.  This is an explicit ownership gate rather than a render-time hide:
+// suppressed legacy code may neither draw nor recreate mouse regions.
+void SetLegacyRadarScreenSuppressed(BOOLEAN suppressed);
+BOOLEAN IsLegacyRadarScreenSuppressed();
+
 // Draw only the current sector artwork at an arbitrary screen position.  OS//0
 // uses this to host the real JA2 radar asset inside its movable field computer
 // without reviving the legacy fixed tactical panel.

@@ -10,6 +10,7 @@
 #include "Interactive_Tiles.h"
 #include "English.h"
 #include "Overhead.h"
+#include "OS0_DirectControl.h"
 #include "Soldier_Macros.h"
 #include "Soldier_Find.h"
 #include "Vehicles.h"
@@ -104,7 +105,8 @@ static void GetSoldierScreenRect(const SOLDIERTYPE* pSoldier, SGPRect* pRect);
 // This function is called fairly regularly
 SOLDIERTYPE* FindSoldier(GridNo const gridno, UINT32 flags)
 {
-	if (_KeyDown(SHIFT)) flags = FIND_SOLDIER_GRIDNO;
+	if (_KeyDown(SHIFT) && !OS0DirectControlOwnsSprintModifier())
+		flags = FIND_SOLDIER_GRIDNO;
 
 	if (flags & FIND_SOLDIER_BEGINSTACK)
 	{

@@ -47,6 +47,7 @@
 #include "Music_Control.h"
 #include "NPC.h"
 #include "OppList.h"
+#include "OS0_ItemTransferRuntime.h"
 #include "Overhead.h"
 #include "PathAI.h"
 #include "Player_Command.h"
@@ -368,6 +369,7 @@ void InitOverhead()
 	gpCustomizableTimerCallback = 0;
 
 	// Reset cursor
+	OS0GetItemTransferRuntime().reset();
 	gpItemPointer        = 0;
 	gpItemPointerSoldier = 0;
 	std::fill(std::begin(gbInvalidPlacementSlot), std::end(gbInvalidPlacementSlot), 0);

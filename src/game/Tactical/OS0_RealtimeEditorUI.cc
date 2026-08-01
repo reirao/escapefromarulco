@@ -23,6 +23,7 @@
 #include "VObject.h"
 #include "VSurface.h"
 #include "Video.h"
+#include "WorldMan.h"
 
 #include <algorithm>
 #include <array>
@@ -1187,10 +1188,12 @@ struct OS0RealtimeEditorUI::Impl
 		if (tool == OS0RealtimeEditorTool::ERASE)
 		{
 			OS0EditorRemoveRequest request;
+			request.expectedWorldRevision = WorldTileMutationRevision();
 			if (target && palette == OS0RealtimeEditorPalette::NPCS)
 			{
 				request.kind = OS0EditorRemoveKind::NPC;
 				request.soldierId = Soldier2ID(target);
+				request.expectedNpcInstanceId = target->uiUniqueSoldierIdValue;
 				request.expectedNpcTeam = target->bTeam;
 				request.expectedNpcGridNo = target->sGridNo;
 			}

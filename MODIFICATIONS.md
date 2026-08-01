@@ -1,7 +1,7 @@
 # Modification notice
 
 This repository is a modified derivative of JA2 Stracciatella. Work on the current
-prototype was performed from 2026-07-24 through 2026-07-31.
+prototype was performed from 2026-07-24 through 2026-08-01.
 
 Prominent notices were added to modified source files in accordance with the included
 Strategy First source-code license agreement.
@@ -26,7 +26,7 @@ Strategy First source-code license agreement.
 
 The code is experimental and does not represent an official JA2 Stracciatella release.
 Version headings below are development history, not separate supported releases.
-The current `v0.0.1.23` package is the **STABLE CHECKPOINT / EARLY ALPHA**: the exact
+The current `v0.1.0` package is the **FRAGILE-TESTED EARLY ALPHA**: the exact
 source, Windows runtime, automated suite and package are reproducible and tested, while
 the explicitly experimental gameplay systems still require broad manual coverage.
 
@@ -157,7 +157,56 @@ the explicitly experimental gameplay systems still require broad manual coverage
 - Expanded focused regression coverage from 178 to 191 tests, including transfer
   ownership, stack/double-click boundaries, focus-loss recovery, cross-region release,
   release outside all regions, fixed-capacity limits, persistence reset and window
-  ordering.
+  ordering. This is the historical published-checkpoint count; the living suite has
+  since grown and its current count is reported by each validation run rather than
+  frozen in the architecture document.
+
+## v0.1.0 interaction and persistence hardening
+
+- Split item ownership into gesture control, exact-source runtime binding and a pure
+  commit/cancel transaction. Inventory, world and container sources now retain stable
+  identity and full native restoration metadata while the item is held.
+- Removed implicit slot swapping from OS0 placement. Full, incompatible or occupied
+  destinations leave the item held; successful destinations commit explicitly only
+  after accepting the complete object.
+- Made hand/body/pack placement preflight capacity and carried weight, snapshot every
+  affected slot and roll back partial native placement before restoring the source or
+  leaving the complete object visible on the cursor.
+- Made first-open loot seeding and its persistent marker one logical operation. Failed
+  generation or marker placement rolls back only that attempt so a later open can retry
+  without accumulating duplicate loot.
+- Moved tactical screen projection after camera scrolling and before world rendering;
+  hover, nearby, loot, equipment and context regions now share that frame's projection.
+  Per-frame particle aging, asset-library rebuilds and legacy visibility mutation no
+  longer run from draw functions.
+- Hardened direct control so held Shift is the canonical sprint modifier, UI-consumed
+  WASD/Q/E/Shift keys stay suppressed until release, post-scroll facing uses the frame's
+  final camera and Normal/Combat projection does not overwrite locked native events.
+- Added focused transfer-runtime, transfer-transaction and direct-control regression
+  coverage. The `v0.1.0` publication gate ran all **229 registered tests in 76 suites**.
+- Bound hover, deferred actions, carry state, editor erases and actor-facing views to
+  exact world generations, structure identities and soldier instance IDs. Reused JA2
+  slots can no longer silently retarget an old window or destructive command.
+- Made positive scenery-hit caching stationary-pointer only and filtered transient UI,
+  item and effect nodes out of the persistent asset layer. Overlapping sprites now
+  re-resolve front-to-back whenever the pointer moves.
+- Split viewport pointer loss from physical item-transfer ownership. Cancelled combat
+  and tool presses suppress legacy JA2 input until their matching release, while item
+  drags can cross viewport, inventory, equipment and touch regions exactly once.
+- Added physical-release recovery and global drag capture for managed windows and the
+  multitool, eliminated duplicate layout writes, and blocked mouse-edge camera scroll
+  while OS0 UI owns or drags the pointer.
+- Made container contents one spatial ownership model across open, carry, salvage,
+  editor replace/erase and explosive destruction. Contents are migrated or revealed,
+  the private seed marker is removed, and replacement assets cannot inherit stale
+  durability state.
+- Propagated exact loose-item identity and mutation revision through hover, `F`, RMB,
+  MMB, double click, queued pickup and world drag, preventing a reused item slot or an
+  overlapping sprite from becoming the release target.
+- Made structure relocation one atomic persistent move, preserved container-owned item
+  placement during sector reconstruction and treated open/closed partner graphics as
+  one persistent container identity. Moving an open crate can no longer recreate the
+  closed source or duplicate its seeded contents after a sector reload.
 
 ## v0.1.1-alpha hotfix
 
@@ -302,8 +351,10 @@ the explicitly experimental gameplay systems still require broad manual coverage
 - OS0 mouse regions preserve JA2's external item cursor, fixing held weapons/items
   disappearing or changing cursor while crossing the new UI.
 - Added a registry-backed object-to-actor transfer surface. A carried item exposes
-  `TAKE IN HANDS`, `PUT IN PACK` and `DROP HERE`; occupied gear is swapped safely and
-  anything that cannot be stored becomes a real world item instead of being deleted.
+  `TAKE IN HANDS`, `PUT IN PACK` and `DROP HERE`. This historical alpha used an
+  occupied-gear swap/world-fallback path; the current post-checkpoint transaction
+  supersedes it by rejecting implicit swaps and retaining an unplaced item on the
+  cursor.
 
 ## v0.5.5-alpha live asset library and animation-linked gear
 

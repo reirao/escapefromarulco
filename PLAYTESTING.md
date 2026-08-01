@@ -3,10 +3,11 @@
 Thank you for testing this early prototype. Specific reproduction steps are much more
 useful than a general statement that something did not work.
 
-> **v0.0.1.23 STABLE CHECKPOINT / EARLY ALPHA:** source, Windows package, automated
-> suite and startup path are the tested baseline. This checklist contains broader
-> gameplay acceptance scenarios and is not a statement that every map/state combination
-> has passed. Mark each result PASS, FAIL or NOT REACHED in your report.
+> **v0.1.0 FRAGILE-TESTED EARLY ALPHA:** the tagged Windows package has a recorded
+> build/test/package validation. This checklist also covers newer
+> source hardening and broader gameplay acceptance scenarios; those scenarios are
+> expected behaviour to verify, not a record that every map/state combination passed.
+> Mark each result PASS, FAIL or NOT REACHED in your report.
 
 ## Setup
 
@@ -21,7 +22,31 @@ driver and MSYS2 are not expected to provide `libfltk-1.4.dll` or related files.
 Never copy the playtest files over the original JA2 installation. Keep the extracted
 playtest in its own folder and point the launcher to the original game directory.
 
-## Suggested test pass
+## Golden path — run this first
+
+1. Start a fresh session, enter a callsign, keep or edit the default attributes,
+   select a body and two traits, then confirm. The tactical sector should remain the
+   active screen; neither the laptop creator nor inventory should open automatically.
+2. Find the red-marked tutorial crate. If no crate is marked, record the map/tileset
+   and report `NOT REACHED`; do not substitute an arbitrary object for this check.
+3. Move the pointer over the marked crate and press plain `F`. A context surface for
+   that exact crate should open without executing an action. Choose `CONTENTS`.
+4. If out of range, let the merc walk to the crate. The queued action must revalidate
+   and open the crate once. Repeat separately and press Escape while approaching; the
+   cancelled attempt must not open the crate later.
+5. Drag one crate item to an empty compatible hand or pocket. Exactly one destination
+   should accept it. An occupied/incompatible slot must not swap implicitly: the item
+   remains held until the player chooses another destination, cancels or drops it.
+6. Cancel one held-item attempt with Escape. The exact source slot/location should be
+   restored when still valid; if it cannot be restored, the complete item must remain
+   visible on the cursor rather than disappearing or moving somewhere else.
+7. Toggle `NORMAL`/`COMBAT`. With UI focus clear, verify mouse-facing plus W/S,
+   strafing A/D, held-Shift realtime sprint and Q/E manual turn. With a valid loaded
+   ordinary firearm, one LMB gesture in Combat should dispatch one shot.
+8. Save a `REPORT` from the field computer with PASS/FAIL/NOT REACHED for these steps.
+   Only after this path passes should the extended matrix below be attempted.
+
+## Extended manual acceptance matrix
 
 1. Start a fresh campaign and complete the single in-world creator using a custom
    name, attributes and two traits. Verify no laptop creator or forced inventory opens.
@@ -42,7 +67,9 @@ playtest in its own folder and point the launcher to the original game directory
 8. Mark an asset buildable and verify the action panel calls it a placeable blueprint.
 9. Inspect `%APPDATA%\JA2\AssetCatalog\os0-assets.tsv`; it should contain no graphics,
    only shareable metadata.
-10. Equip, swap and drop items using drag and drop.
+10. Equip, merge compatible stacks and drop items using drag and drop. Also try an
+    occupied slot: it must reject the transfer and retain the held item; move the
+    existing item explicitly before retrying because OS0 does not auto-swap slots.
 11. Right-click weapons and exercise every enabled weapon action.
 12. Open several containers; verify each contains material plus useful or damaged gear.
 13. Double-click timber, stone, scrap and soil; verify the `SECT` stockpile increases.
@@ -91,7 +118,8 @@ playtest in its own folder and point the launcher to the original game directory
     must leave the original intact, while a valid move should log strength practice.
 35. Carry a weapon across every visible OS0 element. Its item cursor must stay visible.
     Hover the merc and test `TAKE IN HANDS`, `PUT IN PACK` and `DROP HERE`, including
-    a case where both hands and all pockets are occupied.
+    a case where both hands and all pockets are occupied. Full destinations must leave
+    the weapon held and must not displace another item automatically.
 36. Open a crate. Verify its own world sprite is the centre of the view and each real
     contained item unfolds around it. Close/reopen it and confirm no duplicate panel
     appears and contents persist.
@@ -176,7 +204,8 @@ playtest in its own folder and point the launcher to the original game directory
 60. Drag one item from a crate across multiple overlapping windows and release it in a
     merc hand, body slot, pack and world tile in separate attempts. Exactly one target
     may react. Releasing over blank panel space must keep the item held and must not
-    drop it into the world behind the panel.
+    drop it into the world behind the panel. Repeat over an occupied slot and verify
+    that no implicit swap occurs.
 61. Fill both hands and every pocket, then drag another object onto the merc. Only
     valid relations may be shown; a rejected hand/pack/body choice must retain the
     object on the cursor. Open `MORE OPTIONS` and verify every displayed alternative
@@ -185,6 +214,21 @@ playtest in its own folder and point the launcher to the original game directory
     Immediately click an unrelated control; it must react normally. Repeat once by
     releasing outside the visible OS0 controls and once by Alt-Tabbing while holding
     the button. No stale drag, false double-click or blocked next click may remain.
+63. Start an OS0-owned Combat/tool click, keep LMB held, move into a floating window,
+    then re-enter the world before releasing. The original action must be cancelled;
+    the release must not shoot, move or select. Repeat with release outside the world,
+    followed immediately by a new click; the new click must work normally.
+64. Drag a floating window or the collapsed multitool to every viewport edge, with
+    both mouse and touch if available. The camera must not edge-scroll underneath the
+    UI, the drag must continue outside its original header region and its position must
+    persist after reload.
+65. Find two overlapping scenery sprites, including one large wreck/tree/debris mask.
+    Move between opaque pixels without stopping. Hover, `F` and RMB must switch to the
+    visually front-most asset instead of retaining the previous large sprite.
+66. In the live editor, queue an erase and mutate/replace that same item, NPC or tile
+    before the command boundary. The stale erase must fail with a reselect message and
+    must never delete the replacement. Removing/destroying a container must reveal its
+    real contents, not strand them as invisible object-owned items.
 
 ## Writing a useful report
 

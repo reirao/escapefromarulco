@@ -384,43 +384,18 @@ static void EndViewportOverlays(void);
 static void StartViewportOverlays(void);
 
 
-void RenderTopmostTacticalInterface()
+void RenderTacticalWorldSpaceInterface()
 {
-	HideLegacyTacticalInterfaceForOS0();
-	if (gfRerenderInterfaceFromHelpText)
-	{
-		fInterfacePanelDirty = DIRTYLEVEL2;
-		RenderPanel();
-		gfRerenderInterfaceFromHelpText = FALSE;
-	}
+	if (fInMapMode) return; // XXX necessary?
 
-	if (fInMapMode) // XXX necessary?
-	{
-		// If we want to rederaw whole screen, dirty all buttons!
-		if (fInterfacePanelDirty == DIRTYLEVEL2) MarkButtonsDirty();
-		RenderButtons();
-		return;
-	}
-
-	if (InItemStackPopup())
-	{
-		RenderItemStackPopup(fInterfacePanelDirty == DIRTYLEVEL2);
-	}
-
-	if (InKeyRingPopup() && !InItemDescriptionBox())
-	{
-		RenderKeyRingPopup(fInterfacePanelDirty == DIRTYLEVEL2);
-	}
-
-	if (gfInMovementMenu)
-	{
-		RenderMovementMenu();
-	}
-
-	// Setup system for video overlay (text and blitting) Sets clipping rects, etc
+	// Everything in this phase is anchored to tactical-world coordinates.  It is
+	// deliberately captured by OS0ApplyWorldZoom together with RenderWorld().
 	StartViewportOverlays();
 
-	RenderTopmostFlashingItems();
+	// OS//0 exposes items through stable hover/loot relations. The legacy locator
+	// blink both leaked hidden container contents and made discovered objects flash
+	// against the user's explicit request. Preserve it only for non-OS0 callers.
+	if (!IsLegacyRadarScreenSuppressed()) RenderTopmostFlashingItems();
 	RenderTopmostMultiPurposeLocator();
 	RenderAccumulatedBurstLocations();
 
@@ -466,51 +441,61 @@ void RenderTopmostTacticalInterface()
 	}
 
 	EndViewportOverlays();
+}
+
+
+void RenderTacticalScreenSpaceInterface()
+{
+	if (gfRerenderInterfaceFromHelpText)
+	{
+		fInterfacePanelDirty = DIRTYLEVEL2;
+		RenderPanel();
+		gfRerenderInterfaceFromHelpText = FALSE;
+	}
+
+	if (fInMapMode) // XXX necessary?
+	{
+		// If we want to rederaw whole screen, dirty all buttons!
+		if (fInterfacePanelDirty == DIRTYLEVEL2) MarkButtonsDirty();
+		RenderButtons();
+		return;
+	}
+
+	// Rubber-band coordinates are display pixels. Drawing it with the world
+	// caused a second scale/offset at 2x zoom and detached it from the pointer.
 	RenderRubberBanding();
 
-	if (!gfInItemPickupMenu && !gpItemPointer)
+	// These elements are positioned in display coordinates, not world
+	// coordinates.  Rendering them after OS0ApplyWorldZoom prevents 2x zoom from
+	// stretching menus, text, buttons and their mouse-hit geometry apart.
+	if (InItemStackPopup())
+	{
+		RenderItemStackPopup(fInterfacePanelDirty == DIRTYLEVEL2);
+	}
+
+	if (InKeyRingPopup() && !InItemDescriptionBox())
+	{
+		RenderKeyRingPopup(fInterfacePanelDirty == DIRTYLEVEL2);
+	}
+
+	if (gfInMovementMenu)
+	{
+		RenderMovementMenu();
+	}
+
+	if (guiCurrentScreen != GAME_SCREEN &&
+		!gfInItemPickupMenu && !gpItemPointer)
 	{
 		HandleAnyMercInSquadHasCompatibleStuff(NULL);
 	}
 
 	// CHECK IF OUR CURSOR IS OVER AN INV POOL
-	GridNo       const usMapPos = guiCurrentCursorGridNo;
-	SOLDIERTYPE* const sel      = GetSelectedMan();
-	if (usMapPos != NOWHERE && gfUIOverItemPoolGridNo != NOWHERE && sel)
-	{
-		// Check if we are over an item pool
-		INT8             level     = sel->bLevel;
-		ITEM_POOL const* item_pool = GetItemPool(gfUIOverItemPoolGridNo, level);
-		if (!item_pool)
-		{
-			// ATE: Allow to see list if a different level....
-			level     = (level == 0 ? 1 : 0);
-			item_pool = GetItemPool(gfUIOverItemPoolGridNo, level);
-		}
-
-		if (item_pool)
-		{
-			STRUCTURE* pStructure;
-			INT16      sIntTileGridNo;
-			INT16 const sActionGridNo =
-				ConditionalGetCurInteractiveTileGridNoAndStructure(&sIntTileGridNo, &pStructure, FALSE) ?
-					sIntTileGridNo : usMapPos;
-
-			INT8 const bZLevel = GetZLevelOfItemPoolGivenStructure(sActionGridNo, level, pStructure);
-			if (AnyItemsVisibleOnLevel(item_pool, bZLevel))
-			{
-				DrawItemPoolList(item_pool, bZLevel, gusMouseXPos, gusMouseYPos);
-				// ATE: If over items, remove locator....
-				RemoveFlashItemSlot(item_pool);
-			}
-		}
-	}
-
 	switch (gCurrentUIMode)
 	{
 		case GETTINGITEM_MODE:
-			SetItemPickupMenuDirty(DIRTYLEVEL2);
-			RenderItemPickupMenu();
+			// OS//0 presents ground/container contents as spatial item relations.
+			// The vanilla list is removed during the update phase and is never
+			// rendered or allowed to flash discovered objects back into view.
 			break;
 
 		case OPENDOOR_MENU_MODE:
@@ -527,7 +512,7 @@ void RenderTopmostTacticalInterface()
 	// OS//0 replaces the radar/clock strip in tactical play. Rendering only the
 	// old clock and sector strings without their panel produced the orphaned
 	// green text at the bottom edge.
-	if (fRenderRadarScreen && guiCurrentScreen != GAME_SCREEN)
+	if (guiCurrentScreen != GAME_SCREEN && fRenderRadarScreen)
 	{
 		RenderClock();
 		RenderTownIDString();
@@ -538,13 +523,10 @@ void RenderTopmostTacticalInterface()
 		RemoveMouseRegionForPauseOfClock();
 	}
 
-	HideLegacyTacticalInterfaceForOS0();
-
 	// If we want to rederaw whole screen, dirty all buttons!
 	if (fInterfacePanelDirty == DIRTYLEVEL2) MarkButtonsDirty();
 
 	RenderButtons();
-	RenderPausedGameBox();
 
 	MarkAllBoxesAsAltered();
 
@@ -552,6 +534,16 @@ void RenderTopmostTacticalInterface()
 	HandleShadingOfLinesForAssignmentMenus();
 	DetermineBoxPositions();
 	DisplayBoxes(FRAME_BUFFER);
+}
+
+
+void RenderTopmostTacticalInterface()
+{
+	// Compatibility entry point for non-OS0 callers.  GameScreen composes the two
+	// phases around OS0ApplyWorldZoom so fixed UI remains at native resolution.
+	RenderTacticalWorldSpaceInterface();
+	RenderTacticalScreenSpaceInterface();
+	RenderPausedGameBox();
 }
 
 

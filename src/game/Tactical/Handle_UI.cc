@@ -65,7 +65,9 @@
 #include "Campaign_Types.h"
 #include "Queen_Command.h"
 #include "Options_Screen.h"
+#include "OS0_DirectControl.h"
 #include "OS0_IngameUI.h"
+#include "OS0_PointerSnapshot.h"
 #include "OS0_ViewportInput.h"
 #include "SaveLoadScreen.h"
 #include "Spread_Burst.h"
@@ -618,25 +620,20 @@ void ResetCurrentCursorTarget() {
 }
 
 void UpdateCurrentCursorTarget() {
-	INT16  sWorldX;
-	INT16  sWorldY;
-	if (GetMouseXY(&sWorldX, &sWorldY))
+	OS0PointerSnapshot const pointer =
+		OS0CapturePointerSnapshot(gsInterfaceLevel);
+	if (!pointer.hasWorldPoint)
 	{
-		guiCurrentCursorGridNo = MAPROWCOLTOPOS(sWorldY, sWorldX);
-	}
-	else
-	{
-		guiCurrentCursorGridNo = NOWHERE;
-	}
-
-	if (guiCurrentCursorGridNo != NOWHERE) {
-		// Update pointed on soldier state
-		SOLDIERTYPE* const s = FindSoldier(guiCurrentCursorGridNo, FINDSOLDIERSAMELEVEL(gsInterfaceLevel));
-		gUIFullTarget        = s;
-		guiUIFullTargetFlags = s ? GetSoldierFindFlags(*s) : NO_MERC;
-	} else {
 		ResetCurrentCursorTarget();
+		return;
 	}
+	// Keep JA2's native cursor cache on the exact same sprite-aware relation used
+	// by OS//0 hover, F, RMB/MMB and combat. A merc's visible bounds may extend
+	// beyond its logical grid, so a second grid-only lookup targets the ground.
+	guiCurrentCursorGridNo = pointer.gridNo;
+	gUIFullTarget = pointer.actor;
+	guiUIFullTargetFlags = pointer.actor ?
+		GetSoldierFindFlags(*pointer.actor) : NO_MERC;
 }
 
 void TacticalViewPortMovementCallback(MOUSE_REGION* region, UINT32 reason) {
@@ -645,8 +642,12 @@ void TacticalViewPortMovementCallback(MOUSE_REGION* region, UINT32 reason) {
 	}
 	// Update cursor state
 	if (reason & MSYS_CALLBACK_REASON_LOST_MOUSE) {
-		OS0ResetViewportPointerGestures();
-		OS0ClearWorldHover();
+		OS0CancelViewportPointerGesturesOnLostMouse();
+		// The quick-action glyph is a child of the projected world target. Entering
+		// it makes the viewport lose mouse ownership, but must not erase the exact
+		// binding that the glyph executes.
+		if (!OS0HoverQuickActionOwnsPointer(gusMouseXPos, gusMouseYPos))
+			OS0ClearWorldHover();
 		gUIFingersDown = 0;
 		if (!IsPointerOnTacticalTouchUI()) {
 			if (gCurrentUIMode == PAN_MODE) {
@@ -660,19 +661,13 @@ void TacticalViewPortMovementCallback(MOUSE_REGION* region, UINT32 reason) {
 		}
 	} else if (reason & (MSYS_CALLBACK_REASON_MOVE | MSYS_CALLBACK_REASON_GAIN_MOUSE)) {
 		UpdateCurrentCursorTarget();
-		GridNo hoverGrid = guiCurrentCursorGridNo;
-		INT16 interactiveGrid = NOWHERE;
-		LEVELNODE* const node = GetCurInteractiveTileGridNo(&interactiveGrid);
-		UINT16 hoverTile = node ? node->usIndex : NO_TILE;
-		if (node && interactiveGrid >= 0 && interactiveGrid < WORLD_MAX) {
-			hoverGrid = interactiveGrid;
-		} else {
-			FindOS0WorldAssetAtScreen(&hoverGrid, gsInterfaceLevel, &hoverTile,
-				region->MouseXPos, region->MouseYPos);
-		}
-		OS0HoverWorldObject(gUIFullTarget, hoverGrid, gsInterfaceLevel,
-			hoverTile,
-			region->MouseXPos, region->MouseYPos);
+		// Native cursor caches remain available to JA2, but OS//0 resolves one
+		// immutable pointer snapshot at the tactical frame boundary. Resolving a
+		// second actor/asset target here caused hover flicker and doubled the
+		// expensive nearby sprite scan while scrolling.
+		OS0InvalidateWorldHoverProjection();
+		if (reason & MSYS_CALLBACK_REASON_MOVE)
+			OS0HandleViewportPointerEvent(region, reason);
 	}
 }
 
@@ -3056,12 +3051,14 @@ BOOLEAN HandleUIMovementCursor(SOLDIERTYPE* const pSoldier, MouseMoveState const
 		if (uiCursorFlags == MOUSE_STATIONARY)
 		{
 			// CURSOR IS STATIONARY
-			if ( _KeyDown( SHIFT ) && !gfPlotNewMovementNOCOST )
+			const BOOLEAN legacyShift = _KeyDown(SHIFT) &&
+				!OS0DirectControlOwnsSprintModifier();
+			if (legacyShift && !gfPlotNewMovementNOCOST)
 			{
 				gfPlotNewMovementNOCOST = TRUE;
 				gfPlotNewMovement = TRUE;
 			}
-			if ( !(_KeyDown( SHIFT ) ) && gfPlotNewMovementNOCOST )
+			if (!legacyShift && gfPlotNewMovementNOCOST)
 			{
 				gfPlotNewMovementNOCOST = FALSE;
 				gfPlotNewMovement = TRUE;
@@ -3158,7 +3155,8 @@ static INT8 DrawUIMovementPath(SOLDIERTYPE* const pSoldier, UINT16 usMapPos, Mov
 	BOOLEAN fPlot;
 	int8_t preservedDoorHandleCode;
 
-	if ((gTacticalStatus.uiFlags & INCOMBAT) || _KeyDown( SHIFT ))
+	if ((gTacticalStatus.uiFlags & INCOMBAT) ||
+		(_KeyDown(SHIFT) && !OS0DirectControlOwnsSprintModifier()))
 	{
 		fPlot = PLOT;
 	}

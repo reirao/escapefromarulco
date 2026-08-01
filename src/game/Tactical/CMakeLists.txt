@@ -57,7 +57,10 @@ set(LOCAL_JA2_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/OS0_InteractionMode.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/OS0_ItemRelations.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/OS0_ItemTransferController.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/OS0_ItemTransferRuntime.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/OS0_ItemTransferTransaction.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/OS0_MouseRegionZOrder.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/OS0_PointerSnapshot.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/OS0_RealtimeEditor.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/OS0_RealtimeEditorUI.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/OS0_SectorEconomySystem.cc
@@ -106,6 +109,9 @@ if (WITH_UNITTESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/LoadSaveSoldierType_unittest.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/OS0_MouseRegionZOrder_unittest.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/OS0_InteractionMode_unittest.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/OS0_DirectControl_unittest.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/OS0_ItemTransferRuntime_unittest.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/OS0_ItemTransferTransaction_unittest.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/OS0_Systems_unittest.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/Weapons_unittest.cc
     )

@@ -119,6 +119,11 @@ void FadeOutGameScreen( )
 void EnterTacticalScreen(void)
 {
 	guiTacticalLeaveScreen = FALSE;
+	SetLegacyRadarScreenSuppressed(TRUE);
+	// Options recreates the native highest-priority clock region before handing
+	// control back. Remove it at the transition boundary so no queued tactical
+	// input can hit an invisible legacy owner for one frame.
+	RemoveMouseRegionForPauseOfClock();
 
 	SetPositionSndsActive( );
 
@@ -213,6 +218,7 @@ void LeaveTacticalScreen(ScreenID const uiNewScreen)
 void InternalLeaveTacticalScreen(ScreenID const uiNewScreen)
 {
 	ShutdownOS0IngameUI();
+	SetLegacyRadarScreenSuppressed(FALSE);
 	gpCustomizableTimerCallback = NULL;
 
 	// unload the sector they teleported out of
@@ -273,6 +279,8 @@ void InternalLeaveTacticalScreen(ScreenID const uiNewScreen)
 
 static void HandleModalTactical(void);
 static void TacticalScreenLocateToSoldier(void);
+static void PrepareOS0TacticalComposition(BOOLEAN updateSession);
+static void FinishOS0TacticalComposition();
 
 
 ScreenID MainGameScreenHandle(void)
@@ -478,55 +486,56 @@ ScreenID MainGameScreenHandle(void)
 		}
 	}
 
-	UpdateOS0TacticalSession();
-	OS0PrepareWorldZoom();
+	PrepareOS0TacticalComposition(TRUE);
 
 	// Handle Scroll Of World
 	ScrollWorld( );
+	// ScrollWorld commits the camera used by this frame. Project every
+	// world-attached OS//0 hit region now, before RenderWorld consumes dirty/full
+	// render flags, so moved affordances cannot leave a one-frame trail.
+	OS0PrepareScreenProjection(TRUE);
 
 	//SetRenderFlags( RENDER_FLAG_FULL );
 
 	RenderWorld( );
 
-	if ( gRenderOverride != NULL )
-	{
-		gRenderOverride( );
-	}
-
-	if (gfScrollPending || g_scroll_inertia)
-	{
-		RenderTacticalInterfaceWhileScrolling( );
-	}
-	else
-	{
-		// Handle Interface Stuff
-		//RenderTacticalInterface( );
-	}
-
-	// Render Interface
-	RenderTopmostTacticalInterface( );
+	// World-attached selection rings, locators and damage text belong to the
+	// zoomed tactical layer. Native menus and buttons are composed later.
+	RenderTacticalWorldSpaceInterface();
 
 	// Render view window
 	// OS//0 owns navigation and squad presentation. The old fixed radar/squad
 	// widget would otherwise recreate a second UI in the reclaimed viewport.
 
-	ResetInterface( );
-
-	if ( gfScrollPending  )
+	FinishOS0TacticalComposition();
+	if (gRenderOverride != NULL)
 	{
-		AllocateVideoOverlaysArea( );
-		SaveVideoOverlaysArea( FRAME_BUFFER );
-		ExecuteVideoOverlays( );
-	}
-	else
-	{
-		ExecuteVideoOverlays( );
+		// Palette/debug hooks render fixed-coordinate tools, not world geometry.
+		gRenderOverride();
 	}
 
-	// Scale the complete tactical layer (world, labels and tactical overlays)
-	// together. OS//0 windows are drawn afterwards and therefore stay crisp.
-	OS0ApplyWorldZoom();
-	RenderOS0IngameUI();
+	// Auto-faces and all other native UI use display coordinates. They must be
+	// drawn after world zoom or their pixels no longer match their mouse regions.
+	if (gfScrollPending || g_scroll_inertia)
+	{
+		RenderTacticalInterfaceWhileScrolling();
+	}
+	RenderTacticalScreenSpaceInterface();
+	RenderPausedGameBox();
+
+	// Screen-space popups still consume the interface dirty level from this
+	// frame. Reset only after they have rendered, matching the original JA2
+	// lifecycle while keeping them outside the zoomed world surface.
+	ResetInterface();
+
+	// Dialogue, subtitles, scroll messages and UI notices are video overlays in
+	// screen space. Keep them crisp and above OS//0 without scaling them as world.
+	if (gfScrollPending)
+	{
+		AllocateVideoOverlaysArea();
+		SaveVideoOverlaysArea(FRAME_BUFFER);
+	}
+	ExecuteVideoOverlays();
 
 	// Adding/deleting of video overlays needs to be done below
 	// ExecuteVideoOverlays( )....
@@ -588,6 +597,28 @@ ScreenID MainGameScreenHandle(void)
 void SetRenderHook( RENDER_HOOK pRenderOverride )
 {
 	gRenderOverride = pRenderOverride;
+}
+
+
+static void PrepareOS0TacticalComposition(BOOLEAN const updateSession)
+{
+	// Enforce ownership before either normal or modal rendering can invoke a
+	// legacy radar/panel side effect. This also removes already-created squad-list
+	// regions, so suppression covers input as well as pixels.
+	SetLegacyRadarScreenSuppressed(TRUE);
+	HideLegacyTacticalInterfaceForOS0();
+	// Native modal tactical frames (dialogue, sector exit, menus) render the
+	// current OS//0 state but must not advance direct control, queued approach,
+	// carry or interaction simulation behind the modal.
+	if (updateSession) UpdateOS0TacticalSession();
+	OS0PrepareWorldZoom();
+}
+
+
+static void FinishOS0TacticalComposition()
+{
+	OS0ApplyWorldZoom();
+	RenderOS0IngameUI();
 }
 
 
@@ -676,9 +707,19 @@ static void HandleModalTactical(void)
 {
 	RestoreBackgroundRects();
 
+	PrepareOS0TacticalComposition(FALSE);
+	OS0PrepareScreenProjection(FALSE);
 	RenderWorld( );
-	RenderRadarScreen( );
-	ExecuteVideoOverlays( );
+	RenderTacticalWorldSpaceInterface();
+	FinishOS0TacticalComposition();
+	if (gRenderOverride != NULL)
+	{
+		gRenderOverride();
+	}
+
+	// Retain the original, deliberately small set of native modal content, but
+	// compose it at native resolution above the zoomed world and OS//0.
+	ExecuteVideoOverlays();
 
 	// Handle dialogue queue system
 	HandleDialogue( );
@@ -688,16 +729,15 @@ static void HandleModalTactical(void)
 	// Handle faces
 	HandleAutoFaces( );
 
-	if ( gfInSectorExitMenu )
+	if (gfInSectorExitMenu)
 	{
-		RenderSectorExitMenu( );
+		RenderSectorExitMenu();
 	}
-	HideLegacyTacticalInterfaceForOS0();
 	RenderButtons();
 
 	SaveBackgroundRects( );
 	RenderFastHelp();
-	RenderPausedGameBox( );
+	RenderPausedGameBox();
 }
 
 

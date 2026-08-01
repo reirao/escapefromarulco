@@ -15,6 +15,7 @@
 #include "Isometric_Utils.h"
 #include "Logger.h"
 #include "Overhead.h"
+#include "OS0_DirectControl.h"
 #include "OS0_IngameUI.h"
 #include "Radar_Screen.h"
 #include "Render_Dirty.h"
@@ -431,6 +432,14 @@ private: void Render(RenderTilesFlags const uiFlags, size_t const ubNumLevels, R
 
 					for (LEVELNODE * pNode = me.pLevelNodes[RenderingFX.startIndex]; pNode;)
 					{
+						if ((RenderingFX.startIndex == MAP_ELEMENT::STRUCT_START_INDEX ||
+							RenderingFX.startIndex == MAP_ELEMENT::SHADOW_START_INDEX) &&
+							OS0SuppressCarriedWorldNode(uiTileIndex, 0, pNode))
+						{
+							pNode = RenderingFX.fLinkedListDirection ?
+								pNode->pNext : pNode->pPrevNode;
+							continue;
+						}
 						bool fMerc          = RenderingFX.fMerc;
 						bool fZWrite        = RenderingFX.fZWrite;
 						bool fZBlitter      = RenderingFX.fZBlitter;
@@ -1917,7 +1926,9 @@ static BOOLEAN HandleScrollDirections(UINT32 ScrollFlags, INT16 sScrollXStep, IN
 
 static UINT ScrollSpeed(void)
 {
-	UINT speed = 20 << (_KeyDown(SHIFT) ? 2 : gubCurScrollSpeedID);
+	const BOOLEAN legacyShift = _KeyDown(SHIFT) &&
+		!OS0DirectControlOwnsSprintModifier();
+	UINT speed = 20 << (legacyShift ? 2 : gubCurScrollSpeedID);
 	if (!gfDoVideoScroll)
 	{
 		const UINT zoom = std::max<UINT>(1, OS0WorldZoomFactor());
@@ -2023,7 +2034,8 @@ void ScrollWorld(void)
 				if (!COUNTERDONE(STARTSCROLL)) break;
 			}
 
-			if (!gfIsUsingTouch && !fIsScrollingByOffset) {
+			if (!gfIsUsingTouch && !fIsScrollingByOffset &&
+				!OS0BlocksMouseEdgeScroll()) {
 				const INT16 worldBottom = OS0WorldViewportBottom();
 				if (gusMouseYPos < gsVIEWPORT_WINDOW_START_Y + NO_PX_SHOW_EXIT_CURS)
 					ScrollFlags |= SCROLL_UP;
@@ -2258,7 +2270,8 @@ static BOOLEAN ApplyScrolling(INT16 sTempRenderCenterX, INT16 sTempRenderCenterY
 	}
 
 	// If in editor, anything goes
-	if (gfEditMode && _KeyDown(SHIFT)) fScrollGood = TRUE;
+	if (gfEditMode && _KeyDown(SHIFT) &&
+		!OS0DirectControlOwnsSprintModifier()) fScrollGood = TRUE;
 
 	if (!fScrollGood)
 	{

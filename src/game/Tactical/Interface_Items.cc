@@ -15,6 +15,7 @@
 #include "HImage.h"
 #include "Map_Screen_Interface_Bottom.h"
 #include "Object_Cache.h"
+#include "OS0_ItemTransferRuntime.h"
 #include "Soldier_Functions.h"
 #include "Soldier_Macros.h"
 #include "TileDef.h"
@@ -1920,22 +1921,9 @@ static void DoAttachment(void)
 			}
 			else
 			{
-				// End Item pickup
-				gpItemPointer = NULL;
-				EnableSMPanelButtons( TRUE , TRUE );
-
-				gSMPanelRegion.ChangeCursor(CURSOR_NORMAL);
-				SetCurrentCursorFromDatabase( CURSOR_NORMAL );
-
-				//if we are currently in the shopkeeper interface
-				if (guiCurrentScreen == SHOPKEEPER_SCREEN)
-				{
-					//Clear out the moving cursor
-					gMoveingItem = INVENTORY_IN_SLOT{};
-
-					//change the curosr back to the normal one
-					SetSkiCursor( CURSOR_NORMAL );
-				}
+				// End through the canonical pointer lifecycle so an OS//0 source
+				// transaction cannot remain bound to the reused gItemPointer object.
+				EndItemPointer();
 			}
 		}
 
@@ -2759,6 +2747,27 @@ void EndItemPointer( )
 {
 	if ( gpItemPointer != NULL )
 	{
+		// A destination which ends the native cursor commits the one tracked OS//0
+		// source. Untracked vanilla pointers are unaffected.
+		OS0ItemTransferRuntime& transfer = OS0GetItemTransferRuntime();
+		if (transfer.held())
+		{
+			if (gpItemPointer->usItem != NOTHING &&
+				gpItemPointer->ubNumberOfObjects > 0 &&
+				!transfer.nativePointerStillBound())
+			{
+				// JA2 slot swaps replace gItemPointer in place. The original source has
+				// reached its destination, but the displaced object is now a *new* held
+				// item. Commit the old relation and retain that object instead of letting
+				// an unconditional EndItemPointer silently delete it.
+				transfer.commit();
+				gbItemPointerSrcSlot = NO_SLOT;
+				SetMouseCursorFromCurrentItem();
+				gSMPanelRegion.ChangeCursor(EXTERN_CURSOR);
+				return;
+			}
+			transfer.commit();
+		}
 		gpItemPointer = NULL;
 		gbItemPointerSrcSlot = NO_SLOT;
 		gSMPanelRegion.ChangeCursor(CURSOR_NORMAL);
@@ -4088,15 +4097,7 @@ static void ItemPopupRegionCallbackPrimary(MOUSE_REGION* pRegion, UINT32 iReason
 			}
 			else
 			{
-				gpItemPointer = NULL;
-				gSMPanelRegion.ChangeCursor(CURSOR_NORMAL);
-				SetCurrentCursorFromDatabase( CURSOR_NORMAL );
-
-				if (guiCurrentScreen == SHOPKEEPER_SCREEN)
-				{
-					gMoveingItem = INVENTORY_IN_SLOT{};
-					SetSkiCursor( CURSOR_NORMAL );
-				}
+				EndItemPointer();
 			}
 
 			// re-evaluate repairs
@@ -5102,36 +5103,69 @@ void CancelItemPointer( )
 	// ATE: If we have an item pointer end it!
 	if ( gpItemPointer != NULL )
 	{
-		if ( gbItemPointerSrcSlot != NO_SLOT )
+		OS0ItemTransferRuntime& transfer = OS0GetItemTransferRuntime();
+		switch (transfer.cancel())
 		{
-			// Place it back in our hands!
-			PlaceObject( gpItemPointerSoldier, gbItemPointerSrcSlot, gpItemPointer );
+			case OS0ItemTransferCancelResult::RESTORED:
+				return;
+			case OS0ItemTransferCancelResult::RESTORE_FAILED_ITEM_HELD:
+				// Exact restoration is impossible right now. Keeping the complete
+				// item on the cursor is safer than auto-placing or dropping it.
+				return;
+			case OS0ItemTransferCancelResult::NATIVE_ITEM_CHANGED:
+				// The old source transaction is stale; do not let it claim a new
+				// native pointer which happens to reuse gItemPointer's address.
+				transfer.reset();
+				break;
+			case OS0ItemTransferCancelResult::NATIVE_ITEM_MISSING:
+				transfer.reset();
+				return;
+			case OS0ItemTransferCancelResult::NO_ACTIVE_TRANSFER:
+				break;
+		}
+		SOLDIERTYPE* const owner = gpItemPointerSoldier;
+		if (!owner || !owner->bActive || owner->sGridNo < 0 ||
+			owner->sGridNo >= WORLD_MAX)
+		{
+			// No valid relation can own the object. Retain it on the cursor; clearing
+			// here would silently delete the last authoritative copy.
+			return;
+		}
 
-			// ATE: This could potnetially swap!
-			// Make sure # of items is 0, if not, auto place somewhere else...
-			if ( gpItemPointer->ubNumberOfObjects > 0 )
+		BOOLEAN resolved = FALSE;
+		if (gbItemPointerSrcSlot >= 0 && gbItemPointerSrcSlot < NUM_INV_SLOTS)
+		{
+			PlaceObject(owner, gbItemPointerSrcSlot, gpItemPointer);
+			resolved = gpItemPointer->usItem == NOTHING ||
+				gpItemPointer->ubNumberOfObjects == 0;
+			if (!resolved)
 			{
-				if ( !AutoPlaceObject( gpItemPointerSoldier, gpItemPointer, FALSE ) )
-				{
-					// Alright, place of the friggen ground!
-					AddItemToPool(gpItemPointerSoldier->sGridNo, gpItemPointer, VISIBLE, gpItemPointerSoldier->bLevel, 0 , -1);
-					NotifySoldiersToLookforItems( );
-				}
+				AutoPlaceObject(owner, gpItemPointer, FALSE);
+				resolved = gpItemPointer->usItem == NOTHING ||
+					gpItemPointer->ubNumberOfObjects == 0;
 			}
 		}
-		else
+		if (!resolved)
 		{
-			// We drop it here.....
-			AddItemToPool(gpItemPointerSoldier->sGridNo, gpItemPointer, VISIBLE, gpItemPointerSoldier->bLevel, 0 , -1);
-			NotifySoldiersToLookforItems( );
+			const INT32 worldItem = AddItemToPool(owner->sGridNo, gpItemPointer,
+				VISIBLE, owner->bLevel, 0, -1);
+			resolved = worldItem >= 0;
+			if (resolved) NotifySoldiersToLookforItems();
 		}
-		EndItemPointer( );
+		// AddItemToPool can fail (for example because the target surface rejects the
+		// object). Only clear the native pointer after one destination proved it owns
+		// every remaining object; otherwise ESC simply keeps the item held.
+		if (resolved) EndItemPointer();
 	}
 }
 
 
 void LoadItemCursorFromSavedGame(HWFILE const f)
 {
+	// Transfer origins contain live actor/container identities and are therefore
+	// session-only. A loaded native cursor must never inherit a transaction from
+	// the world that was just replaced, even if gItemPointer reuses its address.
+	OS0GetItemTransferRuntime().reset();
 	BYTE data[44];
 	f->read(data, sizeof(data));
 

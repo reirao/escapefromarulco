@@ -26,6 +26,7 @@
 #include "ContentManager.h"
 #include "GameInstance.h"
 #include <memory>
+#include <stdexcept>
 
 #define NUM_REVEALED_BYTES 3200
 
@@ -68,6 +69,42 @@ static void DamageStructsFromMapTempFile(MODIFY_MAP* pMap);
 static bool ModifyWindowStatus(GridNo);
 static void RemoveSavedStructFromMap(UINT32 uiMapIndex, UINT16 usIndex);
 static void SetOpenableStructStatusFromMapTempFile(UINT32 uiMapIndex, BOOLEAN fOpened);
+
+
+static UINT16 PartnerEquivalentStructTile(UINT16 const tileIndex)
+{
+	if (tileIndex >= NUMBEROFTILES) return NUMBEROFTILES;
+	DB_STRUCTURE_REF const* const structureRef =
+		gTileDatabase[tileIndex].pDBStructureRef;
+	if (!structureRef || !structureRef->pDBStructure) return NUMBEROFTILES;
+
+	INT8 const delta = structureRef->pDBStructure->bPartnerDelta;
+	if (delta == NO_PARTNER_STRUCTURE) return NUMBEROFTILES;
+	INT32 const partner = static_cast<INT32>(tileIndex) + delta;
+	if (partner < 0 || partner >= NUMBEROFTILES) return NUMBEROFTILES;
+
+	// Swapping a structure advances both the structure reference and the level-node
+	// graphic by bPartnerDelta.  Require the reverse edge as well so corrupt data
+	// can never make MOVE_STRUCT consume an unrelated neighbouring graphic.
+	DB_STRUCTURE_REF const* const partnerRef =
+		gTileDatabase[partner].pDBStructureRef;
+	if (!partnerRef || !partnerRef->pDBStructure ||
+		partnerRef->pDBStructure->bPartnerDelta != -delta)
+		return NUMBEROFTILES;
+	return static_cast<UINT16>(partner);
+}
+
+
+static UINT16 ExistingStructTileOrPartner(GridNo const gridNo,
+	UINT16 const tileIndex)
+{
+	if (gridNo < 0 || gridNo >= WORLD_MAX || tileIndex >= NUMBEROFTILES)
+		return NUMBEROFTILES;
+	if (IndexExistsInStructLayer(gridNo, tileIndex)) return tileIndex;
+	UINT16 const partner = PartnerEquivalentStructTile(tileIndex);
+	return partner < NUMBEROFTILES &&
+		IndexExistsInStructLayer(gridNo, partner) ? partner : NUMBEROFTILES;
+}
 
 
 void LoadAllMapChangesFromMapTempFileAndApplyThem()
@@ -258,6 +295,32 @@ void LoadAllMapChangesFromMapTempFileAndApplyThem()
 				}
 				break;
 
+			case SLM_MOVE_STRUCT:
+			{
+				const UINT32 destination = pMap->usImageType;
+				const UINT16 tileIndex = pMap->usSubImageIndex;
+				if (pMap->usGridNo < WORLD_MAX && destination < WORLD_MAX &&
+					tileIndex < NUMBEROFTILES)
+				{
+					// Replay is idempotent and partner-state agnostic. Open containers
+					// carry their open graphic, while a fresh sector always begins with
+					// the closed graphic from the base map. Likewise, two moves may have
+					// an open/close transition between them. Treat the reciprocal partner
+					// as the same persistent structure identity, but add the exact state
+					// recorded by this move when the destination has neither state.
+					UINT16 const sourceTile = ExistingStructTileOrPartner(
+						pMap->usGridNo, tileIndex);
+					if (sourceTile < NUMBEROFTILES)
+						RemoveSavedStructFromMap(pMap->usGridNo, sourceTile);
+					if (ExistingStructTileOrPartner(destination, tileIndex) >=
+						NUMBEROFTILES)
+						AddStructToTail(destination, tileIndex);
+					SaveModifiedMapStructToMapTempFile(pMap, *tempMapFile);
+					uiNumberOfElementsSavedBackToFile++;
+				}
+				break;
+			}
+
 			default:
 				SLOGA("Map Type not in switch when loading map changes from temp file");
 				break;
@@ -330,6 +393,24 @@ void AddRemoveObjectToMapTempFile(UINT32 const uiMapIndex, UINT16 const usIndex)
 void RemoveStructFromMapTempFile(UINT32 const uiMapIndex, UINT16 const usIndex)
 {
 	AddToMapTempFile(uiMapIndex, usIndex, SLM_REMOVE_STRUCT);
+}
+
+
+void MoveStructInMapTempFile(UINT32 const sourceMapIndex,
+	UINT32 const destinationMapIndex, UINT16 const tileIndex)
+{
+	if (!ApplyMapChangesToMapTempFile::IsActive()) return;
+	if (gTacticalStatus.uiFlags & LOADING_SAVED_GAME) return;
+	if (sourceMapIndex >= WORLD_MAX || destinationMapIndex >= WORLD_MAX ||
+		tileIndex >= NUMBEROFTILES)
+		throw std::invalid_argument("invalid persistent structure move");
+
+	MODIFY_MAP move{};
+	move.usGridNo = static_cast<UINT16>(sourceMapIndex);
+	move.usImageType = static_cast<UINT16>(destinationMapIndex);
+	move.usSubImageIndex = tileIndex;
+	move.ubType = SLM_MOVE_STRUCT;
+	SaveModifiedMapStructToMapTempFile(&move, gWorldSector);
 }
 
 

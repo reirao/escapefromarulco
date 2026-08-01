@@ -26,6 +26,7 @@
 #include "Random.h"
 #include "Tile_Animation.h"
 #include "GameMode.h"
+#include "OS0_AssetDamageSystem.h"
 
 #include "ContentManager.h"
 #include "GameInstance.h"
@@ -884,6 +885,7 @@ try
 	DB_STRUCTURE_REF const* const partner     = base->pDBStructureRef + delta;
 	UINT8                   const hit_points  = base->ubHitPoints;
 	INT16                   const cube_offset = base->sCubeOffset;
+	UINT16                  const old_tile     = node->usIndex;
 
 	// Delete the old structure and add the new one
 	if (!DeleteStructureFromWorld(base)) return 0;
@@ -909,6 +911,11 @@ try
 		}
 
 		if (shadow) shadow->usIndex += delta;
+		NotifyWorldTileMutation();
+		OS0MoveWorldAssetDamage(grid_no,
+			static_cast<UINT8>(cube_offset / PROFILE_Z_SIZE), old_tile,
+			grid_no, static_cast<UINT8>(cube_offset / PROFILE_Z_SIZE),
+			node->usIndex);
 	}
 
 	return new_base;

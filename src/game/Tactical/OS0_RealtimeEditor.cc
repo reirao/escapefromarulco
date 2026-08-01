@@ -22,6 +22,7 @@
 #include "MercProfile.h"
 #include "MercProfileInfo.h"
 #include "OS0_AssetCatalogService.h"
+#include "OS0_AssetDamageSystem.h"
 #include "OppList.h"
 #include "Overhead.h"
 #include "PreBattle_Interface.h"
@@ -1078,8 +1079,12 @@ try
 			}
 
 			INT16 collisionExclusion = INVALID_STRUCTURE_ID;
+			BOOLEAN replacedContainer = FALSE;
+			GridNo replacedBaseGrid = request.gridNo;
+			UINT16 replacedCanonicalTile = request.tileIndex;
 			BOOLEAN const collisionLayer = layer == OS0EditorLayer::STRUCTURE ||
 				layer == OS0EditorLayer::ON_ROOF;
+			INT8 const structureLevel = layer == OS0EditorLayer::ON_ROOF ? 1 : 0;
 			if (request.replaceExisting && collisionLayer)
 			{
 				LEVELNODE* const head = layer == OS0EditorLayer::ON_ROOF ?
@@ -1088,11 +1093,22 @@ try
 				LEVELNODE* const existing = FindNode(head, request.tileIndex);
 				if (existing != nullptr && existing->pStructureData != nullptr)
 				{
+					STRUCTURE const* const base =
+						FindBaseStructure(existing->pStructureData);
 					collisionExclusion = static_cast<INT16>(
 						existing->pStructureData->usStructureID);
+					replacedContainer = base &&
+						(base->fFlags & STRUCTURE_OPENABLE) &&
+						!(base->fFlags & STRUCTURE_ANYDOOR);
+					if (base)
+					{
+						replacedBaseGrid = base->sGridNo;
+						if (LEVELNODE const* const baseNode =
+							FindLevelNodeBasedOnStructure(base))
+							replacedCanonicalTile = baseNode->usIndex;
+					}
 				}
 			}
-			INT8 const structureLevel = layer == OS0EditorLayer::ON_ROOF ? 1 : 0;
 			if (collisionLayer && request.validateCollision &&
 				tile.pDBStructureRef != nullptr && !wallLike &&
 				!OkayToAddStructureToWorld(request.gridNo, structureLevel,
@@ -1147,6 +1163,8 @@ try
 				}
 			}
 
+			try
+			{
 			switch (layer)
 			{
 				case OS0EditorLayer::LAND:
@@ -1200,6 +1218,41 @@ try
 				case OS0EditorLayer::AUTO:
 					return MakeResult(command, FALSE, FALSE, "Unsupported tile layer");
 			}
+			}
+			catch (...)
+			{
+				// The native editor API can throw after replacement already removed
+				// the old node. Do not strand its spatial inventory invisibly.
+				if (replacedContainer)
+					OS0SpillContainerContents(replacedBaseGrid, structureLevel);
+				OS0ForgetWorldAssetDamage(replacedBaseGrid, structureLevel,
+					replacedCanonicalTile);
+				throw;
+			}
+			if (replacedContainer)
+			{
+				LEVELNODE* const replacementNode = FindNode(
+					layer == OS0EditorLayer::ON_ROOF ?
+						gpWorldLevelData[request.gridNo].pOnRoofHead :
+						gpWorldLevelData[request.gridNo].pStructHead,
+					request.tileIndex);
+				STRUCTURE const* const replacement =
+					replacementNode && replacementNode->pStructureData ?
+					FindBaseStructure(replacementNode->pStructureData) : nullptr;
+				BOOLEAN const replacementIsContainer = replacement &&
+					(replacement->fFlags & STRUCTURE_OPENABLE) &&
+					!(replacement->fFlags & STRUCTURE_ANYDOOR);
+				if (!replacementIsContainer)
+					OS0SpillContainerContents(replacedBaseGrid, structureLevel);
+			}
+			// Only a successful placement establishes the new identity. Clearing
+			// earlier would heal an existing asset when collision/placement fails.
+			OS0ForgetWorldAssetDamage(request.gridNo, structureLevel,
+				request.tileIndex);
+			if (replacedBaseGrid != request.gridNo ||
+				replacedCanonicalTile != request.tileIndex)
+				OS0ForgetWorldAssetDamage(replacedBaseGrid, structureLevel,
+					replacedCanonicalTile);
 			return MakeResult(command, TRUE, TRUE, "World asset placed");
 		}
 
@@ -1312,12 +1365,17 @@ try
 				if (AddItemToPool(request.gridNo, &item, visibility,
 					request.level > 0 ? 1 : 0, WORLD_ITEM_REACHABLE, -1) < 0)
 				{
-					if (i > 0) renderDirty_ = TRUE;
+					if (i > 0)
+					{
+						renderDirty_ = TRUE;
+						NotifyWorldTileMutation();
+					}
 					return MakeResult(command, FALSE, i > 0,
 						"The item pool rejected an item");
 				}
 			}
 			renderDirty_ = TRUE;
+			NotifyWorldTileMutation();
 			return MakeResult(command, TRUE, TRUE,
 				ST::format("Placed {} item(s)", quantity));
 		}
@@ -1395,6 +1453,7 @@ try
 			soldier->bLastRenderVisibleValue = 1;
 			AddSoldierToSectorNoCalculateDirection(soldier);
 			if (request.onRoof) SetSoldierHeight(soldier, SECOND_LEVEL_Z_OFFSET);
+			NotifyWorldTileMutation();
 			return MakeResult(command, TRUE, TRUE,
 				ST::format("Placed NPC template {}", request.templateId));
 		}
@@ -1404,6 +1463,12 @@ try
 			auto const& request = std::get<OS0EditorRemoveRequest>(command.payload);
 			if (!gfWorldLoaded)
 				return MakeResult(command, FALSE, FALSE, "No world is loaded");
+			if (request.expectedWorldRevision != 0 &&
+				request.expectedWorldRevision != WorldTileMutationRevision())
+			{
+				return MakeResult(command, FALSE, FALSE,
+					"World changed before removal; select the target again");
+			}
 
 			if (request.kind == OS0EditorRemoveKind::WORLD_ITEM)
 			{
@@ -1425,6 +1490,7 @@ try
 				}
 				INT16 const gridNo = worldItem.sGridNo;
 				RemoveItemFromPool(worldItem);
+				NotifyWorldTileMutation();
 				if (IsValidGridNo(gridNo)) renderDirty_ = TRUE;
 				return MakeResult(command, TRUE, TRUE, "World item removed");
 			}
@@ -1440,6 +1506,12 @@ try
 				if (!soldier.bActive)
 				{
 					return MakeResult(command, FALSE, FALSE, "NPC handle is stale");
+				}
+				if (request.expectedNpcInstanceId == 0 ||
+					soldier.uiUniqueSoldierIdValue != request.expectedNpcInstanceId)
+				{
+					return MakeResult(command, FALSE, FALSE,
+						"NPC slot was reused before removal");
 				}
 				if (soldier.bTeam == OUR_TEAM)
 				{
@@ -1462,6 +1534,7 @@ try
 				}
 				INT16 const gridNo = soldier.sGridNo;
 				RemoveSoldierNodeFromInitList(node);
+				NotifyWorldTileMutation();
 				if (IsValidGridNo(gridNo)) renderDirty_ = TRUE;
 				return MakeResult(command, TRUE, TRUE, "NPC removed");
 			}
@@ -1477,6 +1550,10 @@ try
 			OS0EditorLayer const layer = request.layer == OS0EditorLayer::AUTO ?
 				DefaultLayer(request.tileIndex) : request.layer;
 			BOOLEAN removed = FALSE;
+			BOOLEAN removedContainer = FALSE;
+			UINT8 const removedLevel = layer == OS0EditorLayer::ON_ROOF ? 1 : 0;
+			GridNo removedBaseGrid = request.gridNo;
+			UINT16 removedCanonicalTile = request.tileIndex;
 			AddToUndoList(request.gridNo);
 			switch (layer)
 			{
@@ -1502,6 +1579,18 @@ try
 						gpWorldLevelData[request.gridNo].pStructHead, request.tileIndex);
 					if (node != nullptr)
 					{
+						STRUCTURE const* const base = node->pStructureData ?
+							FindBaseStructure(node->pStructureData) : nullptr;
+						removedContainer = base &&
+							(base->fFlags & STRUCTURE_OPENABLE) &&
+							!(base->fFlags & STRUCTURE_ANYDOOR);
+						if (base)
+						{
+							removedBaseGrid = base->sGridNo;
+							if (LEVELNODE const* const baseNode =
+								FindLevelNodeBasedOnStructure(base))
+								removedCanonicalTile = baseNode->usIndex;
+						}
 						RemoveDoorShadow(request.gridNo, request.tileIndex);
 						RemoveStructFromLevelNode(request.gridNo, node);
 						TILE_ELEMENT const& tile = gTileDatabase[request.tileIndex];
@@ -1531,6 +1620,18 @@ try
 						gpWorldLevelData[request.gridNo].pOnRoofHead, request.tileIndex);
 					if (node != nullptr)
 					{
+						STRUCTURE const* const base = node->pStructureData ?
+							FindBaseStructure(node->pStructureData) : nullptr;
+						removedContainer = base &&
+							(base->fFlags & STRUCTURE_OPENABLE) &&
+							!(base->fFlags & STRUCTURE_ANYDOOR);
+						if (base)
+						{
+							removedBaseGrid = base->sGridNo;
+							if (LEVELNODE const* const baseNode =
+								FindLevelNodeBasedOnStructure(base))
+								removedCanonicalTile = baseNode->usIndex;
+						}
 						INT16 const buddy = gTileDatabase[request.tileIndex].sBuddyNum;
 						if (buddy >= 0)
 						{
@@ -1557,6 +1658,10 @@ try
 			}
 			if (!removed)
 				return MakeResult(command, FALSE, FALSE, "Tile handle is stale");
+			if (removedContainer)
+				OS0SpillContainerContents(removedBaseGrid, removedLevel);
+			OS0ForgetWorldAssetDamage(removedBaseGrid, removedLevel,
+				removedCanonicalTile);
 			dirtyGridNos_.push_back(request.gridNo);
 			TILE_ELEMENT const& removedTile = gTileDatabase[request.tileIndex];
 			if (layer == OS0EditorLayer::LAND ||
@@ -1803,6 +1908,15 @@ std::uint64_t OS0RealtimeEditorSession::queueRebuildCatalogs()
 {
 	return enqueue(OS0EditorCommandType::REBUILD_CATALOGS,
 		OS0EditorCatalogRebuildRequest{});
+}
+
+void OS0RealtimeEditorSession::resetForTacticalSession()
+{
+	engine_ = OS0RealtimeEditorEngineAdapter{};
+	catalog_ = OS0EditorCatalog{};
+	status_ = OS0EditorSessionStatus{};
+	pending_.clear();
+	completed_.clear();
 }
 
 void OS0RealtimeEditorSession::update()

@@ -32,7 +32,7 @@ public:
 	{
 		// we don't know in what order the check and value are, but it carries meaning
 		std::string check;
-		uint8_t value;
+		uint8_t value = 0;
 		bool reverse = false;
 		if (std::holds_alternative<uint8_t>(one)) { // int, string
 			value = std::get<uint8_t>(one);

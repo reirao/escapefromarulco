@@ -133,6 +133,9 @@ private:
 	std::array<OS0WindowTemplate, OS0_MAX_WINDOWS> definitions_{};
 	std::array<OS0WindowState, OS0_MAX_WINDOWS> states_{};
 	std::array<BOOLEAN, OS0_MAX_WINDOWS> registered_{};
+	// Invalid handles must never alias a real window. Mutable callers receive
+	// this inert sink instead of silently corrupting slot zero.
+	OS0WindowState invalidState_{};
 	OS0UIRect workspace_{ 0, 0, 640, 442 };
 	OS0WindowHandle dragging_ = OS0_INVALID_WINDOW;
 	INT16 dragOffsetX_ = 0;

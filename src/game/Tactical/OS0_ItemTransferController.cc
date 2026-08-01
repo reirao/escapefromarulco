@@ -9,7 +9,8 @@ namespace
 
 BOOLEAN OS0ItemTransferController::beginSourcePress(
 	OS0ItemTransferSurface const surface, UINT32 const sourceId,
-	INT16 const screenX, INT16 const screenY) noexcept
+	INT16 const screenX, INT16 const screenY,
+	OS0ItemSourceIdentity const identity) noexcept
 {
 	if (surface == OS0ItemTransferSurface::NONE ||
 		phase_ != OS0ItemTransferPhase::IDLE || suppressNextRelease_) return FALSE;
@@ -17,6 +18,7 @@ BOOLEAN OS0ItemTransferController::beginSourcePress(
 	source_ = surface;
 	target_ = OS0ItemTransferSurface::NONE;
 	sourceId_ = sourceId;
+	sourceIdentity_ = identity;
 	pressX_ = screenX;
 	pressY_ = screenY;
 	buttonDown_ = TRUE;
@@ -27,19 +29,21 @@ BOOLEAN OS0ItemTransferController::beginSourcePress(
 
 
 BOOLEAN OS0ItemTransferController::sourceMatches(
-	OS0ItemTransferSurface const surface, UINT32 const sourceId) const noexcept
+	OS0ItemTransferSurface const surface, UINT32 const sourceId,
+	OS0ItemSourceIdentity const identity) const noexcept
 {
 	return phase_ != OS0ItemTransferPhase::IDLE && source_ == surface &&
-		sourceId_ == sourceId;
+		sourceId_ == sourceId && sourceIdentity_ == identity;
 }
 
 
 BOOLEAN OS0ItemTransferController::dragThresholdReached(
 	OS0ItemTransferSurface const surface, UINT32 const sourceId,
-	INT16 const screenX, INT16 const screenY, INT16 const threshold) const noexcept
+	INT16 const screenX, INT16 const screenY, INT16 const threshold,
+	OS0ItemSourceIdentity const identity) const noexcept
 {
 	if (phase_ != OS0ItemTransferPhase::SOURCE_PRESSED || !buttonDown_ ||
-		!sourceMatches(surface, sourceId)) return FALSE;
+		!sourceMatches(surface, sourceId, identity)) return FALSE;
 	const int dx = static_cast<int>(screenX) - pressX_;
 	const int dy = static_cast<int>(screenY) - pressY_;
 	return dx >= threshold || dx <= -threshold ||
@@ -48,10 +52,11 @@ BOOLEAN OS0ItemTransferController::dragThresholdReached(
 
 
 BOOLEAN OS0ItemTransferController::markItemHeld(
-	OS0ItemTransferSurface const surface, UINT32 const sourceId) noexcept
+	OS0ItemTransferSurface const surface, UINT32 const sourceId,
+	OS0ItemSourceIdentity const identity) noexcept
 {
 	if (phase_ != OS0ItemTransferPhase::SOURCE_PRESSED || !buttonDown_ ||
-		!sourceMatches(surface, sourceId)) return FALSE;
+		!sourceMatches(surface, sourceId, identity)) return FALSE;
 	phase_ = OS0ItemTransferPhase::ITEM_HELD;
 	return TRUE;
 }
@@ -112,6 +117,7 @@ OS0ItemReleaseClaim OS0ItemTransferController::claimRelease(
 		phase_ = OS0ItemTransferPhase::IDLE;
 		source_ = OS0ItemTransferSurface::NONE;
 		sourceId_ = 0;
+		sourceIdentity_ = {};
 		return OS0ItemReleaseClaim::SOURCE_CLICK;
 	}
 	return phase_ == OS0ItemTransferPhase::ITEM_HELD ?
@@ -131,6 +137,7 @@ void OS0ItemTransferController::completeItemRelease(
 		// native cursor owns the object until the next explicit relation.
 		source_ = OS0ItemTransferSurface::EXTERNAL;
 		sourceId_ = 0;
+		sourceIdentity_ = {};
 	}
 	else
 	{
@@ -210,6 +217,7 @@ void OS0ItemTransferController::clearTransfer() noexcept
 	source_ = OS0ItemTransferSurface::NONE;
 	target_ = OS0ItemTransferSurface::NONE;
 	sourceId_ = 0;
+	sourceIdentity_ = {};
 	pressX_ = 0;
 	pressY_ = 0;
 }

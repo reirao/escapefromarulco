@@ -28,8 +28,8 @@ enum class OS0CreatorStage : UINT8
 	IDENTITY = 1,
 	ATTRIBUTES = 2,
 	TRAITS = 3,
-	CONTROLS = 5,
-	COMPLETE = 6
+	CONTROLS = 4,
+	COMPLETE = 5
 };
 
 enum class OS0UICommand : UINT8
@@ -138,7 +138,6 @@ public:
 	BOOLEAN creatorActive() const noexcept { return creatorActive_; }
 	BOOLEAN& creatorActiveRef() noexcept { return creatorActive_; }
 	OS0CreatorStage creatorStage() const noexcept;
-	UINT8& creatorStageValueRef() noexcept { return creatorStage_; }
 	BOOLEAN advanceCreator() noexcept;
 	void completeCreator() noexcept;
 

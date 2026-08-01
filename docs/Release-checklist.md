@@ -2,8 +2,30 @@
 
 > **Upstream historical document:** this is JA2 Stracciatella's original release
 > checklist and mentions upstream milestones/platform packages. It is not evidence
-> that Escape from Arulco publishes or tests those targets. The OS//0 `v0.0.1.23`
-> release publishes one **STABLE CHECKPOINT / EARLY ALPHA Windows x64 playtest**.
+> that Escape from Arulco publishes or tests those targets. The OS//0 `v0.1.0`
+> tag records one **FRAGILE-TESTED EARLY ALPHA Windows x64 playtest**.
+> Unreleased source changes require a fresh complete test, build, package inspection
+> and startup check; this historical list does not supply that validation.
+
+## Escape from Arulco publication gate
+
+The release packager intentionally refuses a dirty tree or a `HEAD` that is not tagged
+with the version from `escape-from-arulco-version`. Before running it:
+
+- [ ] Finish the intended source and documentation changes; choose a new version only
+      when a new publication is actually authorized.
+- [ ] Configure a separate `WITH_UNITTESTS=ON` build and run the complete registered
+      suite. Record the count/output from that exact run rather than copying an older
+      number into living documentation.
+- [ ] Build the Windows game and launcher from the same clean commit.
+- [ ] Tag that exact commit with `v<escape-from-arulco-version>`.
+- [ ] Run `.ci/package-windows-playtest.ps1`, inspect the generated runtime/DLL manifest
+      and verify `BUILD_INFO.txt` names the tagged commit.
+- [ ] Start the extracted archive on a clean test path and complete the Golden Path in
+      `PLAYTESTING.md`; keep broader manual scenarios marked PASS, FAIL or NOT REACHED.
+
+`BUILD_AND_START_LOCAL.cmd` is deliberately not a publication gate: it configures
+`WITH_UNITTESTS=OFF`, incrementally builds `ja2` and starts the local executable.
 
 ## Pre-release development
 

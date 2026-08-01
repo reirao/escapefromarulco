@@ -16,7 +16,13 @@
 #include "OS0_ViewportInput.h"
 #include "OS0_WindowManager.h"
 #include "OS0_WorldInteractionSystem.h"
+#include "Handle_Items.h"
+#include "Items.h"
 #include "SaveLoadGameStates.h"
+#include "Structure.h"
+
+#include <utility>
+#include <vector>
 
 TEST(OS0ItemTransferPolicyTest, StaysSilentUntilAnAccessibleTargetExists)
 {
@@ -107,6 +113,85 @@ TEST(OS0ItemTransferControllerTest, AClickNeverBecomesALateDrag)
 		OS0ItemReleaseClaim::SOURCE_CLICK);
 	EXPECT_FALSE(transfers.markItemHeld(OS0ItemTransferSurface::INVENTORY, 11));
 	EXPECT_TRUE(transfers.releaseWasHandled());
+}
+
+
+TEST(OS0ItemTransferControllerTest, ReusedSourcePositionCannotDetachReplacementItem)
+{
+	OS0ItemTransferController transfers;
+	OS0ItemSourceIdentity const pressed{ 7001, 0x1111222233334444ULL,
+		412, 0, 1, 0x20, -1 };
+	OS0ItemSourceIdentity const replacement{ 7001, 0x9999AAAABBBBCCCCULL,
+		412, 0, 1, 0x20, -1 };
+	ASSERT_TRUE(transfers.beginSourcePress(OS0ItemTransferSurface::LOOT,
+		17, 100, 100, pressed));
+	EXPECT_TRUE(transfers.sourceMatches(OS0ItemTransferSurface::LOOT,
+		17, pressed));
+	EXPECT_FALSE(transfers.sourceMatches(OS0ItemTransferSurface::LOOT,
+		17, replacement));
+	EXPECT_FALSE(transfers.dragThresholdReached(OS0ItemTransferSurface::LOOT,
+		17, 120, 100, 4, replacement));
+	EXPECT_FALSE(transfers.markItemHeld(OS0ItemTransferSurface::LOOT,
+		17, replacement));
+	EXPECT_TRUE(transfers.dragThresholdReached(OS0ItemTransferSurface::LOOT,
+		17, 120, 100, 4, pressed));
+	EXPECT_TRUE(transfers.markItemHeld(OS0ItemTransferSurface::LOOT,
+		17, pressed));
+}
+
+
+TEST(OS0ActionBindingTest, WorldItemFingerprintAndMetadataArePartOfIdentity)
+{
+	OS0ActionBinding original;
+	original.kind = OS0InteractionTargetKind::WORLD_ITEM;
+	original.gridNo = 412;
+	original.level = 0;
+	original.worldItemIndex = 17;
+	original.worldItemType = 23;
+	original.worldItemVisibility = 1;
+	original.worldItemFlags = 0x20;
+	original.worldItemRenderZHeight = -1;
+	original.worldItemFingerprint = 0x1111222233334444ULL;
+
+	OS0ActionBinding replacement = original;
+	replacement.worldItemFingerprint = 0x9999AAAABBBBCCCCULL;
+	EXPECT_NE(original, replacement);
+	replacement = original;
+	replacement.worldItemFlags ^= 0x20;
+	EXPECT_NE(original, replacement);
+	replacement = original;
+	replacement.worldItemRenderZHeight = 3;
+	EXPECT_NE(original, replacement);
+}
+
+TEST(OS0ActionBindingTest, AssetAndTerrainGenerationArePartOfIdentity)
+{
+	OS0ActionBinding structure;
+	structure.kind = OS0InteractionTargetKind::WORLD_ASSET;
+	structure.gridNo = 300;
+	structure.tileIndex = 81;
+	structure.assetHasStructure = TRUE;
+	structure.assetStructureId = UINT16_MAX;
+	structure.assetBaseGridNo = 299;
+
+	OS0ActionBinding replacement = structure;
+	replacement.assetStructureId = UINT16_MAX - 1;
+	EXPECT_NE(structure, replacement);
+	replacement = structure;
+	replacement.assetBaseGridNo = 300;
+	EXPECT_NE(structure, replacement);
+
+	OS0ActionBinding terrain;
+	terrain.kind = OS0InteractionTargetKind::TERRAIN;
+	terrain.gridNo = 301;
+	terrain.terrainTileIndex = 12;
+	terrain.worldRevision = 17;
+	replacement = terrain;
+	replacement.worldRevision = 18;
+	EXPECT_NE(terrain, replacement);
+	replacement = terrain;
+	replacement.terrainTileIndex = 13;
+	EXPECT_NE(terrain, replacement);
 }
 
 TEST(OS0ItemTransferControllerTest, PointerCreatedOnButtonUpConsumesThatRelease)
@@ -281,6 +366,7 @@ TEST(OS0ActionRegistryTest, EnvironmentCapabilitiesDriveEveryObjectSurface)
 	OS0EnvironmentActionFacts facts;
 	facts.hasAsset = TRUE;
 	facts.near = TRUE;
+	facts.manipulationNear = TRUE;
 	facts.moveCandidate = TRUE;
 	facts.canMove = TRUE;
 	facts.canThrow = FALSE;
@@ -320,6 +406,7 @@ TEST(OS0ActionRegistryTest, MaximumEnvironmentRelationFitsInlineStorage)
 	context.environment.openable = TRUE;
 	context.environment.terrain = TRUE;
 	context.environment.near = TRUE;
+	context.environment.manipulationNear = TRUE;
 	context.environment.moveCandidate = TRUE;
 	context.environment.canMove = TRUE;
 	context.environment.canThrow = TRUE;
@@ -360,6 +447,32 @@ TEST(OS0ActionRegistryTest, RelationalResolverBindsTargetAndPlansApproach)
 	ASSERT_NE(PrimaryOS0InteractionAction(actions), nullptr);
 	EXPECT_EQ(PrimaryOS0InteractionAction(actions)->action,
 		ContextAction::CONTENTS);
+}
+
+TEST(OS0ActionRegistryTest, PhysicalManipulationRequiresAdjacentHands)
+{
+	OS0InteractionContext context;
+	context.hasEnvironment = TRUE;
+	context.target = { OS0InteractionTargetKind::WORLD_ASSET, -1, 1234, 0,
+		77, -1 };
+	context.environment.actorAvailable = TRUE;
+	context.environment.hasAsset = TRUE;
+	context.environment.openable = TRUE;
+	context.environment.near = TRUE;
+	context.environment.manipulationNear = FALSE;
+	context.environment.moveCandidate = TRUE;
+	context.environment.canMove = TRUE;
+
+	OS0ResolvedActionList const actions =
+		ResolveOS0InteractionActions(context);
+	OS0ResolvedAction const* const contents =
+		FindOS0ResolvedAction(actions, ContextAction::CONTENTS);
+	OS0ResolvedAction const* const carry =
+		FindOS0ResolvedAction(actions, ContextAction::CARRY);
+	ASSERT_NE(contents, nullptr);
+	ASSERT_NE(carry, nullptr);
+	EXPECT_EQ(contents->approach, OS0ActionApproach::IMMEDIATE);
+	EXPECT_EQ(carry->approach, OS0ActionApproach::MOVE_TO_RANGE);
 }
 
 TEST(OS0ActionRegistryTest, RelationalResolverExplainsBlockedToolAction)
@@ -431,6 +544,170 @@ TEST(OS0ViewportGestureStateTest, ConsumesOnlyMatchedAndHandledReleases)
 	EXPECT_TRUE(gestures.consumePrimaryGesture());
 	EXPECT_FALSE(gestures.consumePrimaryGesture());
 	EXPECT_FALSE(gestures.releasePrimary());
+
+	gestures.beginPrimary(FALSE);
+	gestures.markPrimaryReleaseHandled();
+	EXPECT_FALSE(gestures.ownsPrimary());
+	EXPECT_TRUE(gestures.consumePrimaryGesture());
+	EXPECT_FALSE(gestures.consumePrimaryGesture());
+}
+
+TEST(OS0ViewportGestureStateTest, LongHoldCannotAlsoOpenShortPressRadial)
+{
+	OS0ViewportGestureState gestures;
+	gestures.armRight();
+	EXPECT_TRUE(gestures.rightPressActive());
+	gestures.markRightHoldHandled();
+	EXPECT_TRUE(gestures.rightHoldWasHandled());
+	EXPECT_FALSE(gestures.releaseRight());
+	EXPECT_FALSE(gestures.rightPressActive());
+	EXPECT_FALSE(gestures.rightHoldWasHandled());
+}
+
+TEST(OS0ViewportDoubleTapStateTest, RequiresSameNearbyTarget)
+{
+	OS0ViewportDoubleTapState taps;
+	OS0ViewportTapIdentity target;
+	target.gridNo = 1234;
+	target.tileIndex = 77;
+	target.worldRevision = 4;
+	EXPECT_FALSE(taps.observe(1000, 100, 100, target, FALSE));
+	EXPECT_TRUE(taps.observe(1200, 104, 101, target, TRUE));
+
+	target.gridNo = 1235;
+	EXPECT_FALSE(taps.observe(1400, 100, 100, target, FALSE));
+	OS0ViewportTapIdentity other = target;
+	other.gridNo = 9000;
+	EXPECT_FALSE(taps.observe(1500, 102, 101, other, TRUE));
+
+	EXPECT_FALSE(taps.observe(1700, 100, 100, target, FALSE));
+	EXPECT_FALSE(taps.observe(1800, 120, 100, target, TRUE));
+}
+
+TEST(OS0ViewportDoubleTapStateTest, DistinguishesExactWorldItemsOnOneTile)
+{
+	OS0ViewportDoubleTapState taps;
+	OS0ViewportTapIdentity first;
+	first.gridNo = 1234;
+	first.worldItemIndex = 7;
+	first.worldRevision = 9;
+	first.worldItemRevision = 11;
+	OS0ViewportTapIdentity second = first;
+	second.worldItemIndex = 8;
+	EXPECT_FALSE(taps.observe(1000, 100, 100, first, FALSE));
+	EXPECT_FALSE(taps.observe(1200, 101, 101, second, TRUE));
+
+	OS0ViewportDoubleTapState recycledIndex;
+	OS0ViewportTapIdentity replacement = first;
+	replacement.worldItemRevision = 12;
+	EXPECT_FALSE(recycledIndex.observe(2000, 100, 100, first, FALSE));
+	EXPECT_FALSE(recycledIndex.observe(2200, 101, 101, replacement, TRUE));
+}
+
+TEST(OS0ViewportWorldDragStateTest, PromotesOnlyAfterSpatialThreshold)
+{
+	OS0ViewportWorldDragState drag;
+	OS0ViewportTapIdentity source;
+	source.gridNo = 4321;
+	source.tileIndex = 77;
+	source.worldItemIndex = 23;
+	source.worldRevision = 9;
+	source.worldItemRevision = 10;
+	drag.arm(100, 100, source);
+	EXPECT_TRUE(drag.armed);
+	EXPECT_FALSE(drag.active);
+	EXPECT_EQ(drag.source.worldItemIndex, 23);
+	EXPECT_EQ(drag.source.worldItemRevision, 10);
+	EXPECT_FALSE(drag.thresholdReached(104, 104));
+	EXPECT_TRUE(drag.thresholdReached(105, 100));
+	drag.activate();
+	EXPECT_TRUE(drag.active);
+	EXPECT_FALSE(drag.thresholdReached(120, 120));
+	EXPECT_EQ(drag.source, source);
+	drag.reset();
+	EXPECT_FALSE(drag.armed);
+	EXPECT_FALSE(drag.active);
+}
+
+TEST(OS0WorldItemIdentityTest, ContainerOwnershipAndMutationAreExplicit)
+{
+	WORLDITEM item{};
+	item.fExists = TRUE;
+	item.o.usItem = CANTEEN;
+	item.bVisible = HIDDEN_IN_OBJECT;
+	EXPECT_TRUE(OS0IsContainerContentItem(item));
+	EXPECT_TRUE(OS0IsContainerOwnedItem(item));
+	EXPECT_FALSE(OS0IsActionableLooseWorldItem(item));
+
+	item.bVisible = VISIBLE;
+	item.usFlags = WORLD_ITEM_DONTRENDER;
+	EXPECT_TRUE(OS0IsContainerContentItem(item));
+	EXPECT_FALSE(OS0IsActionableLooseWorldItem(item));
+
+	item.usFlags = 0;
+	EXPECT_FALSE(OS0IsContainerOwnedItem(item));
+	EXPECT_TRUE(OS0IsActionableLooseWorldItem(item));
+
+	std::vector<WORLDITEM> savedItems = std::move(gWorldItems);
+	std::vector<WORLDBOMB> savedBombs = std::move(gWorldBombs);
+	gWorldItems.clear();
+	gWorldBombs.clear();
+	OBJECTTYPE object{};
+	object.usItem = CANTEEN;
+	const UINT32 beforeAdd = WorldItemMutationRevision();
+	const INT32 index = AddItemToWorld(100, &object, 0, 0, 0, VISIBLE);
+	ASSERT_GE(index, 0);
+	EXPECT_NE(WorldItemMutationRevision(), beforeAdd);
+	const UINT32 beforeRemove = WorldItemMutationRevision();
+	RemoveItemFromWorld(index);
+	EXPECT_NE(WorldItemMutationRevision(), beforeRemove);
+	gWorldItems = std::move(savedItems);
+	gWorldBombs = std::move(savedBombs);
+}
+
+TEST(OS0ViewportGestureStateTest, LostOwnedPressSuppressesUntilSameRelease)
+{
+	OS0ViewportGestureState gestures;
+	gestures.beginPrimary(TRUE);
+	gestures.cancelOnPointerLost();
+	EXPECT_FALSE(gestures.ownsPrimary());
+	EXPECT_TRUE(gestures.suppressesPrimary());
+	EXPECT_TRUE(gestures.consumePrimaryGesture());
+
+	// Re-entry while still physically down remains cancelled rather than
+	// becoming a second gesture.
+	gestures.beginPrimary(TRUE);
+	EXPECT_FALSE(gestures.ownsPrimary());
+	gestures.recoverPhysicalPrimaryRelease(TRUE);
+	EXPECT_TRUE(gestures.suppressesPrimary());
+
+	gestures.finishCancelledPrimaryRelease();
+	EXPECT_FALSE(gestures.suppressesPrimary());
+	EXPECT_TRUE(gestures.consumePrimaryGesture());
+	EXPECT_FALSE(gestures.consumePrimaryGesture());
+}
+
+TEST(OS0ViewportGestureStateTest, LostOwnedPressRecoversAfterOutsideRelease)
+{
+	OS0ViewportGestureState gestures;
+	gestures.beginPrimary(TRUE);
+	gestures.cancelOnPointerLost();
+	gestures.recoverPhysicalPrimaryRelease(FALSE);
+	EXPECT_FALSE(gestures.suppressesPrimary());
+	EXPECT_TRUE(gestures.consumePrimaryGesture());
+	EXPECT_FALSE(gestures.consumePrimaryGesture());
+}
+
+TEST(OS0ViewportGestureStateTest, RawReleaseFinalizesPreservedViewportOwnership)
+{
+	OS0ViewportGestureState gestures;
+	gestures.beginPrimary(TRUE);
+	// Active world drags deliberately retain primary ownership while crossing
+	// one of OS0's child regions instead of calling cancelOnPointerLost().
+	gestures.recoverPhysicalPrimaryRelease(FALSE);
+	EXPECT_FALSE(gestures.ownsPrimary());
+	EXPECT_TRUE(gestures.consumePrimaryGesture());
+	EXPECT_FALSE(gestures.consumePrimaryGesture());
 }
 
 TEST(OS0CreatorModelTest, OwnsValidatedIdentityStatsAndTraitSelection)
@@ -694,6 +971,29 @@ TEST(OS0RealtimeEditorSessionTest, QueuesTypedCommandsAndFlagsWorldSwap)
 	EXPECT_TRUE(editor.hasPendingWorldSwap());
 }
 
+TEST(OS0RealtimeEditorSessionTest, TacticalResetDropsWorldBoundStateWithoutReusingIds)
+{
+	OS0RealtimeEditorSession editor;
+	OS0EditorTilePlacement tile;
+	tile.gridNo = 101;
+	tile.tileIndex = 23;
+	auto const oldCommand = editor.queuePlaceTile(tile);
+	ASSERT_NE(oldCommand, 0u);
+	ASSERT_EQ(editor.pendingCount(), 1u);
+
+	editor.resetForTacticalSession();
+
+	EXPECT_EQ(editor.pendingCount(), 0u);
+	EXPECT_FALSE(editor.busy());
+	EXPECT_FALSE(editor.hasPendingWorldSwap());
+	EXPECT_EQ(editor.catalog().generation, 0u);
+	EXPECT_EQ(editor.status().catalogGeneration, 0u);
+	EXPECT_TRUE(editor.drainResults().empty());
+
+	auto const newCommand = editor.queuePlaceTile(tile);
+	EXPECT_GT(newCommand, oldCommand);
+}
+
 TEST(OS0UILayoutTest, FloatingMultitoolDoesNotReserveWorldSpace)
 {
 	OS0UILayout layout;
@@ -707,6 +1007,32 @@ TEST(OS0UILayoutTest, FloatingMultitoolDoesNotReserveWorldSpace)
 	OS0UIRect const clamped = layout.clampWindow({ 1200, 690, 420, 184 });
 	EXPECT_EQ(clamped.x, 860);
 	EXPECT_EQ(clamped.y, 536);
+}
+
+TEST(OS0WindowManagerTest, InvalidHandlesCannotMutateRegisteredWindowZero)
+{
+	OS0WindowManager windows;
+	ASSERT_TRUE(windows.registerTemplate({ 0, "zero", "Zero",
+		OS0UIIcon::LOOK, OS0WindowPresentation::FLOATING,
+		{ 12, 18, 90, 60 }, 40, 30, OS0_WINDOW_MOVABLE, TRUE, 1 }));
+	windows.state(OS0_INVALID_WINDOW).x = 999;
+	windows.state(23).visible = FALSE;
+	EXPECT_EQ(windows.state(0).x, 12);
+	EXPECT_TRUE(windows.state(0).visible);
+}
+
+TEST(OS0WindowManagerTest, PassThroughWindowCannotExposeBlockingWindowBelow)
+{
+	OS0WindowManager windows;
+	ASSERT_TRUE(windows.registerTemplate({ 1, "blocking", "Blocking",
+		OS0UIIcon::HAND, OS0WindowPresentation::FLOATING,
+		{ 20, 20, 120, 100 }, 40, 30,
+		OS0_WINDOW_BLOCKS_WORLD_INPUT, TRUE, 1 }));
+	ASSERT_TRUE(windows.registerTemplate({ 2, "decoration", "Decoration",
+		OS0UIIcon::LOOK, OS0WindowPresentation::FLOATING,
+		{ 40, 40, 60, 50 }, 40, 30, 0, TRUE, 20 }));
+	ASSERT_EQ(windows.hitTest(50, 50), 2);
+	EXPECT_TRUE(windows.blocksWorldInputAt(50, 50));
 }
 
 TEST(OS0SectorEconomySystemTest, MigratesLegacyOnceAndClampsResources)
@@ -782,17 +1108,35 @@ TEST(OS0AssetCatalogServiceTest, LaterOverrideReplacesBuiltInRecord)
 
 TEST(OS0CarryStateTest, ValidatesBeginWalkAndCancelLifecycle)
 {
+	constexpr UINT32 carrierInstance = 7001;
+	constexpr UINT16 structureId = 4001;
+	constexpr GridNo structureBase = 1000;
 	OS0CarryState carry;
-	EXPECT_FALSE(carry.begin(NOWHERE, 0, 100, 1));
+	EXPECT_FALSE(carry.begin(NOWHERE, 0, 100, 1, carrierInstance,
+		structureId, structureBase));
 	EXPECT_FALSE(carry.active());
-	EXPECT_FALSE(carry.begin(1000, 2, 100, 1));
-	EXPECT_FALSE(carry.begin(1000, 0, 100, NOBODY));
+	EXPECT_FALSE(carry.begin(1000, 2, 100, 1, carrierInstance,
+		structureId, structureBase));
+	EXPECT_FALSE(carry.begin(1000, 0, 100, NOBODY, carrierInstance,
+		structureId, structureBase));
+	EXPECT_FALSE(carry.begin(1000, 0, 100, 1, 0,
+		structureId, structureBase));
+	EXPECT_FALSE(carry.begin(1000, 0, 100, 1, carrierInstance,
+		0, structureBase));
+	EXPECT_FALSE(carry.begin(1000, 0, 100, 1, carrierInstance,
+		structureId, NOWHERE));
 
-	ASSERT_TRUE(carry.begin(1000, 0, 100, 1));
+	ASSERT_TRUE(carry.begin(1000, 0, 100, 1, carrierInstance,
+		structureId, structureBase));
 	EXPECT_TRUE(carry.pending());
-	EXPECT_FALSE(carry.beginWalk(1000, 0, 1001));
-	EXPECT_FALSE(carry.beginWalk(NOWHERE, 0, 1001));
-	ASSERT_TRUE(carry.beginWalk(1002, 0, 1001));
+	EXPECT_TRUE(carry.boundToCarrier(1, carrierInstance));
+	EXPECT_TRUE(carry.boundToStructure(structureId, structureBase));
+	EXPECT_FALSE(carry.beginWalk(1000, 0, 1001, carrierInstance,
+		structureId, structureBase));
+	EXPECT_FALSE(carry.beginWalk(NOWHERE, 0, 1001, carrierInstance,
+		structureId, structureBase));
+	ASSERT_TRUE(carry.beginWalk(1002, 0, 1001, carrierInstance,
+		structureId, structureBase));
 	EXPECT_TRUE(carry.walking());
 	EXPECT_EQ(OS0ValidateCarryContinuation(carry, {}),
 		OS0CarryCancelReason::NONE);
@@ -808,6 +1152,14 @@ TEST(OS0CarryStateTest, ValidatesBeginWalkAndCancelLifecycle)
 	pathFailure.pathValid = FALSE;
 	EXPECT_EQ(OS0ValidateCarryContinuation(carry, pathFailure),
 		OS0CarryCancelReason::PATH_FAILED);
+	OS0CarryContinuationFacts outOfReach;
+	outOfReach.carrierInReach = FALSE;
+	EXPECT_EQ(OS0ValidateCarryContinuation(carry, outOfReach),
+		OS0CarryCancelReason::CARRIER_OUT_OF_REACH);
+	OS0CarryContinuationFacts loadChanged;
+	loadChanged.carrierCanManipulate = FALSE;
+	EXPECT_EQ(OS0ValidateCarryContinuation(carry, loadChanged),
+		OS0CarryCancelReason::LOAD_CHANGED);
 	OS0CarryContinuationFacts objectChanged;
 	objectChanged.objectAvailable = FALSE;
 	EXPECT_EQ(OS0ValidateCarryContinuation(carry, objectChanged),
@@ -820,9 +1172,10 @@ TEST(OS0CarryStateTest, ValidatesBeginWalkAndCancelLifecycle)
 TEST(OS0CarryStateTest, RetainsSelectedPhysicalHandlingMode)
 {
 	OS0CarryState carry;
-	ASSERT_TRUE(carry.begin(1000, 0, 50, 1, OS0CarryMode::PULL));
+	ASSERT_TRUE(carry.begin(1000, 0, 50, 1, 7001, 4001, 1000,
+		OS0CarryMode::PULL));
 	EXPECT_EQ(carry.mode, OS0CarryMode::PULL);
-	ASSERT_TRUE(carry.beginWalk(1001, 0, 999));
+	ASSERT_TRUE(carry.beginWalk(1001, 0, 999, 7001, 4001, 1000));
 	EXPECT_EQ(carry.mode, OS0CarryMode::PULL);
 	carry.reset();
 	EXPECT_EQ(carry.mode, OS0CarryMode::CARRY);
@@ -831,15 +1184,71 @@ TEST(OS0CarryStateTest, RetainsSelectedPhysicalHandlingMode)
 TEST(OS0CarryStateTest, PersistentGrabSurvivesPhysicalStepSelection)
 {
 	OS0CarryState carry;
-	ASSERT_TRUE(carry.begin(1000, 0, 50, 1, OS0CarryMode::GRAB));
+	ASSERT_TRUE(carry.begin(1000, 0, 50, 1, 7001, 4001, 1000,
+		OS0CarryMode::GRAB));
 	EXPECT_TRUE(carry.persistentGrab);
 	EXPECT_EQ(carry.mode, OS0CarryMode::GRAB);
 	carry.mode = OS0CarryMode::PUSH;
-	ASSERT_TRUE(carry.beginWalk(1001, 0, 1000));
+	ASSERT_TRUE(carry.beginWalk(1001, 0, 1000, 7001, 4001, 1000));
 	EXPECT_TRUE(carry.persistentGrab);
 	EXPECT_EQ(carry.mode, OS0CarryMode::PUSH);
+	carry.phase = OS0CarryPhase::TARGETING;
+	carry.followUpGrid = 1000;
+	EXPECT_TRUE(carry.repositioning());
+	OS0CarryContinuationFacts pathFailure;
+	pathFailure.pathValid = FALSE;
+	EXPECT_EQ(OS0ValidateCarryContinuation(carry, pathFailure),
+		OS0CarryCancelReason::PATH_FAILED);
 	carry.reset();
 	EXPECT_FALSE(carry.persistentGrab);
+	EXPECT_FALSE(carry.repositioning());
+}
+
+TEST(OS0CarryStateTest, PointerDragIsOneShotAndNotPersistentGrab)
+{
+	OS0CarryState carry;
+	ASSERT_TRUE(carry.begin(1000, 0, 50, 1, 7001, 4001, 1000,
+		OS0CarryMode::CARRY, TRUE));
+	EXPECT_TRUE(carry.pointerDrag);
+	EXPECT_FALSE(carry.persistentGrab);
+	carry.reset();
+	EXPECT_FALSE(carry.pointerDrag);
+}
+
+TEST(OS0StructureIdentityTest, BaseTileUsesItsActualGrid)
+{
+	STRUCTURE structure{};
+	structure.fFlags = STRUCTURE_BASE_TILE;
+	structure.sGridNo = 4321;
+	structure.sBaseGridNo = 0;
+	EXPECT_EQ(StructureBaseGridNo(&structure), 4321);
+	structure.fFlags = static_cast<StructureFlags>(0);
+	structure.sBaseGridNo = 1234;
+	EXPECT_EQ(StructureBaseGridNo(&structure), 1234);
+	EXPECT_LT(StructureBaseGridNo(nullptr), 0);
+}
+
+TEST(OS0CarryStateTest, ReusedCarrierOrStructureCannotContinueTransfer)
+{
+	OS0CarryState carry;
+	ASSERT_TRUE(carry.begin(1000, 0, 50, 1, 7001, 4001, 1000,
+		OS0CarryMode::GRAB));
+
+	OS0CarryContinuationFacts carrierReused;
+	carrierReused.carrierIdentityMatches = FALSE;
+	EXPECT_EQ(OS0ValidateCarryContinuation(carry, carrierReused),
+		OS0CarryCancelReason::CARRIER_CHANGED);
+	OS0CarryContinuationFacts structureReplaced;
+	structureReplaced.objectIdentityMatches = FALSE;
+	EXPECT_EQ(OS0ValidateCarryContinuation(carry, structureReplaced),
+		OS0CarryCancelReason::OBJECT_CHANGED);
+
+	EXPECT_FALSE(carry.beginWalk(1001, 0, 999, 7002, 4001, 1000));
+	EXPECT_FALSE(carry.beginWalk(1001, 0, 999, 7001, 4002, 1000));
+	EXPECT_FALSE(carry.beginWalk(1001, 0, 999, 7001, 4001, 1001));
+	EXPECT_TRUE(carry.pending());
+	EXPECT_TRUE(carry.boundToCarrier(1, 7001));
+	EXPECT_TRUE(carry.boundToStructure(4001, 1000));
 }
 
 TEST(OS0TacticalSessionTest, PersistsSimulationAndClearsOnlyTransientState)
@@ -856,7 +1265,8 @@ TEST(OS0TacticalSessionTest, PersistsSimulationAndClearsOnlyTransientState)
 		OS0_SECTOR_UPGRADE_WORKSHOP);
 	source.state().coverOrders.issue({ 1, 1001, 0,
 		OS0CoverStance::CROUCH });
-	ASSERT_TRUE(source.state().carry.begin(1000, 0, 50, 1));
+	ASSERT_TRUE(source.state().carry.begin(1000, 0, 50, 1,
+		7001, 4001, 1000));
 	source.state().cursor.action = ContextAction::ATTACK;
 
 	source.endTacticalSector();
@@ -872,7 +1282,8 @@ TEST(OS0TacticalSessionTest, PersistsSimulationAndClearsOnlyTransientState)
 	OS0TacticalSession loaded;
 	loaded.state().coverOrders.issue({ 9, 2222, 0,
 		OS0CoverStance::PRONE });
-	ASSERT_TRUE(loaded.state().carry.begin(2222, 0, 55, 1));
+	ASSERT_TRUE(loaded.state().carry.begin(2222, 0, 55, 1,
+		7002, 4002, 2222));
 	loaded.state().cursor.action = ContextAction::ATTACK;
 	loaded.state().pendingVisualEvents.push_back({ 2222,
 		OS0AssetMaterial::STONE, 1 });
@@ -907,6 +1318,9 @@ TEST(OS0FieldTutorialTest, VerifiesOneRelationalContainerFlow)
 	EXPECT_TRUE(tutorial.notify(OS0FieldTutorialEvent::CONTENTS_SELECTED));
 	EXPECT_EQ(tutorial.stage(), OS0FieldTutorialStage::APPROACH_CONTAINER);
 	EXPECT_FALSE(tutorial.notify(OS0FieldTutorialEvent::APPROACH_STARTED));
+	EXPECT_TRUE(tutorial.notify(OS0FieldTutorialEvent::APPROACH_ABORTED));
+	EXPECT_EQ(tutorial.stage(), OS0FieldTutorialStage::SELECT_CONTENTS);
+	EXPECT_TRUE(tutorial.notify(OS0FieldTutorialEvent::APPROACH_STARTED));
 	EXPECT_TRUE(tutorial.notify(OS0FieldTutorialEvent::CONTENTS_OPENED));
 	EXPECT_EQ(tutorial.stage(), OS0FieldTutorialStage::LOOT_CONTAINER);
 	EXPECT_TRUE(tutorial.notify(OS0FieldTutorialEvent::ITEM_TAKEN));

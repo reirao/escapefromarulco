@@ -3,20 +3,22 @@
 An experimental, non-commercial rework of *Jagged Alliance 2* built on
 [JA2 Stracciatella](https://github.com/ja2-stracciatella/ja2-stracciatella).
 
-> **STABLE CHECKPOINT / EARLY ALPHA:** this exact Windows source state is the new
-> reproducible baseline: it is fully compiled, covered by automated tests, package
-> inspection and a launch smoke test. The campaign-scale gameplay remains deliberately
-> unfinished, so incomplete object coverage and experimental systems are still expected.
+> **0.1 FRAGILE-TESTED EARLY ALPHA:** the tagged `v0.1.0` Windows package is
+> the reproducible public baseline and has its own recorded build, test, package and
+> package checks. The newest source tree may contain later, unreleased hardening and
+> must pass its own build and complete registered unit suite before it is packaged.
+> Campaign-scale gameplay remains unfinished; incomplete object coverage and fragile
+> combinations of otherwise wired systems are expected.
 
-Current stable playtest checkpoint: **0.0.1.23**. It combines the creator and crate
+Current public playtest checkpoint: **0.1**. It combines the creator and crate
 tutorial, target-bound contextual actions, queued approach/revalidation, movable OS//0
 workspace, layered cancellation and mouse-facing Normal/Combat control with a hardened
 single-owner item-transfer and mouse-event pipeline.
 
 ## Download and play
 
-1. Open the [v0.0.1.23 release](https://github.com/reirao/escapefromarulco/releases/tag/v0.0.1.23).
-2. Download `Escape-from-Arulco-Playtest-v0.0.1.23.zip`.
+1. Open the [v0.1.0 release](https://github.com/reirao/escapefromarulco/releases/tag/v0.1.0).
+2. Download `Escape-from-Arulco-Playtest-v0.1.0.zip`.
 3. Extract the complete ZIP into a writable folder.
 4. Run `START_PLAYTEST.cmd`.
 5. In the launcher, select your own legally installed JA2 or JA2 Gold directory.
@@ -26,13 +28,14 @@ The playtest includes the Windows executable, launcher, runtime DLLs, externaliz
 Stracciatella data, test instructions and crash-log collector. It does **not** contain
 the original JA2 game data. Windows x64 and an existing JA2 installation are required.
 
-## Current prototype (experimental gameplay on the stable checkpoint)
+## Current prototype (experimental gameplay in the 0.1 checkpoint)
 
-`STABLE CHECKPOINT` means the exact source, build, package and startup path are the
-recommended reproducible baseline. `TESTED` means a reproducible automated build,
-unit test, package inspection or launch check. `FRAGILE` means a gameplay path exists
-and is available to test, but map coverage and combined states remain incomplete. See
-[FEATURE_WIRING.md](FEATURE_WIRING.md) for the audited status and explicit omissions.
+`PUBLISHED CHECKPOINT` refers only to the tagged package and its recorded validation.
+`AUTOMATED CORE` means focused state/policy tests exist, not that the complete mouse,
+map and engine integration has passed manually. `MANUAL VERIFICATION REQUIRED` means
+the runtime path is wired and available to test, while map coverage and combined states
+remain incomplete. See [FEATURE_WIRING.md](FEATURE_WIRING.md) for the audited status
+and explicit omissions.
 
 - Direct tactical-sector start without helicopter arrival or starting enemies
 - One modal in-world character creator with a validated name, default/free attribute
@@ -102,9 +105,11 @@ complete replacement for strategic travel/finance are **not implemented**.
 - **Double click:** open a character, container or world object
 - **OS//0 computer icon:** drag to position; double-click to expand/minimize the
   Interaction, Salvage, Inspect, Info and God groups
-- **TARGET/WALK symbol:** switch between `COMBAT` and `NORMAL`. The merc faces the
-  mouse, WASD moves, Shift sprints in realtime, Q/E turns and LMB fires in Combat.
-  Burst/throw/trajectory attacks retain their native confirmation step.
+- **TARGET/WALK symbol:** switch between `COMBAT` and `NORMAL`. With no modal or item
+  transfer owning input, the merc faces the mouse; W/S move forward/backward, A/D
+  strafe, held Shift requests sprint in realtime, and Q/E temporarily own manual
+  turning. In Combat, one valid ordinary single-shot firearm action is dispatched on
+  LMB release. Burst/throw/trajectory attacks retain their native confirmation step.
 - **Strategy/Info tools:** open the movable Base, Arulco map/radar, Team and Report
   views; the full legacy strategic feature set is not yet ported
 - **GOD / CATALOG ASSET:** right-click a world asset and classify it for the shared
@@ -141,7 +146,9 @@ On the configured Windows development machine, double-click
 `BUILD_AND_START_LOCAL.cmd`. It configures `C:\tmp\ja2-sandbox-build`, compiles
 only changed files, refreshes the required MinGW/SDL runtime DLLs and starts the
 new executable in windowed mode. Command-line arguments override the default
-`-window` argument.
+`-window` argument. This shortcut is an incremental developer loop with
+`WITH_UNITTESTS=OFF`; it does not replace the separate complete unit-suite, package
+inspection or playtest gates required before publishing a build.
 
 ```bash
 cmake /path/to/escapefromarulco -G Ninja -DWITH_UNITTESTS=OFF

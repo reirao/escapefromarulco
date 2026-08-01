@@ -4,6 +4,8 @@
 #include "OS0_FixedList.h"
 #include "OS0_UIAssetManager.h"
 
+#include <cstdint>
+
 enum class ContextAction : UINT8
 {
 	MOVE,
@@ -121,6 +123,9 @@ struct OS0EnvironmentActionFacts
 	BOOLEAN openable = FALSE;
 	BOOLEAN terrain = FALSE;
 	BOOLEAN near = FALSE;
+	// Opening, looting and tool use permit the engine's normal two-tile reach.
+	// Physical manipulation starts only while hands are actually adjacent.
+	BOOLEAN manipulationNear = FALSE;
 	BOOLEAN moveCandidate = FALSE;
 	BOOLEAN canMove = FALSE;
 	BOOLEAN canThrow = FALSE;
@@ -149,13 +154,42 @@ struct OS0ActionBinding
 	UINT8 level = 0;
 	UINT16 tileIndex = 0xffff;
 	INT32 worldItemIndex = -1;
+	// Ephemeral instance guards. Numeric engine IDs and vector slots are reused;
+	// deferred actions must prove that the target is still the same object.
+	UINT32 actorInstanceId = 0;
+	UINT16 worldItemType = 0xffff;
+	INT8 worldItemVisibility = 0;
+	UINT16 worldItemFlags = 0;
+	INT8 worldItemRenderZHeight = 0;
+	std::uint64_t worldItemFingerprint = 0;
+	// Structures have a native session identity. Object/terrain LEVELNODEs do
+	// not, so their pointer snapshot is valid only within the captured monotonic
+	// world revision and is rejected after any OS0/editor world mutation.
+	BOOLEAN assetHasStructure = FALSE;
+	UINT16 assetStructureId = 0;
+	GridNo assetBaseGridNo = -1;
+	UINT32 worldRevision = 0;
+	UINT16 terrainTileIndex = 0xffff;
+	std::uintptr_t assetInstance = 0;
 
 	bool operator==(OS0ActionBinding const& rhs) const noexcept
 	{
 		return kind == rhs.kind && actorId == rhs.actorId &&
 			gridNo == rhs.gridNo && level == rhs.level &&
 			tileIndex == rhs.tileIndex &&
-			worldItemIndex == rhs.worldItemIndex;
+			worldItemIndex == rhs.worldItemIndex &&
+			actorInstanceId == rhs.actorInstanceId &&
+			worldItemType == rhs.worldItemType &&
+			worldItemVisibility == rhs.worldItemVisibility &&
+			worldItemFlags == rhs.worldItemFlags &&
+			worldItemRenderZHeight == rhs.worldItemRenderZHeight &&
+			worldItemFingerprint == rhs.worldItemFingerprint &&
+			assetHasStructure == rhs.assetHasStructure &&
+			assetStructureId == rhs.assetStructureId &&
+			assetBaseGridNo == rhs.assetBaseGridNo &&
+			worldRevision == rhs.worldRevision &&
+			terrainTileIndex == rhs.terrainTileIndex &&
+			assetInstance == rhs.assetInstance;
 	}
 	bool operator!=(OS0ActionBinding const& rhs) const noexcept
 	{

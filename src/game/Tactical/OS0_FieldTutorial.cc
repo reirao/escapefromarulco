@@ -31,6 +31,10 @@ BOOLEAN OS0FieldTutorial::notify(OS0FieldTutorialEvent const event) noexcept
 				stage_ == OS0FieldTutorialStage::APPROACH_CONTAINER)
 				stage_ = OS0FieldTutorialStage::APPROACH_CONTAINER;
 			break;
+		case OS0FieldTutorialEvent::APPROACH_ABORTED:
+			if (stage_ == OS0FieldTutorialStage::APPROACH_CONTAINER)
+				stage_ = OS0FieldTutorialStage::SELECT_CONTENTS;
+			break;
 		case OS0FieldTutorialEvent::CONTENTS_OPENED:
 			if (stage_ == OS0FieldTutorialStage::HOVER_CONTAINER ||
 				stage_ == OS0FieldTutorialStage::OPEN_ACTIONS ||

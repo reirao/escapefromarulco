@@ -54,6 +54,10 @@ static inline WORLDITEM& GetWorldItem(size_t const idx)
 INT32 AddItemToWorld(INT16 sGridNo, const OBJECTTYPE* pObject, UINT8 ubLevel, UINT16 usFlags, INT8 bRenderZHeightAboveLevel, INT8 bVisible);
 void RemoveItemFromWorld( INT32 iItemIndex );
 INT32 FindWorldItem( UINT16 usItem );
+// Monotonic generation of the loaded sector's world-item storage. Deferred
+// bindings pair a pool index with this value so a removed slot cannot silently
+// become a different item before the original gesture/menu callback executes.
+UINT32 WorldItemMutationRevision() noexcept;
 
 void LoadWorldItemsFromMap(HWFILE);
 

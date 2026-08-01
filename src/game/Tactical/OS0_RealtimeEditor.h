@@ -260,6 +260,10 @@ struct OS0EditorRemoveRequest
 	INT16 gridNo = -1;
 	OS0EditorLayer layer = OS0EditorLayer::AUTO;
 	UINT16 tileIndex = 0;
+	// Every destructive request is bound to the exact world generation that
+	// was visible when the player clicked.  This prevents a queued erase from
+	// deleting a replacement which happens to reuse the same numeric handle.
+	UINT32 expectedWorldRevision = 0;
 	// Optional active-tileset guard for TILE handles. Catalog-driven callers
 	// should provide it to reject a stale numeric index after a world swap.
 	INT16 tileset = -1;
@@ -270,6 +274,7 @@ struct OS0EditorRemoveRequest
 	INT16 expectedItemGridNo = -1;
 	// Used only for NPC.
 	UINT16 soldierId = 0xffff;
+	UINT32 expectedNpcInstanceId = 0;
 	INT8 expectedNpcTeam = -1;
 	INT16 expectedNpcGridNo = -1;
 };
@@ -357,6 +362,10 @@ public:
 	// pointer-bearing hover/context/loot/carry/item-pointer state when
 	// willInvalidateWorldPointers() is true.
 	void update();
+	// Catalog entries and queued handles are valid only for one loaded tactical
+	// world. Clear them at both sides of a sector lifetime while keeping command
+	// IDs monotonic, so a late UI result can never alias a command from a new map.
+	void resetForTacticalSession();
 
 	void rebuildCatalogs();
 	OS0EditorCatalog const& catalog() const noexcept { return catalog_; }

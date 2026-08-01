@@ -1,9 +1,11 @@
 #include "OS0_AssetDamageSystem.h"
+#include "OS0_ViewportInput.h"
 #include "OS0_AssetCatalogService.h"
 
 #include "Items.h"
 #include "ContentManager.h"
 #include "GameInstance.h"
+#include "Handle_Items.h"
 #include "ItemModel.h"
 #include "OS0_TacticalSession.h"
 #include "Physics.h"
@@ -151,15 +153,15 @@ namespace
 			gridNo, level, tileIndex };
 	}
 
-	void AddResourceItem(GridNo gridNo, UINT8 level, OS0ResourceKind resource,
+	INT32 AddResourceItem(GridNo gridNo, UINT8 level, OS0ResourceKind resource,
 		UINT8 amount)
 	{
 		UINT16 const item = ResourceItem(resource);
-		if (item == NOTHING || amount == 0) return;
+		if (item == NOTHING || amount == 0) return -1;
 		OBJECTTYPE object{};
 		CreateItems(item, 100, std::min<UINT8>(amount, MAX_OBJECTS_PER_SLOT),
 			&object);
-		AddItemToPool(gridNo, &object, HIDDEN_IN_OBJECT, level, 0, -1);
+		return AddItemToPool(gridNo, &object, VISIBLE, level, 0, -1);
 	}
 }
 
@@ -272,19 +274,70 @@ BOOLEAN OS0ApplyWorldAssetDamage(GridNo gridNo, UINT8 level,
 	if (!result.destroyed) return TRUE;
 
 	GridNo const baseGrid = base->sGridNo;
+	BOOLEAN const spillsContainer =
+		(base->fFlags & STRUCTURE_OPENABLE) &&
+		!(base->fFlags & STRUCTURE_ANYDOOR);
+	// Material yield is part of the destruction transaction. Create it on safe,
+	// dry adjacent ground before removing the only source asset; sinking items on
+	// water otherwise vanished while the log still promised a reward.
+	GridNo yieldGrid = FindNearestAvailableGridNoForItem(baseGrid, 3);
+	if (yieldGrid == NOWHERE)
+		yieldGrid = FindNearestAvailableGridNoForItem(baseGrid, 8);
+	const UINT8 amount = std::max<UINT8>(1, salvage.amount);
+	const INT32 yieldIndex = yieldGrid == NOWHERE ? -1 :
+		AddResourceItem(yieldGrid, level, salvage.resource, amount);
+	if (yieldIndex < 0)
+	{
+		state.pendingDiagnostics.push_back(ST::format(
+			"ASSET DESTRUCTION PAUSED grid {} / NO SAFE YIELD LOCATION",
+			baseGrid));
+		return TRUE;
+	}
+	try
 	{
 		ApplyMapChangesToMapTempFile recordChange;
 		RemoveStructFromLevelNode(baseGrid, node);
 	}
-	AddResourceItem(baseGrid, level, salvage.resource,
-		std::max<UINT8>(1, salvage.amount));
+	catch (...)
+	{
+		if (static_cast<size_t>(yieldIndex) < gWorldItems.size() &&
+			GetWorldItem(yieldIndex).fExists)
+			RemoveItemFromPool(GetWorldItem(yieldIndex));
+		state.pendingDiagnostics.push_back(ST::format(
+			"ASSET DESTRUCTION ROLLED BACK grid {} / REMOVE FAILED", baseGrid));
+		return TRUE;
+	}
+	if (spillsContainer) OS0SpillContainerContents(baseGrid, level);
 	state.assetDamage.remove(key);
 	RecompileLocalMovementCosts(baseGrid);
 	InvalidateWorldRedundency();
+	OS0NotifyWorldMutation();
 	state.pendingDiagnostics.push_back(ST::format(
-		"ASSET DESTROYED grid {} level {} / +{} {}", baseGrid, level,
-		std::max<UINT8>(1, salvage.amount), ResourceName(salvage.resource)));
+		"ASSET DESTROYED grid {} level {} / +{} {} at {}", baseGrid, level,
+		amount, ResourceName(salvage.resource), yieldGrid));
 	return TRUE;
+}
+
+void OS0ForgetWorldAssetDamage(GridNo const gridNo, UINT8 const level,
+	UINT16 const tileIndex)
+{
+	if (gridNo < 0 || gridNo >= WORLD_MAX || tileIndex >= NUMBEROFTILES) return;
+	OS0GetTacticalSession().state().assetDamage.remove(
+		MakeAssetKey(gridNo, level, tileIndex));
+}
+
+void OS0MoveWorldAssetDamage(GridNo const sourceGridNo,
+	UINT8 const sourceLevel, UINT16 const sourceTileIndex,
+	GridNo const destinationGridNo, UINT8 const destinationLevel,
+	UINT16 const destinationTileIndex)
+{
+	if (sourceGridNo < 0 || sourceGridNo >= WORLD_MAX ||
+		destinationGridNo < 0 || destinationGridNo >= WORLD_MAX ||
+		sourceTileIndex >= NUMBEROFTILES || destinationTileIndex >= NUMBEROFTILES)
+		return;
+	OS0GetTacticalSession().state().assetDamage.move(
+		MakeAssetKey(sourceGridNo, sourceLevel, sourceTileIndex),
+		MakeAssetKey(destinationGridNo, destinationLevel, destinationTileIndex));
 }
 
 BOOLEAN OS0ValidateResourceItemDefinitions(ST::string* error)

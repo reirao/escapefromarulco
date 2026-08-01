@@ -55,6 +55,9 @@ string(STRIP "${BASE_SEMVER_VERSION}" BASE_SEMVER_VERSION)
 # version independent so Stracciatella save/build compatibility remains clear.
 file(READ "escape-from-arulco-version" ESCAPE_FROM_ARULCO_VERSION)
 string(STRIP "${ESCAPE_FROM_ARULCO_VERSION}" ESCAPE_FROM_ARULCO_VERSION)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${CMAKE_SOURCE_DIR}/version"
+    "${CMAKE_SOURCE_DIR}/escape-from-arulco-version")
 
 include(semver-functions)
 semver_set(ja2-stracciatella_VERSION "${BASE_SEMVER_VERSION}-git")
@@ -217,20 +220,38 @@ set_property(SOURCE ${CMAKE_SOURCE_DIR}/src/game/GameVersion.cc APPEND PROPERTY 
 set_property(SOURCE ${CMAKE_SOURCE_DIR}/src/game/GameVersion.cc APPEND PROPERTY COMPILE_DEFINITIONS "ESCAPE_FROM_ARULCO_VERSION=${ESCAPE_FROM_ARULCO_VERSION}")
 
 
-macro(copy_assets_dir_to_ja2_binary_after_build DIR)
-    add_custom_command(TARGET ${JA2_BINARY} POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_directory
-            ${CMAKE_CURRENT_SOURCE_DIR}/assets/${DIR} "$<TARGET_FILE_DIR:${JA2_BINARY}>/${DIR}")
-endmacro()
-
-copy_assets_dir_to_ja2_binary_after_build("externalized")
-copy_assets_dir_to_ja2_binary_after_build("unittests")
-copy_assets_dir_to_ja2_binary_after_build("mods")
+# Asset-only edits and deletions must be reflected even when the executable does
+# not need to relink.  A POST_BUILD overlay left deleted files behind and was not
+# executed at all by a no-op build, which could make local runs and release ZIPs
+# disagree with the checked-out source tree.
+if(CMAKE_CONFIGURATION_TYPES)
+    set(JA2_RUNTIME_ASSET_DIR "${CMAKE_BINARY_DIR}/$<CONFIG>")
+else()
+    set(JA2_RUNTIME_ASSET_DIR "${CMAKE_BINARY_DIR}")
+endif()
+add_custom_target(sync-ja2-assets
+    COMMAND ${CMAKE_COMMAND} -E rm -rf
+        "${JA2_RUNTIME_ASSET_DIR}/externalized"
+        "${JA2_RUNTIME_ASSET_DIR}/unittests"
+        "${JA2_RUNTIME_ASSET_DIR}/mods"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets/externalized"
+        "${JA2_RUNTIME_ASSET_DIR}/externalized"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets/unittests"
+        "${JA2_RUNTIME_ASSET_DIR}/unittests"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets/mods"
+        "${JA2_RUNTIME_ASSET_DIR}/mods"
+    COMMENT "Synchronizing JA2 runtime assets from source"
+    VERBATIM)
+add_dependencies(${JA2_BINARY} sync-ja2-assets)
 
 if(WITH_EDITOR_SLF)
     set(EDITORSLF_FILE "${CMAKE_CURRENT_BINARY_DIR}/externalized/editor.slf")
     find_package(EditorSlf REQUIRED)
     add_custom_templated_target(download-editor-slf)
+    add_dependencies(download-editor-slf sync-ja2-assets)
     add_dependencies(${JA2_BINARY} download-editor-slf)
 endif()
 

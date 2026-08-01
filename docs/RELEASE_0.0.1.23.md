@@ -11,10 +11,14 @@ the item-transfer, mouse-input, persistence and hot-path hardening listed below.
 > labelled experimental still need community coverage across maps, saves and long
 > sessions.
 
-## Validation of this exact checkpoint
+## Validation recorded for the published tag
+
+The following numbers describe the source that was packaged and tagged as
+`v0.0.1.23`. They are historical release evidence, not the validation result for a
+newer local working tree; later source must rerun its complete registered suite.
 
 - Windows MinGW64/Ninja unit-test build: passed.
-- Automated suite: **191/191 tests passed** across 68 suites.
+- Automated suite at the published tag: **191/191 tests passed** across 68 suites.
 - Windows RelWithDebInfo playtest build: passed.
 - Twelve-second windowed startup smoke test with a configured JA2 Gold installation:
   process remained alive and the session log contained no error or fatal entry.
@@ -262,4 +266,3 @@ Extract the whole archive, run `START_PLAYTEST.cmd`, point the launcher to a leg
 installed JA2 directory and select the matching language. Use the computer's `REPORT`
 tab for reproducible feedback. If the game terminates before a report can be saved,
 run `COLLECT_LAST_CRASH.cmd` and attach the generated `reports` folder to the issue.
-

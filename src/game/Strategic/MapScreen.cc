@@ -48,6 +48,7 @@
 #include "Message.h"
 #include "NewStrings.h"
 #include "Object_Cache.h"
+#include "OS0_ItemTransferRuntime.h"
 #include "Options_Screen.h"
 #include "Overhead.h"
 #include "Player_Command.h"
@@ -3901,6 +3902,8 @@ void MAPEndItemPointer(void)
 {
 	if ( gpItemPointer != NULL )
 	{
+		if (OS0GetItemTransferRuntime().held())
+			OS0GetItemTransferRuntime().commit();
 		gpItemPointer = NULL;
 		gMPanelRegion.ChangeCursor(CURSOR_NORMAL);
 		MSYS_SetCurrentCursor( CURSOR_NORMAL );

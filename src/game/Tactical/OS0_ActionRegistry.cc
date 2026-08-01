@@ -248,15 +248,20 @@ OS0ResolvedActionList ResolveOS0InteractionActions(
 	else
 	{
 		OS0EnvironmentActionFacts const& facts = context.environment;
-		auto ranged = [&](ContextAction const action, BOOLEAN const capable,
-			OS0ActionBlockReason const reason)
+		auto rangedAt = [&](ContextAction const action, BOOLEAN const capable,
+			OS0ActionBlockReason const reason, BOOLEAN const inRange)
 		{
 			const BOOLEAN enabled = facts.actorAvailable && capable;
 			add(action, enabled,
-				enabled ? (facts.near ? OS0ActionApproach::IMMEDIATE :
+				enabled ? (inRange ? OS0ActionApproach::IMMEDIATE :
 					OS0ActionApproach::MOVE_TO_RANGE) :
 					OS0ActionApproach::IMPOSSIBLE,
 				facts.actorAvailable ? reason : OS0ActionBlockReason::NO_ACTOR);
+		};
+		auto ranged = [&](ContextAction const action, BOOLEAN const capable,
+			OS0ActionBlockReason const reason)
+		{
+			rangedAt(action, capable, reason, facts.near);
 		};
 
 		if (facts.openable)
@@ -273,14 +278,14 @@ OS0ResolvedActionList ResolveOS0InteractionActions(
 				OS0ActionBlockReason::MISSING_TOOL);
 		if (facts.moveCandidate)
 		{
-			ranged(ContextAction::CARRY, facts.canMove,
-				OS0ActionBlockReason::TOO_HEAVY);
-			ranged(ContextAction::PUSH, facts.canMove,
-				OS0ActionBlockReason::TOO_HEAVY);
-			ranged(ContextAction::PULL, facts.canMove,
-				OS0ActionBlockReason::TOO_HEAVY);
-			ranged(ContextAction::THROW, facts.canThrow,
-				OS0ActionBlockReason::TOO_HEAVY);
+			rangedAt(ContextAction::CARRY, facts.canMove,
+				OS0ActionBlockReason::TOO_HEAVY, facts.manipulationNear);
+			rangedAt(ContextAction::PUSH, facts.canMove,
+				OS0ActionBlockReason::TOO_HEAVY, facts.manipulationNear);
+			rangedAt(ContextAction::PULL, facts.canMove,
+				OS0ActionBlockReason::TOO_HEAVY, facts.manipulationNear);
+			rangedAt(ContextAction::THROW, facts.canThrow,
+				OS0ActionBlockReason::TOO_HEAVY, facts.manipulationNear);
 		}
 		if (facts.hasAsset)
 			add(ContextAction::BUILD, facts.buildable,

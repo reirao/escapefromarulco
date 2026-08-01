@@ -7,6 +7,7 @@
 #include "JAScreens.h"
 #include "Local.h"
 #include "Object_Cache.h"
+#include "OS0_ItemTransferRuntime.h"
 #include "Timer_Control.h"
 #include "Types.h"
 #include "MercPortrait.h"
@@ -3749,6 +3750,8 @@ void SetSkiCursor( UINT16 usCursor )
 	{
 		gMoveingItem = INVENTORY_IN_SLOT{};
 
+		if (OS0GetItemTransferRuntime().held())
+			OS0GetItemTransferRuntime().commit();
 		gpItemPointer = NULL;
 
 		DisableTacticalTeamPanelButtons( FALSE );

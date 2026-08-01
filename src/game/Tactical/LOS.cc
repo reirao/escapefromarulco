@@ -2449,7 +2449,10 @@ static UINT8 CalcChanceToGetThrough(BULLET* pBullet)
 	STRUCTURE * pStructure;
 	STRUCTURE * pRoofStructure = NULL;
 
-	FIXEDPT qLastZ;
+	// Previous sub-step height used by the roof crossing test. The normal roof
+	// discovery path assigns the same value, but initialize it here so malformed
+	// structure chains can never expose an indeterminate collision coordinate.
+	FIXEDPT qLastZ = pBullet->qCurrZ - pBullet->qIncrZ;
 
 	BOOLEAN fIntended;
 	INT8 bOldLOSIndexX;

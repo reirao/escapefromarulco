@@ -48,6 +48,11 @@ enum
 
 	// Modify window graphic & structure
 	SLM_WINDOW_HIT,
+
+	// OS//0 atomic structure relocation. Unlike a separate ADD + REMOVE pair,
+	// this is one append record and cannot persist only half of a carry commit.
+	// usGridNo=source, usImageType=destination, usSubImageIndex=tile index.
+	SLM_MOVE_STRUCT,
 };
 
 struct MODIFY_MAP
@@ -94,6 +99,11 @@ void LoadAllMapChangesFromMapTempFileAndApplyThem(void);
 
 
 void RemoveStructFromMapTempFile( UINT32 uiMapIndex, UINT16 usIndex );
+
+// Records one idempotent structure relocation in the current sector. The
+// caller performs the matching live mutation with map-change recording off.
+void MoveStructInMapTempFile(UINT32 sourceMapIndex,
+	UINT32 destinationMapIndex, UINT16 tileIndex);
 
 void AddRemoveObjectToMapTempFile( UINT32 uiMapIndex, UINT16 usIndex );
 

@@ -2,6 +2,8 @@
 
 #include "Types.h"
 
+#include <cstdint>
+
 
 enum class OS0ItemTransferSurface : UINT8
 {
@@ -30,6 +32,26 @@ enum class OS0ItemReleaseClaim : UINT8
 };
 
 
+// Immutable identity captured on the physical source press.  Mouse regions are
+// position based, while both soldier slots and gWorldItems entries can be
+// reused before a drag crosses its threshold.  The controller therefore owns
+// the actor instance and complete item fingerprint together with the spatial
+// origin until the source is actually detached.
+struct OS0ItemSourceIdentity
+{
+	std::uint64_t actorInstanceId = 0;
+	std::uint64_t itemFingerprint = 0;
+	INT32 gridNo = -1;
+	INT8 level = -1;
+	INT8 visibility = 0;
+	UINT16 flags = 0;
+	INT8 renderZHeight = 0;
+	UINT32 worldItemRevision = 0;
+
+	bool operator==(OS0ItemSourceIdentity const&) const noexcept = default;
+};
+
+
 // Owns the complete physical gesture around JA2's native item pointer.
 //
 // The engine cursor remains the authoritative OBJECTTYPE carrier. This small
@@ -41,14 +63,15 @@ class OS0ItemTransferController
 {
 public:
 	BOOLEAN beginSourcePress(OS0ItemTransferSurface surface, UINT32 sourceId,
-		INT16 screenX, INT16 screenY) noexcept;
+		INT16 screenX, INT16 screenY,
+		OS0ItemSourceIdentity identity = {}) noexcept;
 	BOOLEAN sourceMatches(OS0ItemTransferSurface surface,
-		UINT32 sourceId) const noexcept;
+		UINT32 sourceId, OS0ItemSourceIdentity identity = {}) const noexcept;
 	BOOLEAN dragThresholdReached(OS0ItemTransferSurface surface,
 		UINT32 sourceId, INT16 screenX, INT16 screenY,
-		INT16 threshold = 4) const noexcept;
+		INT16 threshold = 4, OS0ItemSourceIdentity identity = {}) const noexcept;
 	BOOLEAN markItemHeld(OS0ItemTransferSurface surface,
-		UINT32 sourceId) noexcept;
+		UINT32 sourceId, OS0ItemSourceIdentity identity = {}) noexcept;
 
 	// Used when an item cursor was created by a legacy/native path. Adopting it
 	// does not claim a mouse release; beginHeldGesture does that on the next DOWN.
@@ -91,6 +114,7 @@ public:
 	OS0ItemTransferSurface sourceSurface() const noexcept { return source_; }
 	OS0ItemTransferSurface targetSurface() const noexcept { return target_; }
 	UINT32 sourceId() const noexcept { return sourceId_; }
+	OS0ItemSourceIdentity sourceIdentity() const noexcept { return sourceIdentity_; }
 	void reset() noexcept;
 
 private:
@@ -100,6 +124,7 @@ private:
 	OS0ItemTransferSurface source_ = OS0ItemTransferSurface::NONE;
 	OS0ItemTransferSurface target_ = OS0ItemTransferSurface::NONE;
 	UINT32 sourceId_ = 0;
+	OS0ItemSourceIdentity sourceIdentity_{};
 	INT16 pressX_ = 0;
 	INT16 pressY_ = 0;
 	BOOLEAN buttonDown_ = FALSE;

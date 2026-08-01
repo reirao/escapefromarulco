@@ -1,8 +1,8 @@
 # Escape from Arulco / OS0 tactical architecture
 
 > **Current status:** this is the intended ownership model and an implementation
-> audit, not a claim of campaign completeness. The current `v0.0.1.23` runtime is
-> the **STABLE CHECKPOINT / EARLY ALPHA**; remaining integration debt is listed below and the public
+> audit, not a claim of campaign completeness. The current `v0.1.0` runtime is the
+> **FRAGILE-TESTED EARLY ALPHA**; remaining integration debt is listed below and the public
 > feature truth is maintained in `FEATURE_WIRING.md`.
 
 This document describes the current ownership boundaries of the newest local
@@ -40,7 +40,7 @@ It must not mirror soldier inventories, structures or sector ownership.
 | `OS0CycleCursorAction`, `ApplyCursorTool` | registry cursor descriptors | session cursor/attack state | JA2 UI mode events | session cursor state and action registry | completed typed mapping (`MOVE`, `USE`, `CARRY`, etc.) |
 | `ProjectControlModeToEngine` | canonical NORMAL/COMBAT state | pending safe projection | JA2 MOVE/ACTION events | OS0 session state | never overwrites firing, movement, interrupt or lock events; normalizes legacy cursor modes before combat |
 | `OS0ViewportGestureState` | button-down owner | primary gesture/release hand-off | RT/TB legacy mouse pollers | viewport input adapter | one physical LMB gesture has exactly one owner and one release |
-| inventory and item transfer | real soldier inventory, native item pointer and physical mouse gesture | real inventory and world pools | `PlaceObject`, item-pointer and world-drop services | `OS0ItemTransferController` for ownership plus `OS0_ItemRelations` for policy | one source, one held object and one release target; invalid destinations retain the native cursor |
+| inventory and item transfer | real soldier inventory, native item pointer, stable exact-source snapshot and physical mouse gesture | real inventory and world pools | `PlaceObject`, item-pointer and world-drop services | `OS0ItemTransferController` owns the gesture, `OS0ItemTransferRuntime`/`OS0ItemTransferTransaction` own commit/cancel, and `OS0_ItemRelations` owns policy | a destination commits only after accepting the complete object; no inferred slot swap; cancel restores the exact valid source or keeps the complete item on the cursor |
 | mouse-region release bridge | physical mouse/touch event and current native region | transfer ownership only | post-dispatch `MouseSystemHook` observer | `MouseSystem` bridge plus viewport adapter | recovers cross-region/outside-region/focus-loss release without changing JA2 inventory ownership |
 | panel positioning/dragging/regions | `OS0WindowManager`, persisted layout and window geometry | visibility, drag positions, focus and canonical Z order | mouse system plus `OS0_MouseRegionZOrder` | window manager plus native region adapter | child controls are projected into manager Z order without recreating callbacks or drag capture |
 | feedback/report functions | event ring and text input | report state and log file | keyboard hook / file I/O | UI file | `FeedbackSink` |
@@ -150,6 +150,11 @@ work when the native list already matches the manager.
    the same release twice.
 9. MouseSystem clears stale click capture outside all regions and exposes a
    post-dispatch observer for the legacy cross-region release gap.
+10. Item mutation is explicit: OS0 snapshots the exact inventory/world/container
+    source, commits only after a complete destination placement, and otherwise rolls
+    back the destination before restoring that source. It never guesses that an
+    occupied destination requested a swap; failed restoration remains player-visible
+    on the native item cursor.
 
 ## Remaining technical debt
 
@@ -212,9 +217,11 @@ they never include the overlay header.
   presentation caches/dirty regions.
 
 Sector exit cancels transient orders/carry but does not heal durable assets.
-Save/load serializes durable state through the existing JA2 save stream. Removed
-structures discard their damage records; newly placed structures receive a new
-stable instance key.
+Save/load serializes durable state through the existing JA2 save stream. Damage
+uses a stable sector/grid/level/tile key because native structure IDs are rebuilt
+while loading. Every mutation adapter must therefore explicitly discard the old
+key when an object is destroyed/replaced, or move it when the same physical object
+is carried/swapped. Native world teardown alone never clears durable damage.
 
 ## Verification gates
 
@@ -223,6 +230,8 @@ automated tests cover parallel cover orders, order cancellation, level-aware
 asset damage, lifecycle persistence, action-resolution parity, economy
 serialization/migration, catalog overrides, carry cancellation, window-manager
 state, native child-region Z ordering, clipped terrain brushes and guarded road
-macro bounds. The v0.0.1.23 gate additionally covers transfer ownership, relation
-capacity, double-click/stack boundaries, cross-region release, release outside all
-regions and focus-loss recovery; the complete suite contains 191 tests.
+macro bounds. The v0.1.0 gate additionally covers transfer ownership, relation
+capacity, exact-source transaction/rollback, double-click/stack boundaries,
+cross-region release, release outside all regions, focus-loss recovery and direct
+control reducers. Run the complete currently registered suite for the tree being
+validated; its count is intentionally not frozen in this living architecture document.

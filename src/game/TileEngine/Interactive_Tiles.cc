@@ -20,7 +20,9 @@
 #include "Structure.h"
 #include "Animation_Control.h"
 #include "Overhead.h"
+#include "OS0_DirectControl.h"
 #include "OS0_IngameUI.h"
+#include "OS0_ViewportInput.h"
 #include "Structure_Wrap.h"
 #include "Tile_Animation.h"
 #include "Tile_Cache.h"
@@ -46,6 +48,8 @@
 #include "ShippingDestinationModel.h"
 
 #include <cstdlib>
+#include <cstdint>
+#include <limits>
 
 #define MAX_INTTILE_STACK 10
 
@@ -83,6 +87,18 @@ static INT16  gsINTOldRenderCenterX = 0;
 static INT16  gsINTOldRenderCenterY = 0;
 static UINT16 gusINTOldMousePosX    = 0;
 static UINT16 gusINTOldMousePosY    = 0;
+
+
+BOOLEAN IsOS0PersistentWorldAssetNode(LEVELNODE const* const node)
+{
+	if (!node || node->usIndex >= NUMBEROFTILES ||
+		node->uiFlags & (LEVELNODE_ITEM | LEVELNODE_HIDDEN |
+			LEVELNODE_ROTTINGCORPSE | LEVELNODE_USEABSOLUTEPOS)) return FALSE;
+	UINT32 const type = GetTileType(node->usIndex);
+	if (FOOTPRINTS <= type && type <= LASTUIELEM) return FALSE;
+	TILE_ELEMENT const& tile = gTileDatabase[node->usIndex];
+	return tile.hTileSurface || (node->uiFlags & LEVELNODE_CACHEDANITILE);
+}
 
 
 void StartInteractiveObject(GridNo const gridno, STRUCTURE const& structure, SOLDIERTYPE& s, UINT8 const direction)
@@ -366,7 +382,7 @@ void LogMouseOverInteractiveTile(INT16 const sGridNo)
 
 static LEVELNODE* InternalGetCurInteractiveTile(const BOOLEAN fRejectItemsOnTop)
 {
-	if (_KeyDown(SHIFT)) return NULL;
+	if (_KeyDown(SHIFT) && !OS0DirectControlOwnsSprintModifier()) return NULL;
 	if (!gfOverIntTile)  return NULL;
 
 	LEVELNODE* n = gpWorldLevelData[gCurIntTile.sGridNo].pStructHead;
@@ -625,10 +641,13 @@ BOOLEAN FindOS0WorldAssetAtScreen(GridNo* gridNo, UINT8 level,
 		INT16 screenY = 0;
 		INT16 renderX = 0;
 		INT16 renderY = 0;
+		UINT8 zoom = 0;
+		UINT32 worldRevision = 0;
 		GridNo resultGrid = NOWHERE;
 		UINT16 resultTile = NO_TILE;
 		GridNo hitGrid = NOWHERE;
 		UINT16 hitTile = NO_TILE;
+		BOOLEAN hitWasObject = FALSE;
 		UINT32 checkedAt = 0;
 		BOOLEAN valid = FALSE;
 		BOOLEAN found = FALSE;
@@ -637,33 +656,58 @@ BOOLEAN FindOS0WorldAssetAtScreen(GridNo* gridNo, UINT8 level,
 	const GridNo hintGrid = *gridNo;
 	OS0MapDisplayToWorldScreen(&screenX, &screenY);
 	const UINT32 now = GetJA2Clock();
+	const UINT8 zoom = OS0WorldZoomFactor();
+	const UINT32 worldRevision = OS0WorldMutationRevision();
 	const BOOLEAN sameProjection = recent.valid && recent.hintGrid == hintGrid &&
 		recent.level == level && recent.renderX == gsRenderCenterX &&
-		recent.renderY == gsRenderCenterY;
-	if (sameProjection && recent.found && recent.hitGrid >= 0 &&
+		recent.renderY == gsRenderCenterY && recent.zoom == zoom &&
+		recent.worldRevision == worldRevision;
+	// A positive hit may be reused only for a stationary pointer.  Moving within
+	// the opaque mask of a large cached sprite can cross a smaller/front-most
+	// asset, so any coordinate change must rerun candidate ordering.
+	if (sameProjection && recent.screenX == screenX &&
+		recent.screenY == screenY && recent.found && recent.hitGrid >= 0 &&
 		recent.hitGrid < WORLD_MAX)
 	{
 		INT16 cellX;
 		INT16 cellY;
 		ConvertGridNoToCellXY(recent.hitGrid, &cellX, &cellY);
-		auto stillHits = [&](LEVELNODE const* node) -> BOOLEAN
+		auto currentHit = [&](LEVELNODE const* node) -> LEVELNODE const*
 		{
 			for (; node; node = node->pNext)
 			{
-				if (node->usIndex != recent.hitTile) continue;
+				if (node->usIndex != recent.hitTile ||
+					!IsOS0PersistentWorldAssetNode(node)) continue;
 				SGPRect rect;
 				GetLevelNodeScreenRect(*node, rect, cellX, cellY,
 					recent.hitGrid);
-				return IsPointInScreenRect(screenX, screenY, rect) &&
+				if (IsPointInScreenRect(screenX, screenY, rect) &&
 					RefinePointCollisionOnStruct(screenX, screenY,
-						rect.iLeft, rect.iBottom, *node);
+						rect.iLeft, rect.iBottom, *node)) return node;
 			}
-			return FALSE;
+			return nullptr;
 		};
 		MAP_ELEMENT const& map = gpWorldLevelData[recent.hitGrid];
-		if (stillHits(map.pObjectHead) ||
-			(level == 0 ? stillHits(map.pStructHead) : stillHits(map.pOnRoofHead)))
+		LEVELNODE const* const hit = recent.hitWasObject ?
+			currentHit(map.pObjectHead) :
+			currentHit(level == 0 ? map.pStructHead : map.pOnRoofHead);
+		if (hit)
 		{
+			// Re-resolve the canonical base from the node that exists now. Tile
+			// indices are reusable after carry/editor/world swaps; returning the
+			// cached old base would bind interaction to a different asset.
+			recent.resultGrid = recent.hitGrid;
+			recent.resultTile = hit->usIndex;
+			if (hit->pStructureData)
+			{
+				STRUCTURE* const base = FindBaseStructure(hit->pStructureData);
+				if (base && base->sGridNo >= 0 && base->sGridNo < WORLD_MAX)
+				{
+					recent.resultGrid = base->sGridNo;
+					if (LEVELNODE* const baseNode = FindLevelNodeBasedOnStructure(base))
+						recent.resultTile = baseNode->usIndex;
+				}
+			}
 			recent.screenX = screenX;
 			recent.screenY = screenY;
 			recent.checkedAt = now;
@@ -687,6 +731,7 @@ BOOLEAN FindOS0WorldAssetAtScreen(GridNo* gridNo, UINT8 level,
 	UINT16 bestTile = NO_TILE;
 	GridNo bestHitGrid = NOWHERE;
 	UINT16 bestHitTile = NO_TILE;
+	BOOLEAN bestHitWasObject = FALSE;
 	INT32 bestScore = INT32_MIN;
 
 	auto scanLayer = [&](LEVELNODE const* node, GridNo candidateGrid,
@@ -694,12 +739,7 @@ BOOLEAN FindOS0WorldAssetAtScreen(GridNo* gridNo, UINT8 level,
 	{
 		for (; node; node = node->pNext)
 		{
-			if (node->usIndex >= NUMBEROFTILES ||
-				node->uiFlags & (LEVELNODE_ITEM | LEVELNODE_HIDDEN |
-					LEVELNODE_ROTTINGCORPSE | LEVELNODE_USEABSOLUTEPOS)) continue;
-			TILE_ELEMENT const& tile = gTileDatabase[node->usIndex];
-			if (!tile.hTileSurface && !(node->uiFlags & LEVELNODE_CACHEDANITILE))
-				continue;
+			if (!IsOS0PersistentWorldAssetNode(node)) continue;
 			SGPRect rect;
 			GetLevelNodeScreenRect(*node, rect, cellX, cellY, candidateGrid);
 			if (!IsPointInScreenRect(screenX, screenY, rect)) continue;
@@ -715,6 +755,7 @@ BOOLEAN FindOS0WorldAssetAtScreen(GridNo* gridNo, UINT8 level,
 			bestTile = node->usIndex;
 			bestHitGrid = candidateGrid;
 			bestHitTile = node->usIndex;
+			bestHitWasObject = layerScore == 1;
 			if (node->pStructureData)
 			{
 				STRUCTURE* const base = FindBaseStructure(node->pStructureData);
@@ -750,11 +791,78 @@ BOOLEAN FindOS0WorldAssetAtScreen(GridNo* gridNo, UINT8 level,
 		}
 	}
 	recent = { hintGrid, level, screenX, screenY, gsRenderCenterX,
-		gsRenderCenterY, bestGrid, bestTile, bestHitGrid, bestHitTile, now, TRUE,
+		gsRenderCenterY, zoom, worldRevision, bestGrid, bestTile, bestHitGrid,
+		bestHitTile, bestHitWasObject, now, TRUE,
 		bestGrid != NOWHERE && bestTile < NUMBEROFTILES };
 	if (!recent.found) return FALSE;
 	*gridNo = bestGrid;
 	*tileIndex = bestTile;
+	return TRUE;
+}
+
+
+BOOLEAN FindOS0WorldItemAtScreen(INT32* const worldItemIndex,
+	GridNo* const gridNo, UINT8 const level, INT16 screenX, INT16 screenY)
+{
+	if (!worldItemIndex || !gridNo || *gridNo < 0 || *gridNo >= WORLD_MAX ||
+		level > 1) return FALSE;
+	*worldItemIndex = -1;
+	const GridNo hintGrid = *gridNo;
+	OS0MapDisplayToWorldScreen(&screenX, &screenY);
+	const INT16 hintX = static_cast<INT16>(hintGrid % WORLD_COLS);
+	const INT16 hintY = static_cast<INT16>(hintGrid / WORLD_COLS);
+	INT32 bestIndex = -1;
+	GridNo bestGrid = NOWHERE;
+	std::int64_t bestScore = std::numeric_limits<std::int64_t>::min();
+
+	// Item graphics are small, but rifles and raised/on-structure objects can
+	// extend beyond the projected cell beneath the pointer. Two cells covers the
+	// vanilla item atlas without turning every hover refresh into a world scan.
+	constexpr INT16 radius = 2;
+	for (INT16 y = std::max<INT16>(0, hintY - radius);
+		y <= std::min<INT16>(WORLD_ROWS - 1, hintY + radius); ++y)
+	{
+		for (INT16 x = std::max<INT16>(0, hintX - radius);
+			x <= std::min<INT16>(WORLD_COLS - 1, hintX + radius); ++x)
+		{
+			const GridNo candidate = y * WORLD_COLS + x;
+			INT16 cellX;
+			INT16 cellY;
+			ConvertGridNoToCellXY(candidate, &cellX, &cellY);
+			INT32 poolOrder = 0;
+			for (ITEM_POOL const* item = GetItemPool(candidate, level); item;
+				item = item->pNext, ++poolOrder)
+			{
+				if (item->iItemIndex < 0 ||
+					static_cast<size_t>(item->iItemIndex) >= gWorldItems.size() ||
+					!item->pLevelNode ||
+					!(item->pLevelNode->uiFlags & LEVELNODE_ITEM)) continue;
+				WORLDITEM const& worldItem = GetWorldItem(item->iItemIndex);
+				if (!OS0IsActionableLooseWorldItem(worldItem) ||
+					worldItem.sGridNo != candidate || worldItem.ubLevel != level)
+					continue;
+				SGPRect rect;
+				GetLevelNodeScreenRect(*item->pLevelNode, rect, cellX, cellY,
+					candidate);
+				if (!IsPointInScreenRect(screenX, screenY, rect) ||
+					!RefinePointCollisionOnStruct(screenX, screenY,
+						rect.iLeft, rect.iBottom, *item->pLevelNode)) continue;
+
+				// Screen-bottom is the useful depth proxy across isometric cells; pool
+				// order breaks ties exactly as AddStructToTail renders stacked items.
+				const std::int64_t score =
+					static_cast<std::int64_t>(rect.iBottom) * 1000000 +
+					static_cast<std::int64_t>(y + x) * 1000 + poolOrder;
+				if (score < bestScore) continue;
+				bestScore = score;
+				bestIndex = item->iItemIndex;
+				bestGrid = candidate;
+			}
+		}
+	}
+	if (bestIndex < 0 || bestGrid == NOWHERE) return FALSE;
+	*worldItemIndex = bestIndex;
+	*gridNo = bestGrid;
 	return TRUE;
 }
 

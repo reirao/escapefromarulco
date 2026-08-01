@@ -22,6 +22,44 @@
 #include <stdexcept>
 
 
+namespace
+{
+	UINT32 gWorldTileMutationRevision = 1;
+	static_assert(TILE_CACHE_START_INDEX >= NUMBEROFTILES,
+		"Cached animation indices must not overlap persistent map tiles");
+}
+
+void NotifyWorldTileMutation()
+{
+	if (++gWorldTileMutationRevision == 0) gWorldTileMutationRevision = 1;
+}
+
+UINT32 WorldTileMutationRevision()
+{
+	return gWorldTileMutationRevision;
+}
+
+static void NotifyPersistentWorldTileMutation(UINT16 const tileIndex)
+{
+	// Cached animation tiles (smoke, explosions, bullets, etc.) live above the
+	// regular tile database.  AddAniTile links the node before it can mark it
+	// LEVELNODE_CACHEDANITILE, so the index range is the only reliable filter at
+	// this boundary.  These visual effects must not invalidate deferred OS0
+	// interactions whose persistent target did not change.
+	if (tileIndex >= TILE_CACHE_START_INDEX) return;
+
+	if (tileIndex < NUMBEROFTILES)
+	{
+		UINT32 const type = GetTileType(tileIndex);
+		// Movement footprints, cover cells and pointer/wireframe glyphs are
+		// transient UI projections stored in native world lists. They are not
+		// interaction identities and must not invalidate deferred asset actions.
+		if (FOOTPRINTS <= type && type <= LASTUIELEM) return;
+	}
+	NotifyWorldTileMutation();
+}
+
+
 // LEVEL NODE MANIPLULATION FUNCTIONS
 static LEVELNODE* CreateLevelNode(void)
 {
@@ -111,6 +149,7 @@ LEVELNODE* AddObjectToTail(const UINT32 iMapIndex, const UINT16 usIndex)
 	*anchor = n;
 
 	ResetSpecificLayerOptimizing(TILES_DYNAMIC_OBJECTS);
+	NotifyPersistentWorldTileMutation(usIndex);
 	return n;
 }
 
@@ -126,6 +165,7 @@ LEVELNODE* AddObjectToHead(const UINT32 iMapIndex, const UINT16 usIndex)
 
 	ResetSpecificLayerOptimizing(TILES_DYNAMIC_OBJECTS);
 	AddObjectToMapTempFile(iMapIndex, usIndex);
+	NotifyPersistentWorldTileMutation(usIndex);
 	return n;
 }
 
@@ -156,6 +196,7 @@ BOOLEAN RemoveObject(UINT32 iMapIndex, UINT16 usIndex)
 
 			//Add the index to the maps temp file so we can remove it after reloading the map
 			AddRemoveObjectToMapTempFile(iMapIndex, usIndex);
+			NotifyPersistentWorldTileMutation(usIndex);
 
 			return TRUE;
 		}
@@ -280,6 +321,7 @@ LEVELNODE* AddLandToTail(const UINT32 iMapIndex, const UINT16 usIndex)
 	n->pPrevNode = prev;
 
 	ResetSpecificLayerOptimizing(TILES_DYNAMIC_LAND);
+	NotifyPersistentWorldTileMutation(usIndex);
 	return n;
 }
 
@@ -301,6 +343,7 @@ void AddLandToHead(const UINT32 iMapIndex, const UINT16 usIndex)
 	}
 
 	ResetSpecificLayerOptimizing(TILES_DYNAMIC_LAND);
+	NotifyPersistentWorldTileMutation(usIndex);
 }
 
 
@@ -340,6 +383,7 @@ static void RemoveLandEx(UINT32 iMapIndex, UINT16 usIndex)
 			}
 
 			delete pLand;
+			NotifyWorldTileMutation();
 			break;
 		}
 	}
@@ -387,6 +431,7 @@ void ReplaceLandIndex(UINT32 const iMapIndex, UINT16 const usOldIndex, UINT16 co
 			// OK, set new index value
 			pLand->usIndex = usNewIndex;
 			AdjustForFullTile(iMapIndex);
+			NotifyWorldTileMutation();
 			return;
 		}
 	}
@@ -484,6 +529,7 @@ void InsertLandIndexAtLevel(const UINT32 iMapIndex, const UINT16 usIndex, const 
 	AdjustForFullTile(iMapIndex);
 
 	ResetSpecificLayerOptimizing(TILES_DYNAMIC_LAND);
+	NotifyPersistentWorldTileMutation(usIndex);
 }
 
 
@@ -538,6 +584,19 @@ static LEVELNODE* AddNodeToWorld(UINT32 const iMapIndex, UINT16 const usIndex, I
 
 static LEVELNODE* AddStructToTailCommon(UINT32 const map_idx, UINT16 const idx, LEVELNODE* const n)
 {
+	// Persistence is the first commit boundary.  If the VFS append fails, the
+	// node has not entered the map list yet and can be destroyed exactly; the old
+	// ordering linked it first and left an unreturnable duplicate behind.
+	try
+	{
+		AddStructToMapTempFile(map_idx, idx);
+	}
+	catch (...)
+	{
+		if (n->pStructureData) DeleteStructureFromWorld(n->pStructureData);
+		delete n;
+		throw;
+	}
 	MAP_ELEMENT& me = gpWorldLevelData[map_idx];
 	// Append node to list
 	LEVELNODE** anchor = &me.pStructHead;
@@ -569,9 +628,8 @@ static LEVELNODE* AddStructToTailCommon(UINT32 const map_idx, UINT16 const idx, 
 		}
 	}
 
-	AddStructToMapTempFile(map_idx, idx);
-
 	ResetSpecificLayerOptimizing(TILES_DYNAMIC_STRUCTURES);
+	NotifyPersistentWorldTileMutation(idx);
 	return n;
 }
 
@@ -594,6 +652,16 @@ LEVELNODE* ForceStructToTail(UINT32 const map_idx, UINT16 const idx)
 void AddStructToHead(UINT32 const map_idx, UINT16 const idx)
 {
 	LEVELNODE* const n = AddNodeToWorld(map_idx, idx, 0);
+	try
+	{
+		AddStructToMapTempFile(map_idx, idx);
+	}
+	catch (...)
+	{
+		if (n->pStructureData) DeleteStructureFromWorld(n->pStructureData);
+		delete n;
+		throw;
+	}
 
 	MAP_ELEMENT& me = gpWorldLevelData[map_idx];
 	// Prepend node to list
@@ -626,9 +694,8 @@ void AddStructToHead(UINT32 const map_idx, UINT16 const idx)
 		}
 	}
 
-	AddStructToMapTempFile(map_idx, idx);
-
 	ResetSpecificLayerOptimizing(TILES_DYNAMIC_STRUCTURES);
+	NotifyPersistentWorldTileMutation(idx);
 }
 
 
@@ -659,6 +726,7 @@ static void InsertStructIndex(const UINT32 iMapIndex, const UINT16 usIndex, cons
 	pStruct->pNext = n;
 
 	ResetSpecificLayerOptimizing(TILES_DYNAMIC_STRUCTURES);
+	NotifyPersistentWorldTileMutation(usIndex);
 }
 
 
@@ -688,6 +756,9 @@ void ForceRemoveStructFromTail(UINT32 const iMapIndex)
 		// AT THE TAIL
 		if (pStruct->pNext == NULL)
 		{
+			UINT16 const usIndex = pStruct->usIndex;
+			// Do not unlink until the persistent inverse has been accepted.
+			RemoveStructFromMapTempFile(iMapIndex, usIndex);
 			if (pPrevStruct != NULL)
 			{
 				pPrevStruct->pNext = pStruct->pNext;
@@ -697,14 +768,10 @@ void ForceRemoveStructFromTail(UINT32 const iMapIndex)
 				gpWorldLevelData[iMapIndex].pStructHead = pPrevStruct;
 			}
 
-			UINT16 usIndex = pStruct->usIndex;
-
 			// XXX TODO000A It rather seems like a memory leak not to DeleteStructureFromWorld() here. See InternalRemoveStruct()
 
-			//If we have to, make sure to remove this node when we reload the map from a saved game
-			RemoveStructFromMapTempFile(iMapIndex, usIndex);
-
 			delete pStruct;
+			NotifyPersistentWorldTileMutation(usIndex);
 
 			RemoveShadowBuddy(iMapIndex, usIndex);
 			return;
@@ -718,18 +785,19 @@ void ForceRemoveStructFromTail(UINT32 const iMapIndex)
 static void InternalRemoveStruct(UINT32 const map_idx, LEVELNODE** const anchor)
 {
 	LEVELNODE* const removee = *anchor;
+	UINT16 const idx = removee->usIndex;
+
+	// A failed persistent append leaves the live list and structure untouched.
+	// FinalizeWorldMove can therefore abort without losing its source node.
+	RemoveStructFromMapTempFile(map_idx, idx);
 	*anchor = removee->pNext;
 
 	// Delete memory assosiated with item
 	DeleteStructureFromWorld(removee->pStructureData);
 
-	UINT16 const idx = removee->usIndex;
-
-	// If we have to, make sure to remove this node when we reload the map from a saved game
-	RemoveStructFromMapTempFile(map_idx, idx);
-
 	RemoveShadowBuddy(map_idx, idx);
 	delete removee;
+	NotifyPersistentWorldTileMutation(idx);
 }
 
 
@@ -1183,6 +1251,7 @@ LEVELNODE* AddRoofToTail(const UINT32 iMapIndex, const UINT16 usIndex)
 	LEVELNODE** anchor = &gpWorldLevelData[iMapIndex].pRoofHead;
 	while (*anchor != NULL) anchor = &(*anchor)->pNext;
 	*anchor = n;
+	NotifyPersistentWorldTileMutation(usIndex);
 
 	return n;
 }
@@ -1196,6 +1265,7 @@ LEVELNODE* AddRoofToHead(const UINT32 iMapIndex, const UINT16 usIndex)
 	LEVELNODE** const head = &gpWorldLevelData[iMapIndex].pRoofHead;
 	n->pNext = *head;
 	*head = n;
+	NotifyPersistentWorldTileMutation(usIndex);
 
 	return n;
 }
@@ -1299,6 +1369,7 @@ LEVELNODE* AddOnRoofToTail(const UINT32 iMapIndex, const UINT16 usIndex)
 	LEVELNODE** anchor = &gpWorldLevelData[iMapIndex].pOnRoofHead;
 	while (*anchor != NULL) anchor = &(*anchor)->pNext;
 	*anchor = n;
+	NotifyPersistentWorldTileMutation(usIndex);
 
 	return n;
 }
@@ -1312,6 +1383,7 @@ LEVELNODE* AddOnRoofToHead(const UINT32 iMapIndex, const UINT16 usIndex)
 	LEVELNODE** const head = &gpWorldLevelData[iMapIndex].pOnRoofHead;
 	n->pNext = *head;
 	*head = n;
+	NotifyPersistentWorldTileMutation(usIndex);
 
 	return n;
 }
@@ -1319,13 +1391,18 @@ LEVELNODE* AddOnRoofToHead(const UINT32 iMapIndex, const UINT16 usIndex)
 
 BOOLEAN RemoveOnRoof(UINT32 iMapIndex, UINT16 usIndex)
 {
-	return Remove(gpWorldLevelData[iMapIndex].pOnRoofHead, usIndex);
+	BOOLEAN const removed = Remove(gpWorldLevelData[iMapIndex].pOnRoofHead, usIndex);
+	if (removed) NotifyPersistentWorldTileMutation(usIndex);
+	return removed;
 }
 
 
 BOOLEAN RemoveOnRoofFromLevelNode(UINT32 iMapIndex, LEVELNODE *pNode)
 {
-	return Remove(gpWorldLevelData[iMapIndex].pOnRoofHead, pNode);
+	UINT16 const tileIndex = pNode ? pNode->usIndex : NO_TILE;
+	BOOLEAN const removed = Remove(gpWorldLevelData[iMapIndex].pOnRoofHead, pNode);
+	if (removed) NotifyPersistentWorldTileMutation(tileIndex);
+	return removed;
 }
 
 

@@ -26,6 +26,7 @@ echo   ESCAPE FROM ARULCO - CONFIGURE, BUILD, START
 echo ============================================================
 echo   Source: %EFA_SOURCE_DIR%
 echo   Build : %EFA_BUILD_DIR%
+echo   Mode  : local developer loop - unit tests are NOT run
 echo.
 
 if not exist "%EFA_CMAKE%" goto :missing_tools
@@ -63,6 +64,7 @@ if "%~1"=="" (
 if errorlevel 1 goto :failed
 
 echo Done. Future runs compile only changed files.
+echo Before packaging, run the separate complete unit-test and release gates.
 "%SystemRoot%\System32\timeout.exe" /t 2 /nobreak >nul
 exit /b 0
 

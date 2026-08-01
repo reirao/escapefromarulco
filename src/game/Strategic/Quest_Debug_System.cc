@@ -1301,13 +1301,13 @@ static void BtnQuestDebugExitButtonCallback(GUI_BUTTON* btn, UINT32 reason)
 
 static void DisplayQuestList(void)
 {
-	UINT16	usLoop1, usCount;
+	UINT16	usLoop1;
 	UINT16	usTextHeight = GetFontHeight( QUEST_DBS_FONT_DYNAMIC_TEXT ) + 2;
 	ST::string sTemp;
 	UINT16	usPosY;
 
 	usPosY = QUEST_DBS_FIRST_COL_NUMBER_Y + QUEST_DBS_LIST_TEXT_OFFSET;	//&& (usCount < QUEST_DBS_MAX_DISPLAYED_ENTRIES )
-	for( usLoop1=0, usCount=0; (usLoop1<MAX_QUESTS)  ; usLoop1++)
+	for( usLoop1=0; (usLoop1<MAX_QUESTS)  ; usLoop1++)
 	{
 		//Display Quest Number text
 		sTemp = ST::format("{02d}", usLoop1);
@@ -1320,7 +1320,6 @@ static void DisplayQuestList(void)
 		DisplayWrappedString(QUEST_DBS_FIRST_COL_STATUS_X, usPosY, QUEST_DBS_STATUS_COL_WIDTH, 2, QUEST_DBS_FONT_STATIC_TEXT, QUEST_DBS_COLOR_STATIC_TEXT, QuestStates[gubQuest[usLoop1]], FONT_MCOLOR_BLACK, CENTER_JUSTIFIED);
 
 		usPosY += usTextHeight;
-		usCount++;
 	}
 }
 

@@ -47,4 +47,11 @@ INT16 OS0CurrentAssetDurability(GridNo gridNo, UINT8 level,
 BOOLEAN OS0ApplyWorldAssetDamage(GridNo gridNo, UINT8 level,
 	STRUCTURE* structure, UINT8 impact);
 
+// Editor/salvage replacement paths must not let a new asset inherit durability
+// from the former object which happened to occupy the same spatial key.
+void OS0ForgetWorldAssetDamage(GridNo gridNo, UINT8 level, UINT16 tileIndex);
+void OS0MoveWorldAssetDamage(GridNo sourceGridNo, UINT8 sourceLevel,
+	UINT16 sourceTileIndex, GridNo destinationGridNo, UINT8 destinationLevel,
+	UINT16 destinationTileIndex);
+
 BOOLEAN OS0ValidateResourceItemDefinitions(ST::string* error = nullptr);

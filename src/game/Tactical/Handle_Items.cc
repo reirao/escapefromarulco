@@ -30,6 +30,8 @@
 #include "Timer_Control.h"
 #include "Interface_Items.h"
 #include "OS0_IngameUI.h"
+#include "OS0_ItemTransferRuntime.h"
+#include "OS0_ViewportInput.h"
 #include "Soldier_Profile.h"
 #include "Interface_Dialogue.h"
 #include "Quests.h"
@@ -77,6 +79,8 @@
 #include <string_theory/format>
 #include <string_theory/string>
 
+#include <array>
+
 
 #define NUM_ITEMS_LISTED		8
 #define NUM_ITEM_FLASH_SLOTS		50
@@ -105,6 +109,108 @@ static UINT32 guiNumFlashItemSlots = 0;
 static SOLDIERTYPE *gpTempSoldier;
 static INT16 gsTempGridno;
 static INT8 bTempFrequency;
+
+
+namespace
+{
+	struct OS0PendingExactPickup
+	{
+		BOOLEAN armed = FALSE;
+		UINT32 actorInstanceId = 0;
+		INT32 itemIndex = -1;
+		INT16 gridNo = NOWHERE;
+		UINT8 level = 0;
+		INT8 requestedZLevel = ITEM_IGNORE_Z_LEVEL;
+		INT8 visibility = 0;
+		UINT16 flags = 0;
+		INT8 renderZHeight = 0;
+		INT16 sectorX = 0;
+		INT16 sectorY = 0;
+		INT8 sectorZ = 0;
+		UINT32 worldRevision = 0;
+		OBJECTTYPE object{};
+	};
+
+	std::array<OS0PendingExactPickup, TOTAL_SOLDIERS> gOS0PendingExactPickups{};
+
+	OS0PendingExactPickup* ExactPickupFor(SOLDIERTYPE const* const soldier)
+	{
+		if (!soldier) return nullptr;
+		const UINT16 id = Soldier2ID(soldier);
+		return id < gOS0PendingExactPickups.size() ?
+			&gOS0PendingExactPickups[id] : nullptr;
+	}
+
+	void ClearExactPickup(SOLDIERTYPE const* const soldier)
+	{
+		if (OS0PendingExactPickup* const pending = ExactPickupFor(soldier))
+			*pending = {};
+	}
+
+	BOOLEAN ArmExactPickup(SOLDIERTYPE const* const soldier,
+		INT32 const itemIndex, INT16 const gridNo, INT8 const requestedZLevel)
+	{
+		OS0PendingExactPickup* const pending = ExactPickupFor(soldier);
+		if (!pending || !soldier->bActive ||
+			soldier->uiUniqueSoldierIdValue == 0 || itemIndex < 0 ||
+			static_cast<size_t>(itemIndex) >= gWorldItems.size()) return FALSE;
+		WORLDITEM const& item = GetWorldItem(itemIndex);
+		if (!item.fExists || item.o.usItem == NOTHING ||
+			item.sGridNo != gridNo || item.ubLevel != soldier->bLevel) return FALSE;
+
+		pending->armed = TRUE;
+		pending->actorInstanceId = soldier->uiUniqueSoldierIdValue;
+		pending->itemIndex = itemIndex;
+		pending->gridNo = item.sGridNo;
+		pending->level = item.ubLevel;
+		pending->requestedZLevel = requestedZLevel;
+		pending->visibility = item.bVisible;
+		pending->flags = item.usFlags;
+		pending->renderZHeight = item.bRenderZHeightAboveLevel;
+		pending->sectorX = gWorldSector.x;
+		pending->sectorY = gWorldSector.y;
+		pending->sectorZ = gWorldSector.z;
+		pending->worldRevision = WorldItemMutationRevision();
+		pending->object = item.o;
+		return TRUE;
+	}
+
+	enum class ExactPickupValidation
+	{
+		UNTRACKED,
+		MATCH,
+		STALE
+	};
+
+	ExactPickupValidation ConsumeExactPickup(SOLDIERTYPE const* const soldier,
+		INT32 const itemIndex, INT16 const gridNo, INT8 const requestedZLevel)
+	{
+		OS0PendingExactPickup* const slot = ExactPickupFor(soldier);
+		if (!slot || !slot->armed) return ExactPickupValidation::UNTRACKED;
+		OS0PendingExactPickup const pending = *slot;
+		*slot = {};
+
+		if (!soldier->bActive ||
+			soldier->uiUniqueSoldierIdValue != pending.actorInstanceId ||
+			itemIndex != pending.itemIndex || gridNo != pending.gridNo ||
+			requestedZLevel != pending.requestedZLevel || itemIndex < 0 ||
+			gWorldSector.x != pending.sectorX ||
+			gWorldSector.y != pending.sectorY ||
+			gWorldSector.z != pending.sectorZ ||
+			pending.worldRevision == 0 ||
+			pending.worldRevision != WorldItemMutationRevision() ||
+			static_cast<size_t>(itemIndex) >= gWorldItems.size())
+			return ExactPickupValidation::STALE;
+
+		WORLDITEM const& item = GetWorldItem(itemIndex);
+		return item.fExists && item.sGridNo == pending.gridNo &&
+			item.ubLevel == pending.level &&
+			item.bVisible == pending.visibility && item.usFlags == pending.flags &&
+			item.bRenderZHeightAboveLevel == pending.renderZHeight &&
+			OS0SameObjectRepresentation(item.o, pending.object) ?
+			ExactPickupValidation::MATCH : ExactPickupValidation::STALE;
+	}
+}
 
 
 SOLDIERTYPE*   gpBoobyTrapSoldier;
@@ -1108,16 +1214,22 @@ void SoldierDropItem(SOLDIERTYPE* const pSoldier, OBJECTTYPE* const pObj)
 }
 
 
-void SoldierPickupItem( SOLDIERTYPE *pSoldier, INT32 iItemIndex, INT16 sGridNo, INT8 bZLevel )
+static BOOLEAN QueueSoldierPickupItem(SOLDIERTYPE* const pSoldier,
+	INT32 const iItemIndex, INT16 const sGridNo, INT8 const bZLevel,
+	BOOLEAN const guardExactWorldItem)
 {
+	if (!pSoldier) return FALSE;
 	Soldier soldier{pSoldier};
 	soldier.removePendingAction();
+	ClearExactPickup(pSoldier);
 
 	GridNo const sActionGridNo = AdjustGridNoForItemPlacement( pSoldier, sGridNo );
 	if (sActionGridNo < 0 || sActionGridNo >= WORLD_MAX)
 	{
-		return;
+		return FALSE;
 	}
+	if (guardExactWorldItem &&
+		!ArmExactPickup(pSoldier, iItemIndex, sGridNo, bZLevel)) return FALSE;
 
 	soldier.setPendingAction(MERC_PICKUPITEM);
 	pSoldier->uiPendingActionData1 = iItemIndex;
@@ -1139,8 +1251,9 @@ void SoldierPickupItem( SOLDIERTYPE *pSoldier, INT32 iItemIndex, INT16 sGridNo, 
 				pSoldier->usUIMovementMode, TRUE, TRUE))
 			{
 				soldier.removePendingAction();
+				ClearExactPickup(pSoldier);
 				UnSetUIBusy(pSoldier);
-				return;
+				return FALSE;
 			}
 
 			// Say it only if we don;t have to go too far!
@@ -1159,6 +1272,21 @@ void SoldierPickupItem( SOLDIERTYPE *pSoldier, INT32 iItemIndex, INT16 sGridNo, 
 		// DO ANIMATION OF PICKUP NOW!
 		PickPickupAnimation( pSoldier, pSoldier->uiPendingActionData1, (INT16)( pSoldier->uiPendingActionData4 ), pSoldier->bPendingActionData3 );
 	}
+	return TRUE;
+}
+
+
+void SoldierPickupItem(SOLDIERTYPE* const pSoldier, INT32 const iItemIndex,
+	INT16 const sGridNo, INT8 const bZLevel)
+{
+	QueueSoldierPickupItem(pSoldier, iItemIndex, sGridNo, bZLevel, FALSE);
+}
+
+
+BOOLEAN OS0SoldierPickupExactWorldItem(SOLDIERTYPE* const pSoldier,
+	INT32 const iItemIndex, INT16 const sGridNo, INT8 const bZLevel)
+{
+	return QueueSoldierPickupItem(pSoldier, iItemIndex, sGridNo, bZLevel, TRUE);
 }
 
 
@@ -1325,10 +1453,37 @@ static void BoobyTrapMessageBoxCallBack(MessageBoxReturnValue);
 
 void HandleSoldierPickupItem(SOLDIERTYPE* const s, INT32 const item_idx, INT16 const gridno, INT8 const z_level)
 {
+	if (ConsumeExactPickup(s, item_idx, gridno, z_level) ==
+		ExactPickupValidation::STALE)
+	{
+		SLOGW("OS0 exact pickup cancelled because its world item changed");
+		Soldier{s}.removePendingAction();
+		UnSetUIBusy(s);
+		return;
+	}
+
 	ITEM_POOL* const item_pool = GetItemPool(gridno, s->bLevel);
 	if (!item_pool)
 	{
 		DoMercBattleSound(s, BATTLE_SOUND_NOTHING);
+		return;
+	}
+
+	// A marked mine is a distinct interaction, not ordinary loot. Keep JA2's
+	// proven disarm prompt ahead of every OS//0 pickup return so the hand cursor
+	// can still remove a blue flag / armed bomb safely.
+	if (s->bTeam == OUR_TEAM &&
+		(gpWorldLevelData[gridno].uiFlags & MAPELEMENT_PLAYER_MINE_PRESENT))
+	{
+		INT32 const trap_item_idx = FindWorldItemForBombInGridNo(gridno, s->bLevel);
+		g_booby_trap_item     = trap_item_idx;
+		gpBoobyTrapSoldier    = s;
+		gsBoobyTrapGridNo     = gridno;
+		gbBoobyTrapLevel      = s->bLevel;
+		gfDisarmingBuriedBomb = TRUE;
+		gbTrapDifficulty      = GetWorldItem(trap_item_idx).o.bTrap;
+		DoMessageBox(MSG_BOX_BASIC_STYLE, TacticalStr[DISARM_TRAP_PROMPT],
+			GAME_SCREEN, MSG_BOX_FLAG_YESNO, BoobyTrapMessageBoxCallBack, 0);
 		return;
 	}
 
@@ -1342,9 +1497,13 @@ void HandleSoldierPickupItem(SOLDIERTYPE* const s, INT32 const item_idx, INT16 c
 			SoldierGetItemFromWorld(s, item_idx, gridno, z_level, nullptr);
 			return;
 		}
-		// A generic hand-cursor request has no concrete object selection. Open
-		// the spatial loot window so the player can choose the actual object.
-		OS0OpenWorldContainer(gridno, s->bLevel, NO_TILE);
+		// A generic hand request chooses the first real loose sprite. Hidden
+		// container contents remain owned by the container projection.
+		INT32 const looseItem = OS0FindActionableLooseWorldItem(gridno, s->bLevel);
+		if (looseItem >= 0)
+			SoldierGetItemFromWorld(s, looseItem, gridno, z_level, nullptr);
+		else
+			OS0OpenWorldContainer(gridno, s->bLevel, NO_TILE, s);
 		return;
 	}
 
@@ -1354,54 +1513,6 @@ void HandleSoldierPickupItem(SOLDIERTYPE* const s, INT32 const item_idx, INT16 c
 		return;
 	}
 
-	if (gpWorldLevelData[gridno].uiFlags & MAPELEMENT_PLAYER_MINE_PRESENT)
-	{ // Have the computer ask us if we want to proceed
-		// Override the item index passed in with the one for the bomb in this tile
-		INT32 const trap_item_idx = FindWorldItemForBombInGridNo(gridno, s->bLevel);
-		g_booby_trap_item     = trap_item_idx;
-		gpBoobyTrapSoldier    = s;
-		gsBoobyTrapGridNo     = gridno;
-		gbBoobyTrapLevel      = s->bLevel;
-		gfDisarmingBuriedBomb = TRUE;
-		gbTrapDifficulty      = GetWorldItem(trap_item_idx).o.bTrap;
-		DoMessageBox(MSG_BOX_BASIC_STYLE, TacticalStr[DISARM_TRAP_PROMPT], GAME_SCREEN, MSG_BOX_FLAG_YESNO, BoobyTrapMessageBoxCallBack, 0);
-		return;
-	}
-
-	ITEM_POOL const* first      = 0;
-	bool             all_hidden = true;
-	for (ITEM_POOL* i = item_pool; i; i = i->pNext)
-	{
-		if (GetWorldItem(i->iItemIndex).bVisible == HIDDEN_ITEM) continue;
-		all_hidden = false;
-		if (!ItemPoolOKForDisplay(i, z_level)) continue;
-		if (first)
-		{
-			// More than one item, show menu
-			// Freeze guy!
-			s->fPauseAllAnimation = TRUE;
-			InitializeItemPickupMenu(s, gridno, item_pool, z_level);
-			guiPendingOverrideEvent = G_GETTINGITEM;
-			return;
-		}
-		first = i;
-	}
-	if (first)
-	{
-		// Pick up the only item
-		SoldierGetItemFromWorld(s, first->iItemIndex, gridno, z_level, 0);
-	}
-	else if (all_hidden && LookForHiddenItems(gridno, s->bLevel))
-	{
-		// Wisdom gain (5):  Found a hidden object
-		StatChange(*s, WISDOMAMT, 5, FROM_SUCCESS);
-		// We've found something!
-		TacticalCharacterDialogue(s, QUOTE_SPOTTED_SOMETHING_ONE + Random(2));
-	}
-	else
-	{
-		DoMercBattleSound(s, BATTLE_SOUND_NOTHING);
-	}
 }
 
 
@@ -1458,9 +1569,15 @@ static void RemoveItemGraphicFromWorld(INT16 const sGridNo, UINT8 const ubLevel,
 }
 
 
+static INT32 InternalAddItemToPoolWithPlacementPolicy(INT16* psGridNo,
+	OBJECTTYPE* pObject, Visibility bVisible, UINT8 ubLevel, UINT16 usFlags,
+	INT8 bRenderZHeightAboveLevel, BOOLEAN preservePersistedGrid);
+
+
 INT32 AddItemToPool(INT16 sGridNo, OBJECTTYPE* const pObject, Visibility const bVisible, UINT8 const ubLevel, UINT16 const usFlags, INT8 const bRenderZHeightAboveLevel)
 {
-	return InternalAddItemToPool(&sGridNo, pObject, bVisible, ubLevel, usFlags, bRenderZHeightAboveLevel);
+	return InternalAddItemToPoolWithPlacementPolicy(&sGridNo, pObject, bVisible,
+		ubLevel, usFlags, bRenderZHeightAboveLevel, FALSE);
 }
 
 
@@ -1468,6 +1585,29 @@ static void HandleItemObscuredFlag(INT16 sGridNo, UINT8 ubLevel);
 
 
 INT32 InternalAddItemToPool(INT16* const psGridNo, OBJECTTYPE* const pObject, Visibility bVisible, UINT8 ubLevel, UINT16 usFlags, INT8 bRenderZHeightAboveLevel)
+{
+	return InternalAddItemToPoolWithPlacementPolicy(psGridNo, pObject, bVisible,
+		ubLevel, usFlags, bRenderZHeightAboveLevel, FALSE);
+}
+
+
+INT32 OS0RestorePersistedWorldItemToPool(WORLDITEM const& item,
+	GridNo const requestedGridNo)
+{
+	if (!item.fExists || item.o.usItem == NOTHING) return -1;
+	OBJECTTYPE object = item.o;
+	INT16 gridNo = requestedGridNo;
+	return InternalAddItemToPoolWithPlacementPolicy(&gridNo, &object,
+		static_cast<Visibility>(item.bVisible), item.ubLevel, item.usFlags,
+		item.bRenderZHeightAboveLevel,
+		OS0IsContainerOwnedItem(item));
+}
+
+
+static INT32 InternalAddItemToPoolWithPlacementPolicy(INT16* const psGridNo,
+	OBJECTTYPE* const pObject, Visibility bVisible, UINT8 ubLevel,
+	UINT16 usFlags, INT8 bRenderZHeightAboveLevel,
+	BOOLEAN const preservePersistedGrid)
 {
 	Assert(pObject->ubNumberOfObjects <= MAX_OBJECTS_PER_SLOT);
 
@@ -1483,7 +1623,7 @@ INT32 InternalAddItemToPool(INT16* const psGridNo, OBJECTTYPE* const pObject, Vi
 	INT16 sNewGridNo = *psGridNo;
 
 	/* if location is in water and item sinks, do not add */
-	if (Water(sNewGridNo))
+	if (!preservePersistedGrid && Water(sNewGridNo))
 	{
 		if (GCM->getItem(pObject->usItem)->getFlags() & ITEM_SINKS)
 			return -1;
@@ -1495,7 +1635,8 @@ INT32 InternalAddItemToPool(INT16* const psGridNo, OBJECTTYPE* const pObject, Vi
 	// On a structure?
 	//Locations on roofs without a roof is not possible, so
 	//we convert the onroof intention to ground.
-	if (ubLevel && !FlatRoofAboveGridNo(sNewGridNo)) ubLevel = 0;
+	if (!preservePersistedGrid && ubLevel && !FlatRoofAboveGridNo(sNewGridNo))
+		ubLevel = 0;
 
 	BOOLEAN fForceOnGround;
 	if (bRenderZHeightAboveLevel == -1)
@@ -1509,8 +1650,13 @@ INT32 InternalAddItemToPool(INT16* const psGridNo, OBJECTTYPE* const pObject, Vi
 	}
 
 	// Check structure database
-	BOOLEAN fObjectInOpenable = FALSE;
-	if (gpWorldLevelData[sNewGridNo].pStructureHead && pObject->usItem != OWNERSHIP &&
+	// Container-owned serialized children already carry the exact visibility,
+	// flags, height and level produced by their owning container. During sector
+	// restore map modifications have not replayed yet, so current scenery cannot
+	// safely reinterpret any of those fields.
+	BOOLEAN fObjectInOpenable = preservePersistedGrid;
+	if (!preservePersistedGrid &&
+		gpWorldLevelData[sNewGridNo].pStructureHead && pObject->usItem != OWNERSHIP &&
 		pObject->usItem != ACTION_ITEM)
 	{
 		// Something is here, check obstruction in future
@@ -2849,6 +2995,110 @@ static BOOLEAN ContinuePastBoobyTrap(SOLDIERTYPE* const pSoldier, const INT16 sG
 	}
 
 	return( TRUE );
+}
+
+
+BOOLEAN OS0IsContainerSeedMarker(WORLDITEM const& item)
+{
+	return item.fExists && item.o.usItem == ACTION_ITEM &&
+		item.o.bActionValue == 0 &&
+		item.o.ubTolerance == OS0_CONTAINER_SEED_MARKER;
+}
+
+
+BOOLEAN OS0IsContainerContentItem(WORLDITEM const& item)
+{
+	return item.fExists && item.o.usItem != NOTHING &&
+		item.o.usItem != ACTION_ITEM && item.o.usItem != OWNERSHIP &&
+		(item.bVisible == HIDDEN_IN_OBJECT ||
+		 (item.usFlags & WORLD_ITEM_DONTRENDER));
+}
+
+
+BOOLEAN OS0IsContainerOwnedItem(WORLDITEM const& item)
+{
+	return OS0IsContainerSeedMarker(item) || OS0IsContainerContentItem(item);
+}
+
+
+BOOLEAN OS0IsActionableLooseWorldItem(WORLDITEM const& item)
+{
+	return item.fExists && item.o.usItem != NOTHING &&
+		item.o.usItem != OWNERSHIP && item.o.usItem != ACTION_ITEM &&
+		item.bVisible >= VISIBILITY_0 && !OS0IsContainerOwnedItem(item);
+}
+
+
+INT32 OS0FindActionableLooseWorldItem(GridNo const gridNo, UINT8 const level)
+{
+	if (gridNo < 0 || gridNo >= WORLD_MAX) return -1;
+	for (ITEM_POOL* item = GetItemPool(gridNo, level); item; item = item->pNext)
+	{
+		if (item->iItemIndex < 0 ||
+			static_cast<size_t>(item->iItemIndex) >= gWorldItems.size()) continue;
+		if (OS0IsActionableLooseWorldItem(GetWorldItem(item->iItemIndex)))
+			return item->iItemIndex;
+	}
+	return -1;
+}
+
+
+BOOLEAN OS0SpillContainerContents(GridNo const gridNo, UINT8 const level)
+{
+	if (gridNo < 0 || gridNo >= WORLD_MAX) return FALSE;
+	BOOLEAN changed = FALSE;
+	for (ITEM_POOL* item = GetItemPool(gridNo, level); item;)
+	{
+		ITEM_POOL* const next = item->pNext;
+		const INT32 index = item->iItemIndex;
+		if (index >= 0 && static_cast<size_t>(index) < gWorldItems.size())
+		{
+			WORLDITEM& worldItem = GetWorldItem(index);
+			if (OS0IsContainerSeedMarker(worldItem))
+			{
+				RemoveItemFromPool(worldItem);
+				changed = TRUE;
+			}
+			else if (OS0IsContainerContentItem(worldItem))
+			{
+				worldItem.bVisible = VISIBLE;
+				// AddItemToPool marks container-owned objects as non-rendering and
+				// raises them to the structure top.  Once the container is gone these
+				// are ordinary ground objects again, not merely formally "visible".
+				worldItem.usFlags &= ~WORLD_ITEM_DONTRENDER;
+				worldItem.bRenderZHeightAboveLevel = 0;
+				changed = TRUE;
+			}
+		}
+		item = next;
+	}
+	if (changed)
+	{
+		HandleItemObscuredFlag(gridNo, level);
+		OS0NotifyWorldMutation();
+	}
+	return changed;
+}
+
+
+BOOLEAN OS0PrepareWorldItemForDirectDetach(SOLDIERTYPE* const soldier,
+	INT32 const itemIndex, INT16 const gridNo, UINT8 const level)
+{
+	if (!soldier || !soldier->bActive || soldier->bTeam != OUR_TEAM ||
+		soldier->bLife < OKLIFE || soldier->fBetweenSectors ||
+		soldier->sSector != gWorldSector || soldier->bLevel != level ||
+		PythSpacesAway(soldier->sGridNo, gridNo) > 2 ||
+		itemIndex < 0 || static_cast<size_t>(itemIndex) >= gWorldItems.size() ||
+		!ItemExistsAtLocation(gridNo, itemIndex, level)) return FALSE;
+	WORLDITEM const& item = GetWorldItem(itemIndex);
+	// Only exposed ground loot and an opened container's own hidden contents are
+	// direct-transfer subjects. Buried/undiscovered items stay in native search.
+	if (!item.fExists || item.sGridNo != gridNo || item.ubLevel != level ||
+		(item.bVisible != VISIBLE && item.bVisible != HIDDEN_IN_OBJECT) ||
+		(item.usFlags & WORLD_ITEM_ARMED_BOMB)) return FALSE;
+
+	BOOLEAN saidQuote = FALSE;
+	return ContinuePastBoobyTrap(soldier, gridNo, itemIndex, &saidQuote);
 }
 
 

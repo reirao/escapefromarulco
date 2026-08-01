@@ -28,6 +28,23 @@ std::vector<WORLDITEM> gWorldItems;
 
 std::vector<WORLDBOMB> gWorldBombs;
 
+namespace
+{
+	UINT32 gWorldItemMutationRevision = 1;
+
+	void AdvanceWorldItemMutationRevision() noexcept
+	{
+		++gWorldItemMutationRevision;
+		if (gWorldItemMutationRevision == 0) gWorldItemMutationRevision = 1;
+	}
+}
+
+
+UINT32 WorldItemMutationRevision() noexcept
+{
+	return gWorldItemMutationRevision;
+}
+
 
 static void AddBombToWorld(INT32 iItemIndex)
 {
@@ -171,6 +188,7 @@ INT32 AddItemToWorld(INT16 sGridNo, const OBJECTTYPE* const pObject, const UINT8
 		AddBombToWorld(iItemIndex);
 	}
 
+	AdvanceWorldItemMutationRevision();
 	return iItemIndex;
 }
 
@@ -186,6 +204,7 @@ void RemoveItemFromWorld(const INT32 iItemIndex)
 		RemoveBombFromWorldByItemIndex(iItemIndex);
 	}
 	wi.fExists = FALSE;
+	AdvanceWorldItemMutationRevision();
 }
 
 
@@ -437,7 +456,6 @@ void RefreshWorldItemsIntoItemPools(const std::vector<WORLDITEM>& items)
 	for (const WORLDITEM& wi : items)
 	{
 		if (!wi.fExists) continue;
-		OBJECTTYPE o = wi.o; // XXX AddItemToPool() may alter the object
-		AddItemToPool(wi.sGridNo, &o, static_cast<Visibility>(wi.bVisible), wi.ubLevel, wi.usFlags, wi.bRenderZHeightAboveLevel);
+		OS0RestorePersistedWorldItemToPool(wi, wi.sGridNo);
 	}
 }

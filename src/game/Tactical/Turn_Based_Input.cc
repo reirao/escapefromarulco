@@ -11,6 +11,7 @@
 #include "TileDat.h"
 #include "TileDef.h"
 #include "Turn_Based_Input.h"
+#include "OS0_DirectControl.h"
 #include "OS0_IngameUI.h"
 #include "OS0_ViewportInput.h"
 #include "JAScreens.h"
@@ -1331,6 +1332,17 @@ static void ToggleZBuffer(void);
 
 static void ToggleMapEdgepoints(void);
 
+static BOOLEAN PanelCommandEnabled(GUIButtonRef const& button)
+{
+	// OS//0 deliberately owns no vanilla tactical panel. In that mode the refs
+	// are reset to slot zero (which is null), while the real command predicates
+	// below remain authoritative. Never dereference a presentation object merely
+	// to decide whether a keyboard command is legal.
+	if (button.ID() <= 0 || button.ID() >= MAX_BUTTONS) return TRUE;
+	GUI_BUTTON const* const liveButton = button;
+	return !liveButton || liveButton->Enabled();
+}
+
 
 static void HandleModNone(UINT32 const key, UIEventKind* const new_event)
 {
@@ -1340,7 +1352,8 @@ static void HandleModNone(UINT32 const key, UIEventKind* const new_event)
 			// Nothing in hand and either not in SM panel, or the matching button
 			// is enabled if we are in SM panel
 			if (!gpItemPointer &&
-				(gsCurInterfacePanel != SM_PANEL || iSMPanelButtons[UPDOWN_BUTTON]->Enabled()))
+				(gsCurInterfacePanel != SM_PANEL ||
+					PanelCommandEnabled(iSMPanelButtons[UPDOWN_BUTTON])))
 			{
 				UIHandleChangeLevel(0);
 			}
@@ -1350,7 +1363,8 @@ static void HandleModNone(UINT32 const key, UIEventKind* const new_event)
 			// Nothing in hand and either not in SM panel, or the matching button
 			// is enabled if we are in SM panel
 			if (!(gTacticalStatus.uiFlags & ENGAGED_IN_CONV) &&
-				(gsCurInterfacePanel != SM_PANEL || iSMPanelButtons[NEXTMERC_BUTTON]->Enabled()) &&
+				(gsCurInterfacePanel != SM_PANEL ||
+					PanelCommandEnabled(iSMPanelButtons[NEXTMERC_BUTTON])) &&
 				!InKeyRingPopup())
 			{
 				SOLDIERTYPE* const sel = GetSelectedMan();
@@ -1433,7 +1447,8 @@ static void HandleModNone(UINT32 const key, UIEventKind* const new_event)
 		case 'b':
 			// Nothing in hand and either not in SM panel, or the matching button is enabled if we are in SM panel
 			if (!gpItemPointer &&
-				(gsCurInterfacePanel != SM_PANEL || iSMPanelButtons[BURSTMODE_BUTTON]->Enabled()))
+				(gsCurInterfacePanel != SM_PANEL ||
+					PanelCommandEnabled(iSMPanelButtons[BURSTMODE_BUTTON])))
 			{
 				SetBurstMode();
 			}
@@ -1449,8 +1464,10 @@ static void HandleModNone(UINT32 const key, UIEventKind* const new_event)
 				!gpItemPointer &&
 				!gfDisableTacticalPanelButtons &&
 				(
-					(gsCurInterfacePanel == SM_PANEL && iSMPanelButtons[SM_DONE_BUTTON]->Enabled()) ||
-					(gsCurInterfacePanel == TEAM_PANEL && iTEAMPanelButtons[TEAM_DONE_BUTTON]->Enabled())
+					(gsCurInterfacePanel == SM_PANEL &&
+						PanelCommandEnabled(iSMPanelButtons[SM_DONE_BUTTON])) ||
+					(gsCurInterfacePanel == TEAM_PANEL &&
+						PanelCommandEnabled(iTEAMPanelButtons[TEAM_DONE_BUTTON]))
 				))
 			{
 				*new_event = I_ENDTURN;
@@ -1491,7 +1508,8 @@ static void HandleModNone(UINT32 const key, UIEventKind* const new_event)
 			// Nothing in hand and either not in SM panel, or the matching button
 			//is enabled if we are in SM panel
 			if (!gpItemPointer &&
-				(gsCurInterfacePanel != SM_PANEL || iSMPanelButtons[LOOK_BUTTON]->Enabled()))
+				(gsCurInterfacePanel != SM_PANEL ||
+					PanelCommandEnabled(iSMPanelButtons[LOOK_BUTTON])))
 			{
 				*new_event = LC_CHANGE_TO_LOOK;
 			}
@@ -1503,8 +1521,10 @@ static void HandleModNone(UINT32 const key, UIEventKind* const new_event)
 				!gfDisableTacticalPanelButtons &&
 				!(gTacticalStatus.uiFlags & ENGAGED_IN_CONV) &&
 				(
-					(gsCurInterfacePanel == SM_PANEL   && iSMPanelButtons[SM_MAP_SCREEN_BUTTON]->Enabled()) ||
-					(gsCurInterfacePanel == TEAM_PANEL && iTEAMPanelButtons[TEAM_MAP_SCREEN_BUTTON]->Enabled())
+					(gsCurInterfacePanel == SM_PANEL &&
+						PanelCommandEnabled(iSMPanelButtons[SM_MAP_SCREEN_BUTTON])) ||
+					(gsCurInterfacePanel == TEAM_PANEL &&
+						PanelCommandEnabled(iTEAMPanelButtons[TEAM_MAP_SCREEN_BUTTON]))
 				))
 			{
 				GoToMapScreenFromTactical();
@@ -1527,7 +1547,8 @@ static void HandleModNone(UINT32 const key, UIEventKind* const new_event)
 				!gfDisableTacticalPanelButtons   &&
 				!fDisableMapInterfaceDueToBattle &&
 				!gfInMeanwhile                   &&
-				(gsCurInterfacePanel != SM_PANEL || iSMPanelButtons[OPTIONS_BUTTON]->Enabled()))
+				(gsCurInterfacePanel != SM_PANEL ||
+					PanelCommandEnabled(iSMPanelButtons[OPTIONS_BUTTON])))
 			{
 				// Go to Options screen
 				guiPreviousOptionScreen = GAME_SCREEN;
@@ -1688,14 +1709,15 @@ static void HandleModShift(UINT32 const key, UIEventKind* const new_event)
 			// Nothing in hand and either not in SM panel, or the matching button
 			// is enabled if we are in SM panel
 			if (!(gTacticalStatus.uiFlags & ENGAGED_IN_CONV) &&
-				(gsCurInterfacePanel != SM_PANEL || iSMPanelButtons[NEXTMERC_BUTTON]->Enabled()) &&
+				(gsCurInterfacePanel != SM_PANEL ||
+					PanelCommandEnabled(iSMPanelButtons[NEXTMERC_BUTTON])) &&
 				!InKeyRingPopup())
 			{
 				if (SOLDIERTYPE* const sel = GetSelectedMan())
 				{
 					// Only allow if nothing in hand and if in SM panel, the Change Squad button must be enabled
 					if (gsCurInterfacePanel != TEAM_PANEL ||
-						iTEAMPanelButtons[CHANGE_SQUAD_BUTTON]->Enabled())
+						PanelCommandEnabled(iTEAMPanelButtons[CHANGE_SQUAD_BUTTON]))
 					{ // Select next squad
 						INT32        const current_squad = CurrentSquad();
 						SOLDIERTYPE* const new_soldier   = FindNextActiveSquad(sel);
@@ -2011,8 +2033,10 @@ static void HandleModAltCheats(UINT32 const key, UIEventKind * const new_event)
 				!gpItemPointer &&
 				!gfDisableTacticalPanelButtons &&
 				(
-					(gsCurInterfacePanel == SM_PANEL   && iSMPanelButtons[SM_DONE_BUTTON]->Enabled()) ||
-					(gsCurInterfacePanel == TEAM_PANEL && iTEAMPanelButtons[TEAM_DONE_BUTTON]->Enabled())
+					(gsCurInterfacePanel == SM_PANEL &&
+						PanelCommandEnabled(iSMPanelButtons[SM_DONE_BUTTON])) ||
+					(gsCurInterfacePanel == TEAM_PANEL &&
+						PanelCommandEnabled(iTEAMPanelButtons[TEAM_DONE_BUTTON]))
 				))
 			{
 				FOR_EACH_IN_TEAM(s, OUR_TEAM)
@@ -2084,8 +2108,19 @@ void GetKeyboardInput(UIEventKind* const puiNewEvent)
 
 	while (DequeueSpecificEvent(&InputEvent, KEYBOARD_EVENTS))
 	{
+		const BOOLEAN directControlKey =
+			OS0IsDirectControlKey(InputEvent.usParam);
+		const BOOLEAN fastHelpActive = IsTheInterfaceFastHelpTextActive();
+		// These surfaces deliberately consume a physical key to dismiss/advance
+		// themselves. The polled WASD path must not observe that same held key in
+		// the simulation frame after the surface disappears.
+		if (directControlKey && (fastHelpActive ||
+			gfUIWaitingForUserSpeechAdvance || gfPauseDueToPlayerGamePause))
+		{
+			OS0SuppressDirectControlKeyUntilRelease(InputEvent.usParam);
+		}
 		// handle for fast help text for interface stuff
-		if( IsTheInterfaceFastHelpTextActive() )
+		if (fastHelpActive)
 		{
 			if( InputEvent.usEvent == KEY_UP )
 			{
@@ -2117,6 +2152,8 @@ void GetKeyboardInput(UIEventKind* const puiNewEvent)
 		{
 			if (g_ui_message_overlay != NULL)
 			{
+				if (directControlKey)
+					OS0SuppressDirectControlKeyUntilRelease(InputEvent.usParam);
 				EndUIMessage( );
 				continue;
 			}
@@ -2124,17 +2161,22 @@ void GetKeyboardInput(UIEventKind* const puiNewEvent)
 			// End auto bandage if we want....
 			if ( gTacticalStatus.fAutoBandageMode )
 			{
+				if (directControlKey)
+					OS0SuppressDirectControlKeyUntilRelease(InputEvent.usParam);
 				AutoBandage( FALSE );
 				*puiNewEvent = LU_ENDUILOCK;
 			}
 		}
 
+		fKeyTaken = FALSE;
 		if ( gUIKeyboardHook != NULL )
 		{
 			fKeyTaken = gUIKeyboardHook( &InputEvent );
 		}
 		if ( fKeyTaken )
 		{
+			if (directControlKey)
+				OS0SuppressDirectControlKeyUntilRelease(InputEvent.usParam);
 			continue;
 		}
 		if ((InputEvent.usEvent == KEY_DOWN || InputEvent.usEvent == KEY_REPEAT ||
@@ -3215,7 +3257,8 @@ static void ChangeCurrentSquad(INT32 iSquad)
 {
 	// only allow if nothing in hand and the Change Squad button for whichever panel we're in must be enabled
 	if ( ( gpItemPointer == NULL ) && !gfDisableTacticalPanelButtons &&
-			(gsCurInterfacePanel != TEAM_PANEL || iTEAMPanelButtons[CHANGE_SQUAD_BUTTON]->Enabled()))
+			(gsCurInterfacePanel != TEAM_PANEL ||
+				PanelCommandEnabled(iTEAMPanelButtons[CHANGE_SQUAD_BUTTON])))
 	{
 		if ( IsSquadOnCurrentTacticalMap( iSquad ) )
 		{

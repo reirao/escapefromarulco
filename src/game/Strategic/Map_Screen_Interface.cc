@@ -1044,6 +1044,9 @@ static void FreeLeaveListSlot(UINT32 uiSlotIndex);
 static void HandleEquipmentLeft(UINT32 const slot_idx, INT const sector, GridNo const grid)
 {
 	Assert(slot_idx < NUM_LEAVE_LIST_SLOTS);
+	// Strategic event parameters come from save data and assertions disappear in
+	// release builds. Never let a malformed/legacy event index past these arrays.
+	if (slot_idx >= NUM_LEAVE_LIST_SLOTS) return;
 
 	if (MERC_LEAVE_ITEM* i = gpLeaveListHead[slot_idx])
 	{

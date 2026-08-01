@@ -27,6 +27,7 @@
 #include "Map_Information.h"
 #include "Morale.h"
 #include "OppList.h"
+#include "OS0_AssetDamageSystem.h"
 #include "Overhead.h"
 #include "PathAI.h"
 #include "Pits.h"
@@ -281,6 +282,9 @@ static void HandleFencePartnerCheck(INT16 sStructGridNo)
 			UINT16 usTileIndex = GetTileIndexFromTypeSubIndex(uiFenceType, bFenceDestructionPartner);
 
 			ApplyMapChangesToMapTempFile app;
+			OS0ForgetWorldAssetDamage(pFenceBaseStructure->sGridNo,
+				static_cast<UINT8>(pFenceBaseStructure->sCubeOffset /
+					PROFILE_Z_SIZE), pFenceNode->usIndex);
 			// Remove it!
 			RemoveStructFromLevelNode( pFenceBaseStructure->sGridNo, pFenceNode );
 			// Add it!
@@ -313,7 +317,10 @@ static void ReplaceWall(GridNo const grid_no, UINT8 orientation, INT16 const sub
 	}
 	if (!wall_struct || !(wall_struct->fFlags & STRUCTURE_WALL)) return;
 
-	LEVELNODE* const node    = FindLevelNodeBasedOnStructure(wall_struct);
+	STRUCTURE* const base = FindBaseStructure(wall_struct);
+	if (!base) return;
+	LEVELNODE* const node = FindLevelNodeBasedOnStructure(base);
+	if (!node) return;
 
 	UINT16 tileType = gTileDatabase[node->usIndex].fType;
 	if (tileType > FOURTHWALL)
@@ -324,9 +331,12 @@ static void ReplaceWall(GridNo const grid_no, UINT8 orientation, INT16 const sub
 	}
 
 	UINT16 const new_idx = GetTileIndexFromTypeSubIndex(tileType, sub_idx);
+	GridNo const baseGridNo = base->sGridNo;
+	UINT8 const baseLevel = static_cast<UINT8>(base->sCubeOffset / PROFILE_Z_SIZE);
 	ApplyMapChangesToMapTempFile app;
-	RemoveStructFromLevelNode(grid_no, node);
-	AddWallToStructLayer(grid_no, new_idx, TRUE);
+	OS0ForgetWorldAssetDamage(baseGridNo, baseLevel, node->usIndex);
+	RemoveStructFromLevelNode(baseGridNo, node);
+	AddWallToStructLayer(baseGridNo, new_idx, TRUE);
 }
 
 
@@ -347,6 +357,12 @@ static STRUCTURE* RemoveOnWall(GridNo const grid_no, StructureFlags const flags,
 		}
 
 		LEVELNODE* const node = FindLevelNodeBasedOnStructure(base);
+		if (node)
+		{
+			OS0ForgetWorldAssetDamage(base->sGridNo,
+				static_cast<UINT8>(base->sCubeOffset / PROFILE_Z_SIZE),
+				node->usIndex);
+		}
 		ApplyMapChangesToMapTempFile app;
 		RemoveStructFromLevelNode(base->sGridNo, node);
 	}
@@ -391,12 +407,6 @@ static bool ExplosiveDamageStructureAtGridNo(STRUCTURE* const pCurrent, STRUCTUR
 		STRUCTURE* const base         = FindBaseStructure(pCurrent);
 		GridNo     const base_grid_no = base->sGridNo;
 
-		// if the structure is openable, destroy all items there
-		if (base->fFlags & STRUCTURE_OPENABLE && !(base->fFlags & STRUCTURE_DOOR))
-		{
-			RemoveAllUnburiedItems(base_grid_no, level);
-		}
-
 		bool const is_explosive = pCurrent->fFlags & STRUCTURE_EXPLOSIVE;
 
 		// Get LEVELNODE for struct and remove!
@@ -431,6 +441,16 @@ static bool ExplosiveDamageStructureAtGridNo(STRUCTURE* const pCurrent, STRUCTUR
 		}
 
 		if (fContinue == 0) return true;
+		OS0ForgetWorldAssetDamage(base_grid_no, level, node->usIndex);
+
+		// Spatial contents belong to an intact container. Once native damage
+		// destroys or replaces that structure, reveal the real objects in place;
+		// deleting every unburied item here made both loot and OS//0's seed marker
+		// disappear on the first damaging blast.
+		if (base->fFlags & STRUCTURE_OPENABLE && !(base->fFlags & STRUCTURE_ANYDOOR))
+		{
+			OS0SpillContainerContents(base_grid_no, level);
+		}
 
 		// Remove the beast!
 		while (*ppNextCurrent && (*ppNextCurrent)->usStructureID == pCurrent->usStructureID)

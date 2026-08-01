@@ -19,6 +19,7 @@
 #include "Isometric_Utils.h"
 #include "Keys.h"
 #include "Logger.h"
+#include "OS0_DirectControl.h"
 #include "Overhead.h"
 #include "Overhead_Types.h"
 #include "PathAI.h"
@@ -2260,7 +2261,7 @@ INT16 UIPlotPath(SOLDIERTYPE* const pSold, const INT16 sDestGridno, const INT8 b
 	// This function is specifically for UI calls to the pathing routine, to
 	// check whether the shift key is pressed, etc.
 
-	if ( _KeyDown( SHIFT ) )
+	if (_KeyDown(SHIFT) && !OS0DirectControlOwnsSprintModifier())
 	{
 		gfPlotDirectPath = TRUE;
 	}

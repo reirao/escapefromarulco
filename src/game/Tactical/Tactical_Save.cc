@@ -587,7 +587,7 @@ static void LoadAndAddWorldItemsFromTempFile(const SGPSector& sMap)
 			if (new_pos != NOWHERE) pos = new_pos;
 		}
 
-		AddItemToPool(pos, &wi.o, static_cast<Visibility>(wi.bVisible), wi.ubLevel, wi.usFlags, wi.bRenderZHeightAboveLevel);
+		OS0RestorePersistedWorldItemToPool(wi, pos);
 	}
 }
 

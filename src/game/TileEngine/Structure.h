@@ -66,6 +66,21 @@ STRUCTURE* FindStructureByID(INT16 sGridNo, UINT16 structure_id);
 // Finds the base structure for any structure
 STRUCTURE* FindBaseStructure(STRUCTURE* s);
 
+// STRUCTURE::sBaseGridNo is populated on footprint children, but the base tile
+// itself is identified by sGridNo.  Treating sBaseGridNo as canonical for an
+// already resolved base structure commonly turns every object into grid 0 and
+// invalidates long-lived interaction/carry bindings.  Keep this rule in one
+// place so callers cannot accidentally bind to the implementation detail.
+inline GridNo StructureBaseGridNo(STRUCTURE const* const structure) noexcept
+{
+	// Do not depend on Isometric_Utils.h's NOWHERE macro here: Structure.h is a
+	// low-level header and is included before that macro in editor translation
+	// units.  Every caller already treats a negative grid as invalid.
+	if (!structure) return static_cast<GridNo>(-1);
+	return structure->fFlags & STRUCTURE_BASE_TILE ?
+		structure->sGridNo : structure->sBaseGridNo;
+}
+
 //
 // functions related to interactive tiles
 //
